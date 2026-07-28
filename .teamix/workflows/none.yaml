@@ -1,0 +1,4 @@
+name: "none"
+label: "不使用工作流"
+description: "无阶段限制的自由对话"
+stages: []

@@ -1,0 +1,62 @@
+﻿# Build artifacts
+/bin/
+/dist/
+/stage/
+/reasonix
+/reasonix.exe
+
+# Go test/build scratch
+*.test
+*.out
+*.coverprofile
+coverage.out
+cpu.prof
+mem.prof
+
+# Wails desktop artifacts
+/desktop/build/*
+!/desktop/build/appicon.png
+!/desktop/build/appicon.svg
+/desktop/desktop
+/desktop/frontend/dist/*
+!/desktop/frontend/dist/.gitkeep
+/desktop/frontend/sourcemaps/
+/desktop/frontend/wailsjs/
+/desktop/frontend/package.json.md5
+
+# Environment / local config
+.env
+.env.local
+*.local
+/reasonix.toml
+/desktop/.env
+/desktop/reasonix.toml
+
+# Node / frontend dependencies
+node_modules/
+.pnpm-store/
+.npm/
+
+# Project-local Reasonix state; keep the checked-in review command.
+/.reasonix/*
+!/.reasonix/commands/
+!/.reasonix/commands/review.md
+
+# CodeGraph per-project index
+.codegraph/
+
+# Teamix project secrets
+.teamix/secrets/
+
+# Teamix runtime data
+.teamix/notifications/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local scratch
+temp/
+*.exe

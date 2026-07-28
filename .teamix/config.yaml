@@ -1,0 +1,19 @@
+modules:
+- description: HTTP server with Teamix multi-user support
+  name: serve
+  path: internal/serve/
+- description: .teamix/config.yaml 配置加载
+  name: teamixconfig
+  path: internal/teamixconfig/
+- description: CLI entry point (serve/chat/run)
+  name: cli
+  path: internal/cli/
+project:
+  description: 云端 AI 协作开发平台
+  name: Teamix Cloud
+workflow:
+  approval_required: []
+  architects:
+  - chisato
+  - admin
+  auto_advance: true
