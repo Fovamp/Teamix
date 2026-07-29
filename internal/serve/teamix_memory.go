@@ -15,11 +15,11 @@ func (ts *TeamixServer) handleMemoryList(w http.ResponseWriter, r *http.Request,
 	}
 	all := memSet.Store.List()
 	type memEntry struct {
-		Name        string `json:"name`
-		Title       string `json:"title`
-		Description string `json:"description`
-		Type        string `json:"type`
-		Body        string `json:"body`
+		Name        string `json:"name"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Type        string `json:"type"`
+		Body        string `json:"body"`
 	}
 	out := make([]memEntry, len(all))
 	for i, m := range all {
@@ -34,11 +34,11 @@ func (ts *TeamixServer) handleMemoryList(w http.ResponseWriter, r *http.Request,
 
 func (ts *TeamixServer) handleMemorySave(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
-		Name        string `json:"name`
-		Title       string `json:"title`
-		Description string `json:"description`
-		Type        string `json:"type`
-		Body        string `json:"body`
+		Name        string `json:"name"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Type        string `json:"type"`
+		Body        string `json:"body"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)

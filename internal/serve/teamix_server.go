@@ -310,23 +310,43 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("POST /forget", ts.withUser(ts.handleForget))
 	mux.HandleFunc("POST /delete-session", ts.withUser(ts.handleDeleteSession))
 
+	// Vue3 app
+	mux.HandleFunc("GET /v3/", ts.handleV3Index)
+	mux.HandleFunc("GET /v3/assets/", ts.handleV3Assets)
+
 	return logMiddleware(csrfGuard(mux))
 }
 
 
-func (ts *TeamixServer) handleIndex(w http.ResponseWriter, r *http.Request) {
+func (ts *TeamixServer) handleV3Index(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	lang := "auto"
-	if cfg, err := config.Load(); err == nil {
-		if dl := cfg.DesktopLanguage(); dl != "" {
-			lang = dl
-		}
-	}
-	html := string(ts.indexHTML)
-	html = strings.ReplaceAll(html, "__LANG__", lang)
-	_, _ = w.Write([]byte(html))
+	_, _ = w.Write(v3IndexHTML)
 }
 
+func (ts *TeamixServer) handleV3Assets(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	importPath := "webdist-v3" + path
+	data, err := v3Assets.ReadFile(importPath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	ct := "application/octet-stream"
+	if len(path) > 3 && path[len(path)-3:] == ".js" {
+		ct = "application/javascript"
+	} else if len(path) > 4 && path[len(path)-4:] == ".css" {
+		ct = "text/css"
+	} else if len(path) > 4 && path[len(path)-4:] == ".svg" {
+		ct = "image/svg+xml"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Write(data)
+}
+
+func (ts *TeamixServer) handleIndex(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(webIndexHTML)
+}
 
 func (ts *TeamixServer) handleLogo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
