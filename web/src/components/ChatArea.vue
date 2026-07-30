@@ -20,6 +20,30 @@ function el(tag: string, cls?: string, text?: string) {
 }
 function escHtml(s: any) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') }
 function fmtTok(n: number) { return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n) }
+function bashCommandPrefix(subject: string): string {
+  const command = String(subject || '').trim();
+  if (!command || command.includes('`') || command.includes('$(') || /[;|&<>\n]/.test(command)) return '';
+  const fields = command.split(/\s+/).filter(Boolean);
+  if (fields.length < 2) return '';
+  if (dangerousBashCommand(command)) return '';
+  const base = fields[0].toLowerCase();
+  if (['npm','pnpm','yarn','bun'].includes(base) && fields[1] && fields[1].toLowerCase() === 'run') return fields.length >= 3 ? fields[0]+' '+fields[1]+' '+fields[2]+':*' : '';
+  return fields[0]+' '+fields[1]+':*';
+}
+function dangerousBashCommand(command: string): boolean {
+  return /^rm\s+-[^\s]*[rf][^\s]*\b/.test(command)
+    || /^git\s+push\b.*\s--force\b/.test(command)
+    || /^git\s+push\b.*\s-f\b/.test(command)
+    || /^git\s+reset\s+--hard\b/.test(command)
+    || /^git\s+clean\s+-f\b/.test(command)
+    || /^chmod\s+(?:-R\s+)?777\b/.test(command)
+    || /^chown\b/.test(command)
+    || /^sudo\b/.test(command)
+    || /^mkfs\b/.test(command)
+    || /^dd\s+if=/.test(command)
+    || /^fdisk\b/.test(command);
+}
+
 function fmtMoney(n: number, c?: string) {
   if (typeof n !== 'number' || !isFinite(n)) return '—'
   const s = String(c || '¥').trim()
