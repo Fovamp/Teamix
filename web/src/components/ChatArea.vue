@@ -473,7 +473,7 @@ function addUserMsg(text: string) {
   hideWelcome()
   const d = el('div', 'msg msg--user')
   d.appendChild(el('span', 'msg__caret', '›'))
-  var _txt = document.createElement('div'); _txt.className = 'msg__text'; _txt.innerHTML = stripSystemTags(text).replace(/\n/g, '<br>'); d.appendChild(_txt)
+  var _txt = document.createElement('div'); _txt.className = 'msg__text'; _txt.textContent = text; d.appendChild(_txt)
   document.getElementById('log')?.appendChild(d)
   scrollDown(true)
   currentMsgEl = null; currentTextEl = null; currentReasoningEl = null
@@ -491,14 +491,14 @@ function ensureMsg() {
 function appendText(t: string) {
   const m = ensureMsg()
   if (!currentTextEl) {
-    currentTextEl = document.createElement('div')
-    currentTextEl.className = 'msg__text'; currentTextEl.style.whiteSpace = 'pre-wrap'; currentTextEl.style.wordBreak = 'break-word'
+    currentTextEl = document.createElement('span')
+    currentTextEl.className = 'msg__text'
     const cursor = m.querySelector('.cursor')
     if (cursor) cursor.remove()
     m.appendChild(currentTextEl)
     m.appendChild(el('span', 'cursor'))
   }
-  currentTextEl.innerHTML += stripSystemTags(t).replace(/\n/g, '<br>')
+  currentTextEl.textContent += t
   scrollDown()
 }
 
@@ -1419,8 +1419,7 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
     <div v-for="(m, i) in messages" :key="i">
       <div v-if="m.role === 'user'" class="msg msg--user">
         <span class="msg__caret"><span style="color:var(--accent);font-family:var(--mono);font-weight:600;font-size:15px">›</span></span>
-        <div class="msg__text" v-html="m.content.replace(/\n/g, '<br>')"></div>
-/g, '<br>')"></div>
+        <div class="msg__text" v-text="m.content"></div>
       </div>
       <div v-else-if="m.role === 'assistant'" class="msg msg--assistant">
         <div v-if="m.reasoning" class="reasoning">
@@ -1429,8 +1428,7 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
           </button>
           <div class="reasoning__body" v-show="m._showReasoning" v-text="m.reasoning"></div>
         </div>
-        <span class="msg__text" style="display:inline-block;width:100%" v-html="m.content.replace(/\n/g, '<br>')"></span>
-/g, '<br>')"></span>
+        <span class="msg__text" v-text="m.content"></span>
       </div>
     </div>
 

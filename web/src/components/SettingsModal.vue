@@ -298,7 +298,7 @@ w.switchSettingsTab = function(t: string) { tab.value = t }
     <div class="modal" style="width:min(780px,90vw);height:65vh;display:flex;flex-direction:column">
       <div class="modal__head" style="flex-shrink:0">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-        <span>\u9879\u76ee\u914d\u7f6e</span>
+        <span>项目配置</span>
         <span class="modal__close" @click="emit('close')">&times;</span>
       </div>
       <div style="display:flex;flex:1;min-height:0;overflow:hidden">
