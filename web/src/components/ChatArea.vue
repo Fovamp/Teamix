@@ -1585,6 +1585,8 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
 </template>
 
 <style scoped>
+.msg__text { white-space: pre-wrap; word-break: break-word; line-height: 1.65; }
+
 :deep(.card) { background: var(--card); border-radius: var(--radius-lg); overflow: hidden; font-size: 14px; box-shadow: var(--shadow-sm); margin: 8px auto; transition: border-color .18s ease; max-width: 760px; }
 :deep(.card-head) { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 7px 12px; font-size: 13px; color: var(--fg-2); cursor: pointer; user-select: none; background: var(--card); transition: background .18s ease; }
 :deep(.card-head:hover) { background: var(--card-hover); }
