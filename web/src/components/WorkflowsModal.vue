@@ -17,6 +17,9 @@ const editName = ref("")
 const editLabel = ref("")
 const editDesc = ref("")
 const editStages = ref<any[]>([])
+const showFse = ref(false)
+const fseText = ref('')
+const fseTarget = ref<{ set: (v: string) => void } | null>(null)
 
 onMounted(async () => {
   try { const r = await api.userRole(); isArchitect.value = r.role === 'architect' } catch {}
@@ -166,6 +169,19 @@ async function saveWorkflow() {
   }
 }
 
+function openFse(s: any) {
+  fseText.value = s.prompt
+  fseTarget.value = { set: (v: string) => { s.prompt = v } }
+  showFse.value = true
+}
+
+function saveFse() {
+  if (fseTarget.value) fseTarget.value.set(fseText.value)
+  showFse.value = false
+}
+
+function closeFse() { showFse.value = false }
+
 function onDragStart(e: DragEvent, idx: number) {
   (e.target as HTMLElement).parentElement?.parentElement?.setAttribute('data-drag-idx', String(idx))
   e.dataTransfer?.setData('text/plain', '')
@@ -236,6 +252,7 @@ function onDrop(e: DragEvent, idx: number) {
             <input v-model="s.sname" placeholder="ID" style="width:80px;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font-size:11px;font-family:var(--mono)">
             <input v-model="s.label" placeholder="标签" style="width:80px;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font-size:11px" @input="updateDesc">
             <textarea v-model="s.prompt" placeholder="提示词" style="flex:1;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font-size:11px;height:28px;resize:vertical"></textarea>
+            <button title="全屏编辑" style="width:20px;height:20px;border:none;border-radius:3px;background:transparent;color:var(--accent);cursor:pointer;font-size:14px;flex-shrink:0" @click="openFse(s)">↑</button>
             <button class="stage-del-btn" style="width:20px;height:20px;border:none;border-radius:3px;background:transparent;color:var(--danger);cursor:pointer;font-size:14px" @click="removeStage(i)">×</button>
           </div>
         </div>
@@ -244,6 +261,24 @@ function onDrop(e: DragEvent, idx: number) {
       <div style="display:flex;gap:8px;justify-content:flex-end;padding:8px 12px;border-top:1px solid var(--border)">
         <button @click="closeEditor" class="editor-btn-cancel" style="padding:6px 16px;border:1px solid var(--border);border-radius:6px;background:var(--bg-2);color:var(--fg-2);font-size:12px;cursor:pointer">取消</button>
         <button @click="saveWorkflow" class="editor-btn-save" style="padding:6px 16px;border:none;border-radius:6px;background:var(--accent);color:oklch(99% 0 0);font-size:12px;cursor:pointer">保存</button>
+      </div>
+    </div>
+  </div>
+
+    <!-- Fullscreen Prompt Editor -->
+  <div class="modal-overlay" v-if="showFse" @click.self="closeFse" style="z-index:202">
+    <div class="modal" style="width:min(700px,90vw)">
+      <div class="modal__head">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        <span>编辑提示词</span>
+        <span class="modal__close" @click="closeFse">&times;</span>
+      </div>
+      <div style="padding:12px">
+        <textarea v-model="fseText" style="width:100%;height:400px;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:13px;font-family:var(--mono);resize:vertical;box-sizing:border-box"></textarea>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;padding:8px 12px;border-top:1px solid var(--border)">
+        <button @click="closeFse" style="padding:6px 16px;border:1px solid var(--border);border-radius:6px;background:var(--bg-2);color:var(--fg-2);font-size:12px;cursor:pointer">取消</button>
+        <button @click="saveFse" style="padding:6px 16px;border:none;border-radius:6px;background:var(--accent);color:oklch(99% 0 0);font-size:12px;cursor:pointer">确定保存</button>
       </div>
     </div>
   </div>
