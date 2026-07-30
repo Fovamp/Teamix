@@ -80,6 +80,9 @@ const messages = ref<any[]>([])
 const inputText = ref("")
 const pastedBlocks = ref<{ label: string; text: string }[]>([])
 const openPastedLabels = ref<string[]>([])
+const previewHeight = ref(120)
+const composerResized = ref(false)
+let composerDefaultHeight = 0
 let pasteIdCounter = 1
 const running = ref(false)
 const statusText = ref("就绪")
@@ -929,7 +932,9 @@ function expandPastedText(text: string): string {
   }
   return result
 }
-\n\nasync function send() {
+
+
+async function send() {
   const v = expandPastedText(inputText.value.trim())
   if (!v) return
   await syncModeBeforeSubmit()
@@ -1344,7 +1349,9 @@ function handlePaste(e: ClipboardEvent) {
     return
   }
 }
-\n\nfunction handleFileDrop(e: DragEvent) {
+
+
+function handleFileDrop(e: DragEvent) {
   e.preventDefault()
   const inp = document.getElementById('in') as HTMLTextAreaElement
   if (!inp) return
@@ -1357,7 +1364,7 @@ function handlePaste(e: ClipboardEvent) {
       inp.disabled = true
       readAndUploadFolder(entry, '', (uploaded: string[]) => {
         inp.disabled = false
-        inp.value = uploaded.length > 0 ? '@' + uploaded.join('\n@') : ''
+        inp.value = inputText.value + (uploaded.length > 0 ? '@' + uploaded.join('\n@') : '')
         inp.focus()
       })
       return
@@ -1366,14 +1373,14 @@ function handlePaste(e: ClipboardEvent) {
     inp.disabled = true
     uploadFiles(Array.from(files), (uploaded: string[]) => {
       inp.disabled = false
-      inp.value = uploaded.length > 0 ? '@' + uploaded.join('\n@') : ''
+      inp.value = inputText.value + (uploaded.length > 0 ? '@' + uploaded.join('\n@') : '')
       inp.focus()
     })
     return
   }
   const text = e.dataTransfer?.getData('text/plain')
   if (text) {
-    inp.value = inputText.value + (inputText.value && text ? '\n' : '') + text
+    inp.value = inputText.value + text
     inp.focus()
   }
 }
@@ -1451,6 +1458,74 @@ function readAndUploadFolder(entry: any, path: string, callback: (uploaded: stri
 }
 
 // ── Expose ──
+function togglePastedBlock(label: string) {
+  if (openPastedLabels.value.includes(label)) {
+    openPastedLabels.value = openPastedLabels.value.filter(l => l !== label)
+  } else {
+    openPastedLabels.value = [...openPastedLabels.value, label]
+  }
+}
+function removePastedBlock(block: { label: string; text: string }) {
+  pastedBlocks.value = pastedBlocks.value.filter(b => b.label !== block.label)
+  openPastedLabels.value = openPastedLabels.value.filter(l => l !== block.label)
+  inputText.value = inputText.value.replace(block.label, '')
+}const previewRef = ref<HTMLElement | null>(null)
+let previewResizing = false
+let previewStartY = 0
+let previewStartH = 0
+
+function startPreviewResize(e: MouseEvent) {
+  previewResizing = true
+  previewStartY = e.clientY
+  previewStartH = previewHeight.value
+  document.addEventListener('mousemove', onPreviewResize)
+  document.addEventListener('mouseup', stopPreviewResize)
+  e.preventDefault()
+}
+function onPreviewResize(e: MouseEvent) {
+  if (!previewResizing) return
+  const delta = previewStartY - e.clientY
+  previewHeight.value = Math.max(60, Math.min(400, previewStartH + delta))
+}
+function stopPreviewResize() {
+  previewResizing = false
+  document.removeEventListener('mousemove', onPreviewResize)
+  document.removeEventListener('mouseup', stopPreviewResize)
+}
+
+
+const composerResizeState = { active: false, startY: 0, startH: 0 }
+function startComposerResize(e: MouseEvent) {
+  const composer = document.getElementById('composer')
+  if (!composer) return
+  // Fix height immediately to prevent layout shift
+  const h = composer.offsetHeight
+  composer.style.height = h + 'px'
+  // Directly add class to input-row for instant layout
+  const row = composer.querySelector('.composer__input-row')
+  composer.classList.add('composer--resized')
+
+  if (row) row.classList.add('composer__input-row--resized')
+  composerResizeState.active = true
+  composerResizeState.startY = e.clientY
+  composerResizeState.startH = h
+  document.addEventListener('mousemove', onComposerResize)
+  document.addEventListener('mouseup', stopComposerResize)
+  e.preventDefault()
+}
+function onComposerResize(e: MouseEvent) {
+  if (!composerResizeState.active) return
+  const delta = composerResizeState.startY - e.clientY
+  const newH = Math.max(composerResizeState.startH, Math.min(400, composerResizeState.startH + delta))
+  const composer = document.getElementById('composer')
+  if (composer) composer.style.height = newH + 'px'
+}
+function stopComposerResize() {
+  composerResizeState.active = false
+  document.removeEventListener('mousemove', onComposerResize)
+  document.removeEventListener('mouseup', stopComposerResize)
+}
+
 defineExpose({ loadSessions, fetchStatus, fetchNotifications })
 </script>
 
@@ -1545,6 +1620,15 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
         <span class="status__dot" id="status-dot-footer" :class="{ 'status__dot--busy': running }"></span>
         <span id="status-text">{{ statusText }}</span>
       </div>
+      <template v-if="pastedBlocks.filter(b => inputText.includes(b.label)).length > 0">
+        <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;max-width:500px">
+          <div v-for="block in pastedBlocks.filter(b => inputText.includes(b.label))" :key="block.label" style="display:flex;align-items:center;gap:3px;padding:1px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);font-size:10px;flex:1">
+            <span style="color:var(--muted-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70px">{{ block.label }}</span>
+            <button class="pasted-expand-btn" @click.stop="togglePastedBlock(block.label)" style="border:none;background:transparent;color:var(--accent);cursor:pointer;font-size:9px;padding:1px 3px;border-radius:2px">{{ openPastedLabels.includes(block.label) ? '收起' : '展开' }}</button>
+            <button class="pasted-del-btn" @click.stop="removePastedBlock(block)" style="border:none;background:transparent;color:var(--danger);cursor:pointer;font-size:11px;width:14px;height:14px;border-radius:2px;display:flex;align-items:center;justify-content:center">×</button>
+          </div>
+        </div>
+      </template>
       <div class="toolbar__spacer"></div>
       <div class="wf-bar" id="wf-bar" v-if="wfVisible">
         <div v-for="(s, i) in wfStages" :key="s.stage || i" class="wf-step" @click="setStage(s.stage)" title="切换到此阶段">
@@ -1555,18 +1639,15 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
       </div>
       <div class="status" id="turn-info"></div>
     </div>
-
-    <!-- Pasted blocks -->
-    <div v-if="pastedBlocks.filter(b => inputText.includes(b.label)).length > 0" style="padding:0 28px;display:flex;flex-direction:column;gap:4px;margin-bottom:4px">
-      <div v-for="block in pastedBlocks.filter(b => inputText.includes(b.label))" :key="block.label" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-2);font-size:12px">
-        <span style="color:var(--muted-2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ block.label }}</span>
-        <button @click="togglePastedBlock(block.label)" style="border:none;background:transparent;color:var(--accent);cursor:pointer;font-size:11px;white-space:nowrap">{{ openPastedLabels.includes(block.label) ? '\u6536\u8d77' : '\u5c55\u5f00\u9884\u89c8' }}</button>
-        <button @click="removePastedBlock(block)" style="border:none;background:transparent;color:var(--danger);cursor:pointer;font-size:14px">&times;</button>
+<template v-for="block in pastedBlocks.filter(b => openPastedLabels.includes(b.label) && inputText.includes(b.label))">
+      <div style="padding:4px 28px;margin-bottom:2px;position:relative">
+        <div class="preview-resize-handle" @mousedown="startPreviewResize($event)" style="height:10px;cursor:row-resize;position:relative;margin-bottom:-1px;display:flex;align-items:center;justify-content:center">
+          <div style="height:2px;background:var(--border);border-radius:2px;flex:1;margin:0 20px;transition:all .15s"></div>
+        </div>
+        <div ref="previewRef" :style="{padding:'6px 10px',border:'1px solid var(--border)',borderRadius:'6px',background:'var(--bg)',fontSize:'11px',fontFamily:'var(--mono)',height:previewHeight+'px',overflowY:'auto',whiteSpace:'pre-wrap',wordBreak:'break-word'}">{{ block.text }}</div>
       </div>
-      <!-- Preview panel -->
-      <div v-for="block in pastedBlocks.filter(b => openPastedLabels.includes(b.label) && inputText.includes(b.label))" :key="block.label + '-preview'" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:11px;font-family:var(--mono);max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-word">{{ block.text }}</div>
-    </div>
-\n    <div class="composer" id="composer" style="position:relative">
+    </template>
+<div class="composer" id="composer" style="position:relative">
       <!-- Slash menu -->
       <div id="slash-menu-anchor" style="position:absolute;bottom:100%;left:0;right:0;z-index:50">
         <div class="slash-menu" id="slash-menu" v-if="slashOpen">
@@ -1597,14 +1678,19 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
         </div>
       </div>
 
-      <span class="composer__caret">›</span>
-      <textarea v-model="inputText" class="composer__input" id="in"
-        :placeholder="goalMode ? '描述你的目标...' : '给 Reasonix 发消息...  / 查看命令'"
-        rows="1"
-        @keydown="onInputKeydown"
-        @input="onInput"
-        @dragover.prevent
-        @paste="handlePaste" @drop="handleFileDrop"></textarea>
+      <div class="composer__input-row" style="display:flex;align-items:center;gap:7px;flex:1;min-width:0">
+        <span class="composer__caret">›</span>
+        <textarea v-model="inputText" class="composer__input" id="in"
+          :placeholder="goalMode ? '描述你的目标...' : '给 Reasonix 发消息...  / 查看命令'"
+          rows="1"
+          @keydown="onInputKeydown"
+          @input="onInput"
+          @dragover.prevent
+          @paste="handlePaste" @drop="handleFileDrop"></textarea>
+      </div>
+      <div class="composer-resize-handle" @mousedown="startComposerResize($event)" style="height:12px;cursor:row-resize;position:absolute;top:-6px;left:0;right:0;z-index:5;display:flex;align-items:center;justify-content:center">
+        <div style="height:2px;background:var(--border);border-radius:2px;margin:0 28px;flex:1;transition:all .15s"></div>
+      </div>
       <button class="composer__btn composer__btn--send" id="btn-send" title="发送 (Enter)" v-show="!running" @click="send">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="18" height="18"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
       </button>
@@ -1660,6 +1746,9 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
 
 <style scoped>
 .msg__text { white-space: pre-wrap; word-break: break-word; line-height: 1.65; }
+.pasted-expand-btn:hover { background: var(--accent-soft) !important; }
+.pasted-del-btn:hover { background: var(--danger-soft) !important; }
+.preview-resize-handle:hover div, .composer-resize-handle:hover div { background: var(--accent) !important; height: 3px !important; margin: 0 10px !important; }
 
 :deep(.card) { background: var(--card); border-radius: var(--radius-lg); overflow: hidden; font-size: 14px; box-shadow: var(--shadow-sm); margin: 8px auto; transition: border-color .18s ease; max-width: 760px; }
 :deep(.card-head) { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 7px 12px; font-size: 13px; color: var(--fg-2); cursor: pointer; user-select: none; background: var(--card); transition: background .18s ease; }
