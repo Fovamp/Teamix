@@ -66,6 +66,7 @@ const cwdTitle = ref("")
 const wfName = ref("-")
 const wfStages = ref<any[]>([])
 const wfVisible = ref(false)
+let activeStageIdx = -1
 const statusModel = ref("-")
 const showRewind = ref(false)
 const showTodoPanel = ref(false)
@@ -266,6 +267,7 @@ async function loadHistory() {
     const h = await api.history()
     const ms = (h?.messages || h || [])
     renderHistoryMessages(ms)
+    setTimeout(() => scrollDown(true), 100)
   } catch (e) { console.error("loadHistory", e) }
   try {
     const s = await api.status()
@@ -393,6 +395,12 @@ function connectSSE() {
           if (!firstTurnDone && !e.err) { firstTurnDone = true; loadSessions() }
           if (pendingPages.length > 0 && !e.err) { showOpenPageCard(pendingPages); pendingPages = [] }
           if (stageCompletePending && !e.err) { showStageApproval(stageCompleteReason) }
+          // Fallback: check accumulated text in case marker was split across chunks
+          if (!stageCompletePending && !e.err && window._wfLastText && window._wfLastText.indexOf('\u9636\u6bb5\u5b8c\u6210') >= 0) {
+            stageCompletePending = true
+            try { sessionStorage.setItem('wf_advance_pending', '1') } catch (e) {}
+            showStageApproval('')
+          }
           window._wfLastText = ''
           break
       }
@@ -406,6 +414,7 @@ function connectSSE() {
 
 // ── SSE text handler ──
 function handleTextSSE(txt: string) {
+  window._wfLastText = (window._wfLastText || "") + txt
   const pgRe = /__打开页面__:\s*(\S+)\s*-\s*(.+)/g
   let m: RegExpExecArray | null
   while ((m = pgRe.exec(txt)) !== null) {
@@ -416,7 +425,7 @@ function handleTextSSE(txt: string) {
       if (!dup) pendingPages.push({ url, label })
     }
   }
-  const clean = txt.replace(/__打开页面__:[^\n]*\n?/g, '').replace(/__打开页面__[^:\n]*/g, '')
+  const clean = txt.replace(/__打开页面__:[^\n]*\n?/g, '').replace(/__打开页面__[^:\n]*/g, '').replace(/__JUMP_TO__/g, '').replace(/__STAGE_JUMP__/g, '')
   const idx = clean.indexOf('阶段完成')
   if (idx >= 0) {
     const before = clean.substring(0, idx)
@@ -645,43 +654,48 @@ function showApproval(a: any) {
 function showAsk(ask: any) {
   const d = el('div', 'ask')
   const cleanup = () => { pendingPrompts = pendingPrompts.filter(f => f !== cleanup); d.remove() }
-  ask.questions.forEach((q: any) => {
+  const allSelected: Map<number, Set<number>> = new Map()
+  ask.questions.forEach((q: any, qi: number) => {
     const qDiv = el('div')
+    qDiv.style.marginBottom = '16px'
     qDiv.appendChild(el('div', 'ask__prompt', q.prompt))
     const opts = el('div', 'ask__options')
     const selected = new Set<number>()
+    allSelected.set(qi, selected)
     q.options.forEach((o: any, i: number) => {
       const opt = el('button', 'ask__opt')
       opt.innerHTML = '<div><div class="ask__opt-label">' + escHtml(o.label) + '</div>' + (o.description ? '<div class="ask__opt-desc">' + escHtml(o.description) + '</div>' : '') + '</div>'
       opt.onclick = () => {
         if (q.multi) { selected.has(i) ? selected.delete(i) : selected.add(i); opt.classList.toggle('ask__opt--selected', selected.has(i)) }
         else { selected.clear(); selected.add(i); opts.querySelectorAll('.ask__opt').forEach((oj, j) => oj.classList.toggle('ask__opt--selected', j === i)) }
+        // Update submit button state
+        const sa = d.querySelector('.ask__submit') as HTMLButtonElement
+        if (sa) sa.disabled = !Array.from(allSelected.values()).some(s => s.size > 0)
       }
       opts.appendChild(opt)
     })
     qDiv.appendChild(opts)
-    const submit = el('button', 'ask__submit', '提交')
-    submit.disabled = true
-    opts.addEventListener('click', () => { submit.disabled = selected.size === 0 })
-    submit.onclick = () => {
-      const answers = ask.questions.map((qq: any) => ({
-        questionId: qq.id,
-        selected: Array.from(selected).map(i => qq.options[i].label)
-      }))
-      fetch('/answer?token=' + encodeURIComponent(localStorage.getItem('teamix_token') || ''), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: ask.id, answers })
-      })
-      cleanup()
-    }
-    qDiv.appendChild(submit)
     d.appendChild(qDiv)
   })
+  // Single submit button for ALL questions
+  const submitAll = el('button', 'ask__submit', '提交')
+  submitAll.disabled = true
+  submitAll.onclick = () => {
+    const answers = ask.questions.map((qq: any, qi: number) => ({
+      questionId: qq.id,
+      selected: Array.from(allSelected.get(qi) || new Set()).map(i => qq.options[i].label)
+    }))
+    fetch('/answer?token=' + encodeURIComponent(localStorage.getItem('teamix_token') || ''), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: ask.id, answers })
+    })
+    cleanup()
+  }
+  d.appendChild(submitAll)
   document.getElementById('log')?.appendChild(d)
   scrollDown(true)
   pendingPrompts.push(cleanup)
 }
-
 // ── Compaction ──
 function showCompaction(c: any) {
   const d = el('div', 'compaction')
@@ -791,6 +805,12 @@ async function loadWorkflow() {
         if (data && data.stages && data.stages.length > 0) {
       wfStages.value = data.stages
       wfVisible.value = true
+      // Calculate active stage index: track furthest completed/in_progress
+      activeStageIdx = -1
+      for (let j = 0; j < data.stages.length; j++) {
+        if (data.stages[j].status === 'in_progress') { activeStageIdx = j; break }
+        if (data.stages[j].status === 'completed') activeStageIdx = j
+      }
       // Restore workflow name from localStorage on page refresh
       if (!wfName.value || wfName.value === '-') {
         const saved = localStorage.getItem('teamix_wf_name')
@@ -890,31 +910,6 @@ async function send() {
 
   // Workflow commands
   const lowerV = v.toLowerCase()
-  let isWfCmd = false
-  let wfAction = ''
-  if (lowerV.indexOf('跳转到') === 0 || lowerV.indexOf('跳到') === 0 || lowerV.indexOf('去') === 0 || lowerV.indexOf('go to') === 0 || lowerV.indexOf('jump') === 0) { isWfCmd = true; wfAction = 'setstage' }
-  else if (lowerV === '/advance' || lowerV === '进入下一阶段' || lowerV === '进入下一个阶段' || lowerV === '下一个阶段' || lowerV === '下一阶段' || lowerV === 'advance' || lowerV === 'next stage') { isWfCmd = true; wfAction = 'advance' }
-  else if (lowerV === '/rollback' || lowerV === '回到上一阶段' || lowerV === '上一阶段' || lowerV === 'rollback' || lowerV === 'previous stage') { isWfCmd = true; wfAction = 'rollback' }
-  if (!isWfCmd && (lowerV.indexOf('跳过') >= 0 || lowerV.indexOf('下一个阶段') >= 0 || lowerV.indexOf('继续') >= 0 || lowerV.indexOf('skip') >= 0 || lowerV.indexOf('next stage') >= 0 || (lowerV.indexOf('下一') >= 0 && lowerV.indexOf('阶段') >= 0))) { isWfCmd = true; wfAction = 'advance' }
-
-  if (isWfCmd) {
-    addUserMsg(v)
-    chatHistory.push(v)
-    if (chatHistory.length > 50) chatHistory.shift()
-    chatHistoryIndex = chatHistory.length
-    inputText.value = ''
-    if (wfAction === 'setstage') { const tk = localStorage.getItem('teamix_token'); if(tk) fetch('/submit?token='+encodeURIComponent(tk),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input:v})}); return }
-    const msg = wfAction === 'advance' ? '你确定要跳过当前阶段进入下一阶段吗？' : '确认回到上一阶段？'
-    showWfConfirm(msg, (ok: boolean) => {
-      if (!ok) return
-      const t = localStorage.getItem('teamix_token')
-      if (!t) return
-      fetch('/teamix/workflow/' + wfAction + '?token=' + encodeURIComponent(t), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
-      }).then(() => { loadWorkflow(); (async () => { const tk = localStorage.getItem('teamix_token'); if(tk) await fetch('/submit?token='+encodeURIComponent(tk),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input:v})}) })() }).catch(() => { loadWorkflow(); (async () => { const tk = localStorage.getItem('teamix_token'); if(tk) await fetch('/submit?token='+encodeURIComponent(tk),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input:'请继续'})}) })() })
-    })
-    return
-  }
 
   let submitInput = v
   if (goalMode.value && !v.startsWith('/goal')) {
@@ -1034,6 +1029,40 @@ function fetchNotifications() {
 }
 
 // ── Wf confirm ──
+function showJumpCard() {
+  const d = el('div', 'approval')
+  d.style.borderLeft = '3px solid var(--accent)'
+  d.style.marginBottom = '8px'
+  d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="approval__title">跳转到阶段</span></div><div class="approval__subject">请选择要跳转到的阶段：</div><div id="jump-stage-list" style="padding:6px 12px;border-bottom:1px solid var(--border);background:var(--bg-2)"></div><div class="approval__actions"><button class="approval__btn approval__btn--deny" id="jump-cancel">取消</button></div>'
+  document.getElementById('log')?.appendChild(d)
+  scrollDown(true)
+  document.getElementById('jump-cancel')!.onclick = () => { d.remove() }
+  const list = document.getElementById('jump-stage-list')!
+  list.innerHTML = '<div style="color:var(--muted-2);padding:4px 0">加载中...</div>'
+  const t = localStorage.getItem('teamix_token')
+  if (!t) return
+  fetch('/teamix/workflow?token=' + encodeURIComponent(t)).then(r => r.json()).then(data => {
+    if (!data || !data.stages || data.stages.length === 0) { list.innerHTML = '<div style="color:var(--muted-2);padding:4px 0">无可用阶段</div>'; return }
+    let html = ''
+    data.stages.forEach((s: any) => {
+      const active = s.status === 'in_progress' ? ' style="background:var(--accent-soft);color:var(--accent);font-weight:500"' : ''
+      html += '<div class="wf-jump-item" data-stage="' + s.stage + '"' + active + ' style="padding:5px 8px;cursor:pointer;border-radius:4px;margin:2px 0">' + (s.label || s.stage) + ' <span style="color:var(--muted-2);font-size:10px">(' + (s.status === 'in_progress' ? '当前' : s.status === 'completed' ? '已完成' : '待开始') + ')</span></div>'
+    })
+    list.innerHTML = html
+    list.querySelectorAll('.wf-jump-item').forEach((el) => {
+      (el as HTMLElement).onclick = () => {
+        const sn = el.getAttribute('data-stage')
+        const tk = localStorage.getItem('teamix_token')
+        if (!sn || !tk) return
+        fetch('/teamix/workflow/setstage?token=' + encodeURIComponent(tk), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: sn }) })
+          .then(r => {
+            if (r.ok) { d.remove(); loadWorkflow() }
+          })
+      }
+    })
+  }).catch(() => { list.innerHTML = '<div style="color:#f44336;padding:4px 0">加载失败</div>' })
+}
+
 function showStageApproval(reason: string) {
   const extra = stageCompleteExtra ? '\n\n' + stageCompleteExtra : ''
   const msg = (reason ? 'AI认为当前阶段已完成：' + reason : 'AI认为当前阶段已完成') + extra
@@ -1455,9 +1484,9 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
       <div class="toolbar__spacer"></div>
       <div class="wf-bar" id="wf-bar" v-if="wfVisible">
         <div v-for="(s, i) in wfStages" :key="s.stage || i" class="wf-step" @click="setStage(s.stage)" title="切换到此阶段">
-          <span class="wf-dot" :class="{ 'wf-dot--active': s.status === 'in_progress', 'wf-dot--done': s.status === 'completed' }"></span>
-          <span class="wf-label" :class="{ 'wf-label--active': s.status === 'in_progress', 'wf-label--done': s.status === 'completed' }">{{ s.label || s.stage }}</span>
-          <div class="wf-line" v-if="i < wfStages.length - 1" :class="{ 'wf-line--done': s.status === 'completed' }"></div>
+          <span class="wf-dot" :class="{ 'wf-dot--active': i === activeStageIdx, 'wf-dot--done': i < activeStageIdx }"></span>
+          <span class="wf-label" :class="{ 'wf-label--active': i === activeStageIdx, 'wf-label--done': i < activeStageIdx }">{{ s.label || s.stage }}</span>
+          <div class="wf-line" v-if="i < wfStages.length - 1" :class="{ 'wf-line--done': i < activeStageIdx }"></div>
         </div>
       </div>
       <div class="status" id="turn-info"></div>

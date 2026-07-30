@@ -102,21 +102,10 @@ func (ts *TeamixServer) handleSubmit(w http.ResponseWriter, r *http.Request, u *
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		if strings.HasPrefix(lower, "/setstage ") || strings.HasPrefix(lower, "跳到") {
-			var stageStr string
-			if strings.HasPrefix(lower, "/setstage ") {
-				stageStr = strings.TrimSpace(strings.TrimPrefix(lower, "/setstage "))
-			} else {
-				stageStr = strings.TrimSpace(strings.TrimPrefix(lower, "跳到"))
-			}
-			if stageStr != "" {
-				if st,ok:=u.workflow.FindStageByLabel(stageStr);ok{stageStr=string(st)}else if !u.workflow.SetStage(workflow.Stage(stageStr)){
-					http.Error(w, "invalid stage", http.StatusBadRequest)
-					return
-				}
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
+		if strings.HasPrefix(lower, "/setstage ") || strings.HasPrefix(lower, "跳转到") || strings.HasPrefix(lower, "跳到") {
+			// Keyword-based stage jumping has been removed.
+			// AI handles jump intent via __JUMP_TO__ marker.
+			// Fall through to normal AI processing.
 		}
 	}
 	// Inject current workflow stage prompt + overview

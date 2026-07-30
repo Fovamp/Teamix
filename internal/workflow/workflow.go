@@ -328,6 +328,19 @@ func (s *State) FindStageByLabel(input string) (Stage, bool) {
 			return st, true
 		}
 	}
+	// Fuzzy contains match on labels (outside the label loop)
+	if s.StageLabels != nil {
+		for _, st := range s.StageOrder {
+			if l, ok := s.StageLabels[st]; ok {
+				if strings.Contains(strings.ToLower(l), lower) {
+					return st, true
+				}
+			}
+			if strings.Contains(string(st), lower) {
+				return st, true
+			}
+		}
+	}
 	return "", false
 }
 

@@ -34,7 +34,7 @@ func (ts *TeamixServer) handleUserRole(w http.ResponseWriter, r *http.Request, u
 
 
 func (ts *TeamixServer) getArchitects() []string {
-	cfg, err := teamixconfig.Load(".")
+	cfg, err := teamixconfig.Load(ts.workspaceRoot)
 	if err != nil || cfg == nil {
 		return nil
 	}

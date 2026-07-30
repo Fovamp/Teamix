@@ -161,11 +161,13 @@ async function doDelete() {
     sessions.value = await api.sessions()
   } catch {}
   window.dispatchEvent(new Event("session-deleted"))
-  // Create new empty session so refresh doesn't revert to deleted session
-  const t = localStorage.getItem('teamix_token')
-  if (t) {
-    await fetch('/new?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' } })
-    sessions.value = await api.sessions()
+  // Only create new session if there are no remaining sessions
+  if (sessions.value.length === 0) {
+    const t = localStorage.getItem('teamix_token')
+    if (t) {
+      await fetch('/new?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+      sessions.value = await api.sessions()
+    }
   }
 }
 async function resumeSession(s: any, e?: Event) {
