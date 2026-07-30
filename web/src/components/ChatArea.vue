@@ -254,7 +254,7 @@ function handleNewSession() {
     todosState = []
     todosDismissed = false
     showTodoPanel.value = false
-    resetCumulativeStats()
+    resetCumulativeStats(); try { sessionStorage.removeItem('teamix_last_usage') } catch {}
     // Refresh sessions list so sidebar shows new session
     api.sessions().then(ss => {
       window.dispatchEvent(new CustomEvent('sessions-update', { detail: ss }))
@@ -299,6 +299,16 @@ function renderHistoryMessages(ms: any[]) {
     return m
   })
   Object.keys(toolCards).forEach(k => delete toolCards[k])
+  // Restore usage strip from sessionStorage
+  try {
+    const saved = sessionStorage.getItem('teamix_last_usage')
+    if (saved && messages.value.length > 0) {
+      const lastMsg = messages.value[messages.value.length - 1]
+      if (lastMsg.role === 'assistant' || lastMsg.role === 'user') {
+        showUsageStrip(JSON.parse(saved))
+      }
+    }
+  } catch {}
 }
 
 // ── SSE ──
@@ -715,6 +725,7 @@ function showCompaction(c: any) {
 
 // ── Usage strip ──
 function showUsageStrip(usage: any) {
+  try { sessionStorage.setItem('teamix_last_usage', JSON.stringify(usage)) } catch {}
   const log = document.getElementById('log')
   if (!log) return
   const strip = el('div', 'metric-strip')
@@ -1585,26 +1596,6 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
 </template>
 
 <style scoped>
-.msg--user {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-}
-.msg--user .msg__body {
-  max-width: 82%;
-  background: color-mix(in srgb, var(--accent) 16%, var(--bg-2));
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
-  border-radius: 14px;
-  color: var(--fg);
-  padding: 10px 16px;
-  position: relative;
-}
-.msg--user .msg__text {
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.65;
-}
-
 .msg__text { white-space: pre-wrap; word-break: break-word; line-height: 1.65; }
 
 :deep(.card) { background: var(--card); border-radius: var(--radius-lg); overflow: hidden; font-size: 14px; box-shadow: var(--shadow-sm); margin: 8px auto; transition: border-color .18s ease; max-width: 760px; }

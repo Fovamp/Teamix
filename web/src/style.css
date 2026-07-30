@@ -536,3 +536,24 @@ input,textarea{font:inherit;color:inherit}
 #wf-new-btn:hover{background:var(--accent-soft)!important;border-style:solid!important}
 #we-add-stage:hover{background:var(--panel)!important;border-color:var(--accent)!important;color:var(--accent)!important}
 
+
+/* User message bubble - right aligned */
+.msg--user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.msg--user .msg__body {
+  max-width: 82%;
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-2));
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 14px;
+  color: var(--fg);
+  padding: 10px 16px;
+  position: relative;
+}
+.msg--user .msg__text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.65;
+}
