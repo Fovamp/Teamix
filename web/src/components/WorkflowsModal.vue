@@ -185,6 +185,9 @@ function closeFse() { showFse.value = false }
 const dragIdx = ref(-1)
 const containerRef = ref<HTMLElement | null>(null)
 function onDragStart(e: DragEvent, idx: number) {
+  // Only allow drag from the handle, not from inputs
+  const handle = (e.target as HTMLElement).closest('.we-stage-drag-handle')
+  if (!handle) { e.preventDefault(); return }
   dragIdx.value = idx
   e.dataTransfer!.effectAllowed = 'move'
   e.dataTransfer!.setData('text/plain', '')
@@ -298,8 +301,8 @@ function cleanupDrag() {
         </div>
         <div><label style="font-size:11px;color:var(--muted-2)">阶段</label></div>
         <div ref="containerRef" style="display:flex;flex-direction:column;gap:4px;position:relative">
-          <div v-for="(s, i) in editStages" :key="s.id" draggable="true" class="stage-row" @dragstart="onDragStart($event, i)" @dragover="onDragOver($event, i)" @dragleave="onDragLeave($event)" @drop="onDrop($event, i)" @dragend="onDragEnd()" style="display:flex;gap:4px;align-items:center;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2)">
-            <span style="cursor:grab;color:var(--muted-2);font-size:14px;user-select:none">☰</span>
+          <div v-for="(s, i) in editStages" :key="s.id" class="stage-row" @dragover="onDragOver($event, i)" @dragleave="onDragLeave($event)" @drop="onDrop($event, i)" @dragend="onDragEnd()" style="display:flex;gap:4px;align-items:center;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2)">
+            <span draggable="true" class="we-stage-drag-handle" @dragstart="onDragStart($event, i)" style="cursor:grab;color:var(--muted-2);font-size:14px;user-select:none">☰</span>
             <input v-model="s.sname" placeholder="ID" style="width:80px;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font-size:11px;font-family:var(--mono)">
             <input v-model="s.label" placeholder="标签" style="width:80px;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font-size:11px" @input="updateDesc">
             <textarea v-model="s.prompt" placeholder="提示词" style="flex:1;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font-size:11px;height:28px;resize:vertical"></textarea>
