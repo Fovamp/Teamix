@@ -473,7 +473,7 @@ function addUserMsg(text: string) {
   hideWelcome()
   const d = el('div', 'msg msg--user')
   d.appendChild(el('span', 'msg__caret', '›'))
-  d.appendChild(el('div', 'msg__text', stripSystemTags(text)))
+  var _txt = el('div', 'msg__text', stripSystemTags(text)); _txt.style.whiteSpace = 'pre-wrap'; _txt.style.wordBreak = 'break-word'; d.appendChild(_txt)
   document.getElementById('log')?.appendChild(d)
   scrollDown(true)
   currentMsgEl = null; currentTextEl = null; currentReasoningEl = null
@@ -492,7 +492,7 @@ function appendText(t: string) {
   const m = ensureMsg()
   if (!currentTextEl) {
     currentTextEl = document.createElement('span')
-    currentTextEl.className = 'msg__text'
+    currentTextEl.className = 'msg__text'; currentTextEl.style.whiteSpace = 'pre-wrap'; currentTextEl.style.wordBreak = 'break-word'
     const cursor = m.querySelector('.cursor')
     if (cursor) cursor.remove()
     m.appendChild(currentTextEl)
