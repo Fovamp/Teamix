@@ -472,8 +472,7 @@ function showWelcome() {
 function addUserMsg(text: string) {
   hideWelcome()
   const d = el('div', 'msg msg--user')
-  d.appendChild(el('span', 'msg__caret', '›'))
-  var _txt = document.createElement('div'); _txt.className = 'msg__text'; _txt.textContent = text; d.appendChild(_txt)
+  var _body = document.createElement('div'); _body.className = 'msg__body'; var _txt = document.createElement('div'); _txt.className = 'msg__text'; _txt.textContent = text; _body.appendChild(_txt); d.appendChild(_body)
   document.getElementById('log')?.appendChild(d)
   scrollDown(true)
   currentMsgEl = null; currentTextEl = null; currentReasoningEl = null
@@ -1418,8 +1417,9 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
     <!-- Rendered messages -->
     <div v-for="(m, i) in messages" :key="i">
       <div v-if="m.role === 'user'" class="msg msg--user">
-        <span class="msg__caret"><span style="color:var(--accent);font-family:var(--mono);font-weight:600;font-size:15px">›</span></span>
-        <div class="msg__text" v-text="m.content"></div>
+        <div class="msg__body">
+          <div class="msg__text" v-text="m.content"></div>
+        </div>
       </div>
       <div v-else-if="m.role === 'assistant'" class="msg msg--assistant">
         <div v-if="m.reasoning" class="reasoning">
@@ -1585,6 +1585,26 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
 </template>
 
 <style scoped>
+.msg--user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.msg--user .msg__body {
+  max-width: 82%;
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-2));
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 14px;
+  color: var(--fg);
+  padding: 10px 16px;
+  position: relative;
+}
+.msg--user .msg__text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.65;
+}
+
 .msg__text { white-space: pre-wrap; word-break: break-word; line-height: 1.65; }
 
 :deep(.card) { background: var(--card); border-radius: var(--radius-lg); overflow: hidden; font-size: 14px; box-shadow: var(--shadow-sm); margin: 8px auto; transition: border-color .18s ease; max-width: 760px; }
