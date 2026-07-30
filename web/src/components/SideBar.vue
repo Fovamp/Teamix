@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { ref, computed, onMounted } from "vue"
 import { api } from "../api"
-const emit = defineEmits()
+const emit = defineEmits<{ (e: "stats"): void; (e: "branches"): void; (e: "models"): void; (e: "workflows"): void; (e: "settings"): void }>()
 const sessions = ref<any[]>([])
 const userName = ref("")
 const token = ref(localStorage.getItem("teamix_token") || "")
@@ -10,6 +10,9 @@ const ctxFill = ref(0)
 const ctxUsed = ref("0 tok")
 const ctxWindow = ref("0 tok")
 const statusModel = ref("-")
+const smCache = ref("—")
+const smCost = ref("—")
+const smBalance = ref("—")
 const deleteName = ref("")
 const showDelete = ref(false)
 const sessionFilter = ref("")
@@ -20,7 +23,8 @@ const filteredSessions = computed(() => {
 })
 onMounted(async () => {
   try { const r = await api.userRole(); userName.value = r.user } catch {}
-  try { const s = await api.status(); if (s && s.window > 0) { ctxFill.value = Math.round((s.used / s.window) * 100); const f = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.?0$/, "") + "k" : String(n)) + " tok"; ctxUsed.value = f(s.used); ctxWindow.value = f(s.window) }; statusModel.value = s?.label || "-"; running.value = s?.running || false } catch {}
+  try { const s = await api.status(); if (s && s.window > 0) { ctxFill.value = Math.round((s.used / s.window) * 100); const f = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.?0$/, "") + "k" : String(n)) + " tok"; ctxUsed.value = f(s.used); ctxWindow.value = f(s.window) }; statusModel.value = s?.label || "-"; running.value = s?.running || false
+  try { const st = await api.status(); if (st) { var _t = (st.cacheHit || 0) + (st.cacheMiss || 0); smCache.value = _t > 0 ? Math.round((st.cacheHit || 0) / _t * 100) + "%" : "-"; smCost.value = st.totalCost ? "$" + st.totalCost.toFixed(4) : "-"; if (st.balance && st.balance.display) { smBalance.value = st.balance.display } else { smBalance.value = "—" } } } catch {} } catch {}
   try { sessions.value = await api.sessions() } catch {}
 })
 async function newS() { try { await api.newSession(); sessions.value = await api.sessions() } catch {} }
@@ -35,7 +39,7 @@ async function doDelete() {
 <template>
   <aside class="sidebar">
     <div class="sidebar__brand"><svg class="sidebar__logo" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="currentColor"/><text x="12" y="16" text-anchor="middle" font-size="14" font-weight="700" fill="#000">T</text></svg><span class="sidebar__name">Teamix</span></div>
-    <div class="teamix-user-badge" v-if="userName" style="display:flex;align-items:center;gap:6px;padding:2px 14px 6px;font-size:12px;color:var(--muted-2)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span>{{ userName }}</span></div>
+    <div class="teamix-user-badge" v-if="userName" style="display:flex;align-items:center;gap:8px;padding:8px 14px 6px;font-size:13px;font-weight:600;color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span>{{ userName }}</span></div>
     <nav class="sidebar__nav">
       <div class="sidebar__item sidebar__item--accent" id="btn-new" @click="newS"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>新会话</span></div>
       <div class="sidebar__item" id="btn-compact" @click="compact"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg><span>压缩</span></div>
@@ -60,6 +64,11 @@ async function doDelete() {
     <div class="sidebar__section">
       <div class="sidebar__label">状态</div>
       <div class="sidebar__ctx"><div class="ctx-bar"><div class="ctx-bar__fill" :style="{ width: ctxFill + '%' }"></div></div><div class="ctx-label"><span>{{ ctxUsed }}</span><span>{{ ctxWindow }}</span></div></div>
+      <div class="status-metrics" id="status-metrics">
+        <div class="sm-item"><span class="sm-val" id="sm-cache">{{ smCache }}</span><span>缓存</span></div>
+        <div class="sm-item"><span class="sm-val" id="sm-cost">{{ smCost }}</span><span>费用</span></div>
+        <div class="sm-item"><span class="sm-val acc" id="sm-balance">{{ smBalance }}</span><span>余额</span></div>
+      </div>
       <div style="padding:4px 10px"><div class="status"><span class="status__dot" :class="{ 'status__dot--busy': running }"></span><span>{{ running ? "思考中..." : statusModel }}</span></div></div>
       <div style="padding:0 10px 6px"><button id="teamix-logout-btn" @click="lgout()" style="width:100%;padding:5px 0;border:1px solid var(--border);border-radius:6px;background:var(--bg-2);color:var(--muted-2);font-size:11px;cursor:pointer">{{ token ? "Logout" : "Login" }}</button></div>
     </div>

@@ -45,7 +45,7 @@ export function currentUser(): string {
 // Generic fetch helpers
 async function get(path: string): Promise<any> {
   const r = await fetch(path + authQuery(), { headers: authHeaders() })
-  if (!r.ok) throw new Error(await r.text())
+  if (!r.ok) { if (r.status === 401) { localStorage.removeItem('teamix_token'); localStorage.removeItem('teamix_user'); location.reload() }; throw new Error(await r.text()) }
   return r.json()
 }
 
@@ -55,7 +55,7 @@ async function post(path: string, body?: any): Promise<any> {
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: body ? JSON.stringify(body) : undefined,
   })
-  if (!r.ok) throw new Error(await r.text())
+  if (!r.ok) { if (r.status === 401) { localStorage.removeItem('teamix_token'); localStorage.removeItem('teamix_user'); location.reload() }; throw new Error(await r.text()) }
   const ct = r.headers.get("content-type")
   if (ct && ct.includes("application/json")) return r.json()
   return null

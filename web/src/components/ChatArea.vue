@@ -5,11 +5,14 @@ const messages = ref<any[]>([])
 const inputText = ref("")
 const running = ref(false)
 const statusText = ref("就绪")
+
+const cwd = ref("-")
+const wfName = ref("-")
 const wfStages = ref<any[]>([])
 const wfVisible = ref(false)
 let es: EventSource | null = null
-onMounted(() => { loadHistory(); connectSSE(); loadWorkflow() })
-onUnmounted(() => { if (es) es.close() })
+onMounted(() => { loadHistory(); connectSSE(); loadWorkflow(); window.addEventListener("workflow-changed", loadWorkflow) })
+onUnmounted(() => { if (es) es.close(); window.removeEventListener("workflow-changed", loadWorkflow) })
 async function loadHistory() {
   try { const h = await api.history(); messages.value = (h?.messages || h || []).filter((m: any) => m.role !== "system") } catch (e) { console.error("loadHistory", e) }
   try { const s = await api.status(); running.value = s.running } catch (e) { console.error("loadStatus", e) }
@@ -21,7 +24,8 @@ function connectSSE() {
   console.log("SSE connecting to", url)
   es = new EventSource(url)
   es.onerror = (err) => { console.error("SSE error", err) }
-  es.onmessage = function(evt) { console.log("SSE raw:", evt.data); try {
+  es.onerror = function() { if (!running.value) statusText.value = "已断开" }
+es.onmessage = function(evt) { console.log("SSE raw:", evt.data); try {
       const e = JSON.parse(evt.data)
       if (e.kind === "text") {
         const last = messages.value[messages.value.length - 1]
@@ -51,6 +55,13 @@ async function loadWorkflow() {
   try { const data = await api.workflow(); if (data && data.stages && data.stages.length > 0) { wfStages.value = data.stages; wfVisible.value = true } } catch {}
 }
 async function setStage(stage: string) { try { await api.workflowSetStage(stage); await loadWorkflow() } catch {} }
+
+
+async function sendExample(text: string) {
+  inputText.value = text
+  await send()
+}
+
 async function send() {
   const text = inputText.value.trim()
   if (!text) return
@@ -72,7 +83,23 @@ async function doStop() { await api.cancel(); running.value = false; statusText.
   <section class="transcript" id="log">
     <div v-if="messages.length === 0" class="welcome" id="welcome">
       <div class="welcome__brand"><svg width="240" height="56" viewBox="0 0 240 56"><text x="20" y="40" font-size="32" font-weight="700" fill="var(--fg)">Teamix</text><text x="140" y="40" font-size="20" fill="var(--accent)" font-weight="600">Cloud</text></svg></div>
-      <div class="welcome__tag">AI 编码助手</div>
+      <div class="welcome__tag">AI 协作开发平台</div>
+      <div class="welcome__meta">
+        <div class="welcome__pill"><strong>模型</strong><span id="welcome-model">{{ statusModel }}</span></div>
+        <div class="welcome__pill"><strong>工作区</strong><span id="welcome-cwd" class="welcome-cwd">{{ cwd }}</span></div>
+        <div class="welcome__pill"><strong>工作流</strong><span id="welcome-wf">{{ wfName }}</span></div>
+      </div>
+      <div class="welcome__hints">
+        <span><kbd>/</kbd> 命令</span>
+        <span><kbd>Shift+Tab</kbd> 计划</span>
+        <span><kbd>Ctrl+Y</kbd> YOLO</span>
+        <span><kbd>Esc Esc</kbd> 回退</span>
+      </div>
+      <div class="welcome__examples">
+        <button class="welcome__ex" @click="sendExample('解释代码')">解释代码</button>
+        <button class="welcome__ex" @click="sendExample('修复bug')">修复 bug</button>
+        <button class="welcome__ex" @click="sendExample('写测试')">写测试</button>
+      </div>
     </div>
     <div v-for="(m, i) in messages" :key="i">
       <div v-if="m.role === 'user'" class="msg msg--user">
