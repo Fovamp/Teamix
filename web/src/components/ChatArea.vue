@@ -473,7 +473,7 @@ function addUserMsg(text: string) {
   hideWelcome()
   const d = el('div', 'msg msg--user')
   d.appendChild(el('span', 'msg__caret', '›'))
-  var _txt = el('div', 'msg__text', stripSystemTags(text)); _txt.style.whiteSpace = 'pre-wrap'; _txt.style.wordBreak = 'break-word'; d.appendChild(_txt)
+  var _txt = document.createElement('div'); _txt.className = 'msg__text'; _txt.innerHTML = stripSystemTags(text).replace(/\n/g, '<br>'); d.appendChild(_txt)
   document.getElementById('log')?.appendChild(d)
   scrollDown(true)
   currentMsgEl = null; currentTextEl = null; currentReasoningEl = null
@@ -498,7 +498,7 @@ function appendText(t: string) {
     m.appendChild(currentTextEl)
     m.appendChild(el('span', 'cursor'))
   }
-  currentTextEl.textContent += stripSystemTags(t)
+  currentTextEl.innerHTML += stripSystemTags(t).replace(/\n/g, '<br>')
   scrollDown()
 }
 
@@ -1419,7 +1419,8 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
     <div v-for="(m, i) in messages" :key="i">
       <div v-if="m.role === 'user'" class="msg msg--user">
         <span class="msg__caret"><span style="color:var(--accent);font-family:var(--mono);font-weight:600;font-size:15px">›</span></span>
-        <div class="msg__text" style="white-space:pre-wrap;word-break:break-word" v-text="m.content"></div>
+        <div class="msg__text" v-html="m.content.replace(/\n/g, '<br>')"></div>
+/g, '<br>')"></div>
       </div>
       <div v-else-if="m.role === 'assistant'" class="msg msg--assistant">
         <div v-if="m.reasoning" class="reasoning">
@@ -1428,7 +1429,8 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
           </button>
           <div class="reasoning__body" v-show="m._showReasoning" v-text="m.reasoning"></div>
         </div>
-        <span class="msg__text" style="white-space:pre-wrap;word-break:break-word;display:inline-block;width:100%" v-text="m.content"></span>
+        <span class="msg__text" style="display:inline-block;width:100%" v-html="m.content.replace(/\n/g, '<br>')"></span>
+/g, '<br>')"></span>
       </div>
     </div>
 
