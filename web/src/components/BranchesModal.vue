@@ -44,12 +44,12 @@ async function switchBranch(id: string) {
       <span class="modal__close" @click="emit('close')">&times;</span>
     </div>
     <div style="padding:8px">
-      <div style="font-family:var(--mono);font-size:11px;color:var(--muted);padding:4px 8px" id="branches-tree">{{ treeText }}</div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--muted);padding:4px 8px;word-break:break-all;overflow-wrap:break-word;max-height:200px;overflow-y:auto" id="branches-tree">{{ treeText }}</div>
     </div>
     <div class="model-list" id="branches-list" style="padding:0 8px 8px;max-height:40vh;overflow-y:auto">
       <div v-if="branches.length === 0 && !loading" class="empty-note" style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">暂无会话分支</div>
-      <div v-for="b in branches" :key="branchValue(b, 'id', 'ID')" class="branch-item">
-        <div>
+      <div v-for="b in branches" :key="branchValue(b, 'id', 'ID')" class="branch-item" :title="branchTitle(b) + ' — ' + [branchValue(b, 'turns', 'Turns') ? branchValue(b, 'turns', 'Turns') + ' turns' : '', branchValue(b, 'model', 'Model'), branchValue(b, 'preview', 'Preview')].filter(Boolean).join(' · ')">
+        <div style="min-width:0;overflow:hidden">
           <div class="branch-item__title">{{ branchTitle(b) }}</div>
           <div class="branch-item__meta">{{ [branchValue(b, 'turns', 'Turns') ? branchValue(b, 'turns', 'Turns') + ' turns' : '', branchValue(b, 'model', 'Model'), branchValue(b, 'preview', 'Preview')].filter(Boolean).join(' · ') || branchValue(b, 'id', 'ID') }}</div>
         </div>
@@ -59,3 +59,12 @@ async function switchBranch(id: string) {
   </div>
 </div>
 </template>
+
+<style scoped>
+.branch-item { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-2); cursor: pointer; transition: all .15s; }
+.branch-item:hover { border-color: var(--accent); background: var(--card-hover); }
+.branch-item__title { font-family: var(--mono); font-size: 12.5px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branch-item__meta { font-size: 11px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branch-item__btn { padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-2); color: var(--fg-2); font-size: 11px; cursor: pointer; transition: all .15s; }
+.branch-item__btn:hover { border-color: var(--border-strong); color: var(--fg); }
+</style>

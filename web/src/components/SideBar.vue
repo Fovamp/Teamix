@@ -20,9 +20,26 @@ const sessionFilter = ref("")
 
 const hasVisibleHistory = ref(false)
 const checkpointCount = ref(0)
-const showMobileOverlay = ref(false)
+
+function hasContentInLog(): boolean {
+  const log = document.getElementById('log')
+  if (!log) return false
+  return !!log.querySelector('.msg--user, .msg--assistant, .card')
+}
+
+let _cpCache = 0
+function hasCheckpoints(): boolean { return _cpCache > 0 }
+function refreshCheckpoints() {
+  const t = localStorage.getItem('teamix_token')
+  if (!t) return
+  fetch('/checkpoints?token=' + encodeURIComponent(t))
+    .then(r => r.json()).then(cps => { _cpCache = Array.isArray(cps) ? cps.length : 0 })
+    .catch(() => {})
+}
 
 onMounted(() => {
+  refreshCheckpoints()
+  setInterval(refreshCheckpoints, 30000)
   window.addEventListener('status-update', (e) => {
     const s = (e as CustomEvent).detail;
     checkpointCount.value = s.checkpointCount || 0;
@@ -119,24 +136,37 @@ async function newS() {
   window.dispatchEvent(new Event("new-session-requested"))
 }
 async function compact() {
-  // Don't execute if disabled (no history)
-  if (!hasVisibleHistory.value) return
+  if (!hasContentInLog()) return
   try { await api.compact() } catch {}
 }
 async function rewind() {
-  // Don't execute if disabled (no checkpoints)
-  if (checkpointCount === 0) return
-  try { const c = await api.checkpoints(); if (c?.length) await api.rewind(c[c.length - 1].turn) } catch {}
+  if (!hasContentInLog()) return
+  window.dispatchEvent(new Event('open-rewind-picker'))
 }
 function lgout() { api.logout(); location.reload() }
-function confirmDelete(name: string) { deleteName.value = name; showDelete.value = true }
+function confirmDelete(s: any) {
+  deleteName.value = s.name || ''
+  showDelete.value = true
+}
 async function doDelete() {
+  const name = deleteName.value
+  if (!name) return
   try {
-    await api.deleteSession(deleteName.value)
-    showDelete.value = false
+    await api.deleteSession(name)
+  } catch (err) {
+    console.error('deleteSession error:', err)
+  }
+  showDelete.value = false
+  try {
     sessions.value = await api.sessions()
-    window.dispatchEvent(new Event("session-deleted"))
   } catch {}
+  window.dispatchEvent(new Event("session-deleted"))
+  // Create new empty session so refresh doesn't revert to deleted session
+  const t = localStorage.getItem('teamix_token')
+  if (t) {
+    await fetch('/new?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+    sessions.value = await api.sessions()
+  }
 }
 async function resumeSession(s: any, e?: Event) {
   if (s.current) return
@@ -161,8 +191,8 @@ async function resumeSession(s: any, e?: Event) {
     <div class="teamix-user-badge" v-if="userName" style="display:flex;align-items:center;gap:8px;padding:8px 14px 6px;font-size:13px;font-weight:600;color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span>{{ userName }}</span></div>
     <nav class="sidebar__nav">
       <div class="sidebar__item sidebar__item--accent" id="btn-new" @click="newS"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>新会话</span></div>
-      <div class="sidebar__item" id="btn-compact" @click="compact" :class="{ 'sidebar__item--disabled': !hasVisibleHistory.value }" :title="!hasVisibleHistory.value ? '先开始一段对话，再使用此操作。' : ''"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg><span>压缩</span></div>
-      <div class="sidebar__item" id="btn-rewind" @click="rewind" :class="{ 'sidebar__item--disabled': checkpointCount === 0 }" :title="checkpointCount === 0 ? '暂无可用检查点' : ''"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg><span>回退</span></div>
+      <div class="sidebar__item" id="btn-compact" @click="compact" :class="{ 'sidebar__item--disabled': !hasContentInLog() }"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg><span>压缩</span></div>
+      <div class="sidebar__item" id="btn-rewind" @click="rewind" :class="{ 'sidebar__item--disabled': !hasContentInLog() }"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg><span>回退</span></div>
       <div class="sidebar__item" id="btn-tree" @click="emit('branches')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><span>分支</span></div>
       <div class="sidebar__item" id="btn-models" @click="emit('models')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3"/><path d="M15 1v3"/><path d="M9 20v3"/><path d="M15 20v3"/><path d="M20 9h3"/><path d="M20 14h3"/><path d="M1 9h3"/><path d="M1 14h3"/></svg><span>模型</span></div>
       <div class="sidebar__item" id="btn-workflows" @click="emit('workflows')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>工作流</span></div>
@@ -176,7 +206,7 @@ async function resumeSession(s: any, e?: Event) {
       <div v-for="s in filteredSessions" :key="s.path" class="session-item" :class="{ 'session-item--active': s.current }" @click="resumeSession(s, $event)">
         <svg class="session-item__icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         <div class="session-item__body"><div class="session-item__title">{{ s.title || s.name }}</div><div class="session-item__meta">{{ s.turns ? s.turns + " 轮" : "" }}</div></div>
-        <button type="button" class="session-del" :data-name="s.name" title="删除会话" @click.stop="confirmDelete(s.name)">&times;</button>
+        <button type="button" class="session-del" :data-name="s.name" title="删除会话" @click.stop="confirmDelete(s)">&times;</button>
       </div>
       <div v-if="sessions.length === 0" style="padding:10px;color:var(--muted-2);font-size:12px">暂无会话</div>
     </div>
@@ -192,9 +222,7 @@ async function resumeSession(s: any, e?: Event) {
       <div style="padding:0 10px 6px"><button id="teamix-logout-btn" @click="lgout()" style="width:100%;padding:5px 0;border:1px solid var(--border);border-radius:6px;background:var(--bg-2);color:var(--muted-2);font-size:11px;cursor:pointer">{{ token ? "Logout" : "Login" }}</button></div>
     </div>
   </aside>
-  <!-- Mobile sidebar overlay -->
-  <div class="sidebar-overlay" id="sidebar-overlay" :class="{ 'sidebar-overlay--visible': showMobileOverlay }" @click="showMobileOverlay = false"></div>
-  <div class="modal-overlay" v-if="showDelete" @click.self="showDelete = false" style="display:flex;z-index:300">
+<div class="modal-overlay" v-if="showDelete" @click.self="showDelete = false" style="display:flex;z-index:300">
     <div class="modal" style="width:360px">
       <div class="modal__head"><span>删除会话</span><span class="modal__close" @click="showDelete = false">&times;</span></div>
       <div class="modal__body"><p>确定删除 "{{ deleteName }}"？</p><div class="dialog-actions"><button class="dialog-btn" @click="showDelete = false">取消</button><button class="dialog-btn dialog-btn--danger" @click="doDelete">删除</button></div></div>

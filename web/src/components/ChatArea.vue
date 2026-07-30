@@ -3,6 +3,15 @@ import { ref, onMounted, onUnmounted, nextTick } from "vue"
 import { api } from "../api"
 
 // ── helpers ──
+function stripSystemTags(text: string): string {
+  if (!text) return text
+  // Remove <reasoning-language>...</reasoning-language> and <capability-route>...</capability-route> blocks
+  return text.replace(/<reasoning-language>[\s\S]*?<\/reasoning-language>/g, '')
+    .replace(/<capability-route[\s\S]*?<\/capability-route>/g, '')
+    .replace(/--- Begin \[.*?\][\s\S]*?--- End \[.*?\] ---/g, '')
+    .trim()
+}
+
 function el(tag: string, cls?: string, text?: string) {
   const e = document.createElement(tag)
   if (cls) e.className = cls
@@ -72,6 +81,7 @@ let rewindCheckpoints: any[] = []
 let rewindStage = 0
 let rewindSelected = 0
 let rewindScope = 0
+const rewindKey = ref(0)
 const SCOPES = [
   { key: 'b', label: '代码 + 对话', scope: 'both' },
   { key: 'c', label: '仅对话', scope: 'conversation' },
@@ -143,7 +153,9 @@ let statusPollTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   loadHistory()
   connectSSE()
+  loadProjectInfo()
   loadWorkflow()
+  window.addEventListener("open-rewind-picker", () => { openRewindPicker() })
   window.addEventListener("model-changed", () => { setTimeout(fetchStatus, 500) })
   window.addEventListener("new-session-requested", () => { handleNewSession() })
   window.addEventListener("session-resumed", ((e: CustomEvent) => {
@@ -163,10 +175,13 @@ onMounted(() => {
   })
   window.addEventListener("workflow-changed", loadWorkflow)
   window.addEventListener("workflow-selected", ((e: CustomEvent) => {
-    wfName.value = e.detail || "-"
-    // Also update welcome-wf element directly
+    const name = e.detail || ""
+    wfName.value = name || "-"
+    // Persist to localStorage for page refresh
+    if (name) { localStorage.setItem('teamix_wf_name', name) }
+    else { localStorage.removeItem('teamix_wf_name') }
     const el = document.getElementById('welcome-wf')
-    if (el) el.textContent = e.detail || ""
+    if (el) el.textContent = name || ""
   }) as any)
   statusPollTimer = setInterval(fetchStatus, 30000)
   fetchStatus()
@@ -199,6 +214,19 @@ onUnmounted(() => {
 })
 
 // ── history load ──
+function loadProjectInfo() {
+  api.project().then(data => {
+    if (data && data.workspaceRoot) {
+      const fullPath = data.workspaceRoot.replace(/\\/g, '/')
+      let parts = fullPath.split('/').filter(Boolean)
+      if (parts.length > 0 && parts[0].endsWith(':')) parts[0] = parts[0].slice(0, -1)
+      cwdTitle.value = '/' + parts.join('/')
+      if (parts.length <= 2) { cwd.value = '/' + parts.join('/') }
+      else { cwd.value = '/' + parts.slice(0, 2).join('/') + '/.../' + parts.slice(-2).join('/') }
+    }
+  }).catch(() => {})
+}
+
 function handleNewSession() {
   console.log('handleNewSession called, hasVisibleHistory:', hasVisibleHistory.value, 'chatHistory.length:', chatHistory.length)
   const hasContent = hasVisibleHistory.value || chatHistory.length > 0
@@ -249,6 +277,7 @@ async function loadHistory() {
 function renderHistoryMessages(ms: any[]) {
   if (!ms || ms.length === 0) {
     hasVisibleHistory.value = false
+    window.dispatchEvent(new CustomEvent('hasVisibleHistory-changed', { detail: false }))
     checkpointCount = 0
     return
   }
@@ -259,9 +288,14 @@ function renderHistoryMessages(ms: any[]) {
     return false
   })
   hasVisibleHistory.value = visible
+  window.dispatchEvent(new CustomEvent('hasVisibleHistory-changed', { detail: visible }))
   if (!visible) return
   hideWelcome()
-  messages.value = ms.filter((m: any) => m.role !== 'system')
+  messages.value = ms.filter((m: any) => m.role !== 'system').map((m: any) => {
+    if (m.content) m.content = stripSystemTags(m.content)
+    if (m.reasoning) m.reasoning = stripSystemTags(m.reasoning)
+    return m
+  })
   Object.keys(toolCards).forEach(k => delete toolCards[k])
 }
 
@@ -358,6 +392,8 @@ function connectSSE() {
           loadWorkflow()
           if (!firstTurnDone && !e.err) { firstTurnDone = true; loadSessions() }
           if (pendingPages.length > 0 && !e.err) { showOpenPageCard(pendingPages); pendingPages = [] }
+          if (stageCompletePending && !e.err) { showStageApproval(stageCompleteReason) }
+          window._wfLastText = ''
           break
       }
     } catch (ex) { console.error("SSE parse error", ex, evt.data) }
@@ -428,7 +464,7 @@ function addUserMsg(text: string) {
   hideWelcome()
   const d = el('div', 'msg msg--user')
   d.appendChild(el('span', 'msg__caret', '›'))
-  d.appendChild(el('div', 'msg__text', text))
+  d.appendChild(el('div', 'msg__text', stripSystemTags(text)))
   document.getElementById('log')?.appendChild(d)
   scrollDown(true)
   currentMsgEl = null; currentTextEl = null; currentReasoningEl = null
@@ -453,7 +489,7 @@ function appendText(t: string) {
     m.appendChild(currentTextEl)
     m.appendChild(el('span', 'cursor'))
   }
-  currentTextEl.textContent += t
+  currentTextEl.textContent += stripSystemTags(t)
   scrollDown()
 }
 
@@ -475,7 +511,7 @@ function appendReasoning(t: string) {
     else m.appendChild(w)
     currentReasoningEl = body
   }
-  currentReasoningEl.textContent += t
+  currentReasoningEl.textContent += stripSystemTags(t)
   scrollDown()
 }
 
@@ -752,16 +788,20 @@ function fetchTodos() {
 async function loadWorkflow() {
   try {
     const data = await api.workflow()
-    if (data && data.stages && data.stages.length > 0) {
+        if (data && data.stages && data.stages.length > 0) {
       wfStages.value = data.stages
       wfVisible.value = true
-      if (data.current) {
-        const cur = data.stages.find((s: any) => s.stage === data.current)
-        // wfName is set by workflow-selected event
+      // Restore workflow name from localStorage on page refresh
+      if (!wfName.value || wfName.value === '-') {
+        const saved = localStorage.getItem('teamix_wf_name')
+        if (saved) {
+          wfName.value = saved
+          const el = document.getElementById('welcome-wf')
+          if (el) el.textContent = saved
+        }
       }
-    } else { wfVisible.value = false }
-  } catch { wfVisible.value = false }
-}
+    } else { wfVisible.value = false; wfName.value = '' }
+  } catch { wfVisible.value = false; wfName.value = '' }}
 
 async function setStage(stage: string) {
   if (running.value) return
@@ -918,12 +958,12 @@ function openRewindPicker() {
       checkpointCount = Array.isArray(cps) ? cps.length : 0
       if (!cps || cps.length === 0) { showNotice('暂无可用检查点', 'warn'); return }
       rewindCheckpoints = cps; rewindStage = 0; rewindSelected = 0; rewindScope = 0
-      showRewind.value = true
+      rewindKey.value++; showRewind.value = true
     }).catch(() => { })
 }
 
-function selectRewindCheckpoint(i: number) { rewindSelected = i }
-function advanceRewindStage() { rewindStage = 1; rewindScope = 0 }
+function selectRewindCheckpoint(i: number) { rewindSelected = i; rewindKey.value++ }
+function advanceRewindStage() { rewindStage = 1; rewindScope = 0; rewindKey.value++ }
 
 function applyRewind() {
   const cp = rewindCheckpoints[rewindSelected]
@@ -962,21 +1002,18 @@ function fetchStatus() {
     bypassMode.value = tam === 'yolo'
     goalText.value = (s.goal || '').trim()
     goalActive.value = goalText.value !== '' && (s.goalStatus || '') === 'running'
-    const wr = s.workspaceRoot || s.cwd
-    if (wr) {
-      const fullPath = wr.replace(/\\/g, '/')
-      let parts = fullPath.split('/').filter(Boolean)
-      // Handle Windows drive letter: 'C:' -> 'C'
-      if (parts.length > 0 && parts[0].endsWith(':')) {
-        parts[0] = parts[0].slice(0, -1)
-      }
-      cwdTitle.value = '/' + parts.join('/')
-      if (parts.length <= 2) {
-        cwd.value = '/' + parts.join('/')
-      } else {
-        // First 2 + ... + last 2
-        cwd.value = '/' + parts.slice(0, 2).join('/') + '/.../' + parts.slice(-2).join('/')
-      }
+    // Fetch workspace root from /teamix/project (not from status.cwd which is sessions dir)
+    if (cwd.value === '-') {
+      api.project().then(data => {
+        if (data && data.workspaceRoot) {
+          const fullPath = data.workspaceRoot.replace(/\\/g, '/')
+          let parts = fullPath.split('/').filter(Boolean)
+          if (parts.length > 0 && parts[0].endsWith(':')) parts[0] = parts[0].slice(0, -1)
+          cwdTitle.value = '/' + parts.join('/')
+          if (parts.length <= 2) { cwd.value = '/' + parts.join('/') }
+          else { cwd.value = '/' + parts.slice(0, 2).join('/') + '/.../' + parts.slice(-2).join('/') }
+        }
+      }).catch(() => {})
     }
   }).catch(() => { })
 }
@@ -997,6 +1034,56 @@ function fetchNotifications() {
 }
 
 // ── Wf confirm ──
+function showStageApproval(reason: string) {
+  const extra = stageCompleteExtra ? '\n\n' + stageCompleteExtra : ''
+  const msg = (reason ? 'AI认为当前阶段已完成：' + reason : 'AI认为当前阶段已完成') + extra
+  const d = el('div', 'approval')
+  d.style.borderLeft = '3px solid var(--accent)'
+  d.style.marginBottom = '8px'
+  d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="approval__title">阶段完成</span></div><div class="approval__subject">' + msg + '</div><div class="approval__actions"><button class="approval__btn approval__btn--allow" id="sa-confirm"><span class="approval__key">Y</span> 确认进入下一阶段</button><button class="approval__btn approval__btn--deny" id="sa-cancel"><span class="approval__key">N</span> 继续当前阶段</button><button class="approval__btn" id="sa-jump" style="border:1px solid var(--border);color:var(--fg-2);font-size:11px"><span class="approval__key">J</span> 跳转到...</button></div><div id="sa-jump-list" style="display:none;border-top:1px solid var(--border);padding:8px 12px;font-size:12px"></div>'
+  document.getElementById('log')?.appendChild(d)
+  scrollDown(true)
+  document.getElementById('sa-confirm')!.onclick = () => {
+    stageCompletePending = false; stageCompleteReason = ''; stageCompleteExtra = ''
+    d.remove()
+    const t = localStorage.getItem('teamix_token')
+    if (!t) return
+    fetch('/teamix/workflow/advance?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(() => { loadWorkflow(); fetch('/submit?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: '请继续' }) }) })
+      .catch(() => { loadWorkflow(); fetch('/submit?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: '请继续' }) }) })
+  }
+  document.getElementById('sa-cancel')!.onclick = () => {
+    stageCompletePending = false; stageCompleteReason = ''; stageCompleteExtra = ''
+    d.remove()
+  }
+  document.getElementById('sa-jump')!.onclick = () => {
+    const list = document.getElementById('sa-jump-list')!
+    if (list.style.display !== 'none') { list.style.display = 'none'; return }
+    list.innerHTML = '<div style="color:var(--muted-2);padding:4px 0">加载中...</div>'
+    list.style.display = 'block'
+    const t = localStorage.getItem('teamix_token')
+    if (!t) return
+    fetch('/teamix/workflow?token=' + encodeURIComponent(t)).then(r => r.json()).then(data => {
+      if (!data || !data.stages || data.stages.length === 0) { list.innerHTML = '<div style="color:var(--muted-2);padding:4px 0">无可用阶段</div>'; return }
+      let html = ''
+      data.stages.forEach((s: any) => {
+        const active = s.status === 'in_progress' ? ' style="background:var(--accent-soft);color:var(--accent);font-weight:500"' : ''
+        html += '<div class="wf-jump-item" data-stage="' + s.stage + '"' + active + ' style="padding:5px 8px;cursor:pointer;border-radius:4px;margin:2px 0">' + (s.label || s.stage) + ' <span style="color:var(--muted-2);font-size:10px">(' + s.status + ')</span></div>'
+      })
+      list.innerHTML = html
+      list.querySelectorAll('.wf-jump-item').forEach((el) => {
+        (el as HTMLElement).onclick = () => {
+          const sn = el.getAttribute('data-stage')
+          const tk = localStorage.getItem('teamix_token')
+          if (!sn || !tk) return
+          fetch('/teamix/workflow/setstage?token=' + encodeURIComponent(tk), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: sn }) })
+            .then(r => { if (r.ok) { stageCompletePending = false; d.remove(); loadWorkflow(); fetch('/submit?token=' + encodeURIComponent(tk), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: '请继续' }) }) } })
+        }
+      })
+    }).catch(() => { list.innerHTML = '<div style="color:#f44336;padding:4px 0">加载失败</div>' })
+  }
+}
+
 function showWfConfirm(msg: string, callback: (ok: boolean) => void) {
   const d = el('div', 'approval')
   d.style.borderLeft = '3px solid var(--accent)'
@@ -1066,6 +1153,25 @@ function scrollDown(force?: boolean) {
 
 // ── Global keydown ──
 function onGlobalKeydown(e: KeyboardEvent) {
+  // rewind picker nav
+  if (showRewind.value) {
+    if (e.key === 'Escape') {
+      if (rewindStage === 0) { showRewind.value = false }
+      else { rewindStage = 0 }
+      e.preventDefault(); return
+    }
+    if (rewindStage === 0) {
+      if (e.key === 'j' || e.key === 'ArrowDown') { rewindSelected = Math.min(rewindSelected + 1, rewindCheckpoints.length - 1); rewindKey.value++; e.preventDefault(); return }
+      if (e.key === 'k' || e.key === 'ArrowUp') { rewindSelected = Math.max(rewindSelected - 1, 0); rewindKey.value++; e.preventDefault(); return }
+      if (e.key === 'Enter') { rewindStage = 1; rewindScope = 0; rewindKey.value++; e.preventDefault(); return }
+    } else {
+      if (e.key === 'j' || e.key === 'ArrowDown') { rewindScope = Math.min(rewindScope + 1, SCOPES.length - 1); rewindKey.value++; e.preventDefault(); return }
+      if (e.key === 'k' || e.key === 'ArrowUp') { rewindScope = Math.max(rewindScope - 1, 0); rewindKey.value++; e.preventDefault(); return }
+      if (e.key === 'Enter') { applyRewind(); e.preventDefault(); return }
+      const idx = SCOPES.findIndex(s => s.key === e.key)
+      if (idx >= 0) { rewindScope = idx; applyRewind(); e.preventDefault(); return }
+    }
+  }
   // slash menu nav
   if (slashOpen.value && document.activeElement === document.getElementById('in')) {
     if (e.key === 'ArrowDown') { e.preventDefault(); slashIndex = Math.min(slashIndex + 1, slashFiltered.length - 1); updateSlashMenu(); return }
@@ -1265,7 +1371,7 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
       <div class="welcome__meta">
         <div class="welcome__pill"><strong>模型</strong><span id="welcome-model">{{ statusModel }}</span></div>
         <div class="welcome__pill"><strong>工作区</strong><span id="welcome-cwd" :title="cwdTitle" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom;cursor:default">{{ cwd }}</span></div>
-        <div class="welcome__pill"><strong>工作流</strong><span id="welcome-wf">{{ wfName === '-' ? '' : wfName }}</span></div>
+        <div class="welcome__pill" v-show="wfName && wfName !== '-'"><strong>工作流</strong><span id="welcome-wf">{{ wfName || '-' }}</span></div>
       </div>
       <div class="welcome__hints">
         <span><kbd>/</kbd> 命令</span>
@@ -1414,7 +1520,7 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
           回退 — 选择轮次
         </div>
         <div class="rewind-picker__list">
-          <div v-for="(cp, i) in rewindCheckpoints" :key="cp.turn"
+          <div v-for="(cp, i) in rewindCheckpoints" :key="'cp-' + i + '-' + rewindKey"
             class="rewind-picker__item" :class="{ 'rewind-picker__item--active': i === rewindSelected }"
             @click="selectRewindCheckpoint(i); advanceRewindStage()">
             <span class="rewind-picker__turn">#{{ cp.turn }}</span>
@@ -1433,9 +1539,9 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
           第 #{{ rewindCheckpoints[rewindSelected]?.turn }} 轮 — 选择操作
         </div>
         <div class="rewind-picker__scopes">
-          <div v-for="(sc, i) in SCOPES" :key="sc.scope"
+          <div v-for="(sc, i) in SCOPES" :key="'sc-' + i + '-' + rewindKey"
             class="rewind-picker__scope" :class="{ 'rewind-picker__scope--active': i === rewindScope }"
-            @click="rewindScope = i; applyRewind()">
+            @click="rewindScope = i; rewindKey++; applyRewind()">
             <span class="rewind-picker__scope-key">{{ sc.key }}</span>
             {{ sc.label }}
           </div>

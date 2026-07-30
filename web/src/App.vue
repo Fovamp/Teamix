@@ -17,7 +17,6 @@ const showBranches = ref(false)
 const showModels = ref(false)
 const showWorkflows = ref(false)
 const showSettings = ref(false)
-const showMobileSidebar = ref(false)
 
 // Resizable dividers
 onMounted(() => {
@@ -82,9 +81,8 @@ onMounted(() => {
 
 <template>
   <LoginOverlay v-if="showLogin" @login="showLogin = false" />
-  <div v-else class="app" :class="{ 'sidebar--open': showMobileSidebar }">
-    <button id="menu-btn" @click="showMobileSidebar = !showMobileSidebar"
-      class="mobile-menu-btn">&#9776;</button>
+  <div v-else class="app">
+
     <SideBar @stats="showStats = true" @branches="showBranches = true" @models="showModels = true" @workflows="showWorkflows = true" @settings="showSettings = true" />
     <ChatArea />
     <RightPanel />
@@ -104,12 +102,5 @@ onMounted(() => {
 .right-panel { grid-column: 3; grid-row: 1 / 4; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--border); }
 .sidebar-overlay { display: none; position: fixed; inset: 0; background: oklch(0% 0 0/.5); z-index: 40; }
 .sidebar-overlay--visible { display: block; }
-.mobile-menu-btn { display: none; position: fixed; top: 12px; left: 12px; z-index: 60; width: 36px; height: 36px; border-radius: 8px; background: var(--panel); border: 1px solid var(--border); color: var(--fg); align-items: center; justify-content: center; font-size: 18px; cursor: pointer; }
-@media (max-width: 768px) {
-  .sidebar { position: fixed; left: -280px; top: 0; bottom: 0; width: 260px; z-index: 50; transition: left .25s ease; }
-  .sidebar--open .sidebar { left: 0; }
-  .app .mobile-menu-btn { display: flex !important; }
-  .right-panel { display: none !important; }
-  .app { grid-template-columns: 1fr; }
-}
+
 </style>

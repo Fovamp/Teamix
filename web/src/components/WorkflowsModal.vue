@@ -26,6 +26,13 @@ async function selectWf(name: string) {
   if (!name) return
   try { await api.workflowSelect(name) } catch {}
   emit("close")
+  if (name === 'none') {
+    // Clear workflow from localStorage
+    localStorage.removeItem('teamix_wf_name')
+    window.dispatchEvent(new CustomEvent("workflow-changed"))
+    window.dispatchEvent(new CustomEvent("workflow-selected", { detail: '' }))
+    return
+  }
   const tpl = templates.value.find((t: any) => t.name === name)
   const label = tpl?.label || tpl?.name || name
   window.dispatchEvent(new CustomEvent("workflow-changed"))
@@ -59,8 +66,8 @@ async function deleteWf(name: string) {
         <div v-else-if="templates.length === 0" style="color:var(--muted-2);text-align:center;padding:20px;font-size:13px">暂无工作流模板</div>
         <div v-for="t in templates" :key="t.name" class="model-item" @click="selectWf(t.name)" style="cursor:pointer">
           <div>
-            <div class="model-item__title" :style="t.name ? {} : { color: 'var(--muted)' }">{{ t.label || t.name }}</div>
-            <div class="model-item__meta">{{ t.description || '' }}</div>
+            <div class="model-item__title" :style="t.name === 'none' ? { color: 'var(--muted)' } : {}">{{ t.name === 'none' ? '自由对话' : (t.label || t.name) }}</div>
+            <div class="model-item__meta">{{ t.name === 'none' ? '灵活模式，自由对话' : (t.description || '') }}</div>
           </div>
           <button class="branch-item__btn" @click.stop="selectWf(t.name)">选择</button>
         </div>
