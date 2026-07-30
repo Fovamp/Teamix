@@ -182,22 +182,73 @@ function saveFse() {
 
 function closeFse() { showFse.value = false }
 
+const dragIdx = ref(-1)
+const containerRef = ref<HTMLElement | null>(null)
 function onDragStart(e: DragEvent, idx: number) {
-  (e.target as HTMLElement).parentElement?.parentElement?.setAttribute('data-drag-idx', String(idx))
-  e.dataTransfer?.setData('text/plain', '')
+  dragIdx.value = idx
+  e.dataTransfer!.effectAllowed = 'move'
+  e.dataTransfer!.setData('text/plain', '')
+  const row = (e.target as HTMLElement).closest('.stage-row') as HTMLElement
+  if (row) row.classList.add('dragging')
 }
 function onDragOver(e: DragEvent, idx: number) {
   e.preventDefault()
-  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  e.dataTransfer!.dropEffect = 'move'
+  if (dragIdx.value < 0 || dragIdx.value === idx) return
+  const container = containerRef.value
+  if (!container) return
+  container.querySelectorAll('.stage-row').forEach(r => r.classList.remove('drag-before'))
+  const row = (e.target as HTMLElement).closest('.stage-row') as HTMLElement
+  if (!row) return
+  const after = e.offsetY > row.offsetHeight / 2
+  const target = after ? row.nextElementSibling : row
+  if (target && target.classList.contains('stage-row')) target.classList.add('drag-before')
+}
+function onDragLeave(e: DragEvent) {
+  const row = (e.target as HTMLElement).closest('.stage-row')
+  if (row) row.classList.remove('drag-before')
 }
 function onDrop(e: DragEvent, idx: number) {
   e.preventDefault()
-  const from = parseInt((e.target as HTMLElement).closest('[data-drag-idx]')?.getAttribute('data-drag-idx') || '-1')
-  if (from >= 0 && from !== idx) {
-    const arr = editStages.value
-    const tmp = arr[from]
-    arr[from] = arr[idx]
-    arr[idx] = tmp
+  const from = dragIdx.value
+  if (from < 0 || from === idx) {
+    cleanupDrag(); return
+  }
+  const arr = editStages.value
+  const item = arr.splice(from, 1)[0]
+  const after = e.offsetY > (e.target as HTMLElement).closest('.stage-row')?.offsetHeight! / 2
+  const insertAt = after ? idx + (from < idx ? 0 : 1) : idx
+  arr.splice(insertAt, 0, item)
+  cleanupDrag()
+  updateDesc()
+}
+function onDragEnd() { cleanupDrag() }
+function onTailDragOver(e: DragEvent) {
+  if (dragIdx.value < 0) return
+  e.dataTransfer!.dropEffect = 'move'
+  const container = containerRef.value
+  if (container) container.querySelectorAll('.stage-row').forEach(r => r.classList.remove('drag-before'))
+  const tail = (e.target as HTMLElement).closest('.stage-tail') as HTMLElement
+  if (tail) tail.style.borderTopColor = 'var(--accent)'
+}
+function onTailDragLeave(e: DragEvent) {
+  const tail = (e.target as HTMLElement).closest('.stage-tail') as HTMLElement
+  if (tail) tail.style.borderTopColor = 'transparent'
+}
+function onTailDrop(e: DragEvent) {
+  const from = dragIdx.value
+  if (from < 0) { cleanupDrag(); return }
+  const arr = editStages.value
+  const item = arr.splice(from, 1)[0]
+  arr.push(item)
+  cleanupDrag()
+  updateDesc()
+}
+function cleanupDrag() {
+  dragIdx.value = -1
+  const container = containerRef.value
+  if (container) {
+    container.querySelectorAll('.stage-row').forEach(r => r.classList.remove('drag-before', 'dragging'))
   }
 }
 </script>
@@ -246,8 +297,8 @@ function onDrop(e: DragEvent, idx: number) {
           <div style="flex:2"><label style="font-size:11px;color:var(--muted-2)">描述</label><input v-model="editDesc" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:13px"></div>
         </div>
         <div><label style="font-size:11px;color:var(--muted-2)">阶段</label></div>
-        <div style="display:flex;flex-direction:column;gap:4px">
-          <div v-for="(s, i) in editStages" :key="s.id" draggable="true" @dragstart="onDragStart($event, i)" @dragover="onDragOver($event, i)" @drop="onDrop($event, i)" style="display:flex;gap:4px;align-items:center;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2)">
+        <div ref="containerRef" style="display:flex;flex-direction:column;gap:4px;position:relative">
+          <div v-for="(s, i) in editStages" :key="s.id" draggable="true" class="stage-row" @dragstart="onDragStart($event, i)" @dragover="onDragOver($event, i)" @dragleave="onDragLeave($event)" @drop="onDrop($event, i)" @dragend="onDragEnd()" style="display:flex;gap:4px;align-items:center;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2)">
             <span style="cursor:grab;color:var(--muted-2);font-size:14px;user-select:none">☰</span>
             <input v-model="s.sname" placeholder="ID" style="width:80px;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font-size:11px;font-family:var(--mono)">
             <input v-model="s.label" placeholder="标签" style="width:80px;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font-size:11px" @input="updateDesc">
@@ -256,6 +307,7 @@ function onDrop(e: DragEvent, idx: number) {
             <button class="stage-del-btn" style="width:20px;height:20px;border:none;border-radius:3px;background:transparent;color:var(--danger);cursor:pointer;font-size:14px" @click="removeStage(i)">×</button>
           </div>
         </div>
+        <div class="stage-tail" @dragover.prevent="onTailDragOver($event)" @dragleave="onTailDragLeave($event)" @drop.prevent="onTailDrop($event)" style="height:6px;transition:border-top .15s;border-top:2px solid transparent"></div>
         <button @click="addStage" class="add-stage-btn" style="width:100%;padding:7px 0;border:1px dashed var(--accent);border-radius:6px;background:transparent;color:var(--accent);font-size:12px;cursor:pointer">＋ 新增阶段</button>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;padding:8px 12px;border-top:1px solid var(--border)">
@@ -305,6 +357,11 @@ function onDrop(e: DragEvent, idx: number) {
   white-space: nowrap;
 }
 .confirm-modal__btn { padding: 7px 20px; border-radius: var(--radius); font-size: 12px; cursor: pointer; }
+.stage-row { cursor: grab; transition: border-color .15s, background .15s; }
+.stage-row:active { cursor: grabbing; }
+.stage-row.drag-before { border-top: 2px solid var(--accent) !important; border-radius: 0 !important; }
+.stage-row.dragging { opacity: .4; }
+.we-stage-drag-handle:hover { color: var(--accent) !important; }
 .wf-new-btn:hover {
   border-color: var(--accent) !important;
   background: var(--accent-soft) !important;
