@@ -3,7 +3,10 @@ import { ref, watch, onMounted } from "vue"
 import { api } from "../api"
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: "close"): void }>()
-const templates = ref<any[]>([])
+const templates = ref<any[]>([])
+const showConfirm = ref(false)
+const confirmMsg = ref('')
+const currentDeleteName = ref('')
 const loading = ref(false)
 const isArchitect = ref(false)
 
@@ -46,11 +49,17 @@ async function selectWf(name: string) {
   window.dispatchEvent(new CustomEvent("workflow-selected", { detail: label }))
 }
 
-async function deleteWf(name: string) {
+function showDeleteConfirm(name: string) {
   if (!name || name === 'none') return
   const tpl = templates.value.find((t: any) => t.name === name)
   const label = tpl?.label || name
-  if (!confirm('确定删除工作流 "' + label + '" 吗？')) return
+  currentDeleteName.value = name
+  confirmMsg.value = '确定删除工作流\u201c' + label + '\u201d吗？'
+  showConfirm.value = true
+}
+
+async function deleteWf(name: string) {
+  if (!name || name === 'none') return
   try {
     await fetch("/teamix/workflows/template/delete?token=" + encodeURIComponent(localStorage.getItem("teamix_token") || ""), {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -189,18 +198,19 @@ function onDrop(e: DragEvent, idx: number) {
         <div v-if="loading" style="color:var(--muted-2);text-align:center;padding:20px;font-size:13px">加载中...</div>
         <div v-else-if="templates.length === 0" style="color:var(--muted-2);text-align:center;padding:20px;font-size:13px">暂无工作流模板</div>
         <div v-for="t in templates" :key="t.name" class="model-item" @click="selectWf(t.name)" style="cursor:pointer">
-          <div>
+          <div style="min-width:0">
             <div class="model-item__title" :style="t.name === 'none' ? { color: 'var(--muted)' } : {}">{{ t.name === 'none' ? '自由对话' : (t.label || t.name) }}</div>
-            <div class="model-item__meta">{{ t.name === 'none' ? '灵活模式，自由对话' : (t.description || '') }}</div>
+            <div class="model-item__meta" :title="t.name === 'none' ? '灵活模式，自由对话' : (t.description || '')">{{ t.name === 'none' ? '灵活模式，自由对话' : (t.description || '') }}</div>
+            <button v-if="isArchitect && t.name && t.name !== 'none'" class="branch-item__btn" style="color:var(--danger);margin-top:6px;width:80%" @click.stop="showDeleteConfirm(t.name)">删除工作流</button>
           </div>
-          <div style="display:flex;gap:4px;align-items:center">
-            <button v-if="isArchitect && t.name && t.name !== 'none'" class="branch-item__btn" @click.stop="openEditor(t.name)" style="margin-right:4px">编辑</button>
-            <button v-if="isArchitect && t.name && t.name !== 'none'" class="branch-item__btn" style="color:var(--danger)" @click.stop="deleteWf(t.name)">删除</button>
+          <div style="display:flex;flex-direction:column;gap:4px;align-items:stretch">
+            <button v-if="isArchitect && t.name && t.name !== 'none'" class="branch-item__btn" @click.stop="openEditor(t.name)">编辑</button>
+            
             <button class="branch-item__btn" @click.stop="selectWf(t.name)">选择</button>
           </div>
         </div>
         <div v-if="isArchitect" style="margin-top:8px;text-align:center">
-          <button class="branch-item__btn" @click="openEditor()" style="width:100%;padding:8px;border:1px dashed var(--border);background:transparent;color:var(--muted)">+ 新增工作流</button>
+          <button class="branch-item__btn wf-new-btn" @click="openEditor()" style="width:100%;padding:7px 0;border:1px dashed var(--accent);border-radius:6px;background:transparent;color:var(--accent);font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">＋ 新增工作流</button>
         </div>
       </div>
     </div>
@@ -226,15 +236,71 @@ function onDrop(e: DragEvent, idx: number) {
             <input v-model="s.sname" placeholder="ID" style="width:80px;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font-size:11px;font-family:var(--mono)">
             <input v-model="s.label" placeholder="标签" style="width:80px;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font-size:11px" @input="updateDesc">
             <textarea v-model="s.prompt" placeholder="提示词" style="flex:1;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font-size:11px;height:28px;resize:vertical"></textarea>
-            <button style="width:20px;height:20px;border:none;border-radius:3px;background:transparent;color:var(--danger);cursor:pointer;font-size:14px" @click="removeStage(i)">×</button>
+            <button class="stage-del-btn" style="width:20px;height:20px;border:none;border-radius:3px;background:transparent;color:var(--danger);cursor:pointer;font-size:14px" @click="removeStage(i)">×</button>
           </div>
         </div>
         <button @click="addStage" style="padding:5px 0;border:1px dashed var(--border);border-radius:4px;background:transparent;color:var(--muted);font-size:11px;cursor:pointer">+ 新增阶段</button>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;padding:8px 12px;border-top:1px solid var(--border)">
-        <button @click="closeEditor" style="padding:6px 16px;border:1px solid var(--border);border-radius:6px;background:var(--bg-2);color:var(--fg-2);font-size:12px;cursor:pointer">取消</button>
-        <button @click="saveWorkflow" style="padding:6px 16px;border:none;border-radius:6px;background:var(--accent);color:oklch(99% 0 0);font-size:12px;cursor:pointer">保存</button>
+        <button @click="closeEditor" class="editor-btn-cancel" style="padding:6px 16px;border:1px solid var(--border);border-radius:6px;background:var(--bg-2);color:var(--fg-2);font-size:12px;cursor:pointer">取消</button>
+        <button @click="saveWorkflow" class="editor-btn-save" style="padding:6px 16px;border:none;border-radius:6px;background:var(--accent);color:oklch(99% 0 0);font-size:12px;cursor:pointer">保存</button>
       </div>
     </div>
   </div>
+
+  <!-- Confirm Modal -->
+  <div class="modal-overlay" v-if="showConfirm" @click.self="showConfirm = false" style="z-index:300">
+    <div class="confirm-modal" style="background:var(--panel);border:1px solid var(--border-strong);border-radius:var(--radius-lg);width:min(380px,85vw);text-align:center;box-shadow:var(--shadow-lg)">
+      <div class="confirm-modal__head" style="padding:14px 16px 0;font-size:14px;font-weight:500;color:var(--fg)">{{ confirmMsg }}</div>
+      <div class="confirm-modal__actions" style="display:flex;gap:8px;justify-content:center;padding:16px">
+        <button class="confirm-modal__btn confirm-modal__btn--cancel" @click="showConfirm = false" style="padding:7px 20px;border-radius:var(--radius);font-size:12px;cursor:pointer;border:1px solid var(--border);background:var(--bg-2);color:var(--fg-2)">取消</button>
+        <button class="confirm-modal__btn confirm-modal__btn--ok" @click="showConfirm = false; deleteWf(currentDeleteName)" style="padding:7px 20px;border-radius:var(--radius);font-size:12px;cursor:pointer;border:none;background:var(--accent);color:oklch(99% 0 0)">确定</button>
+      </div>
+    </div>
+  </div>
+
 </template>
+<style scoped>
+.model-item__meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.confirm-modal__btn { padding: 7px 20px; border-radius: var(--radius); font-size: 12px; cursor: pointer; }
+.wf-new-btn:hover {
+  border-color: var(--accent) !important;
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
+}
+.branch-item__btn {
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg-2);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.confirm-modal__btn--ok:hover { opacity: 0.85 !important; }
+.confirm-modal__btn--cancel:hover { border-color: var(--border-strong) !important; color: var(--fg) !important; }
+.branch-item__btn:hover {
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
+.editor-btn-cancel:hover {
+  border-color: var(--border-strong) !important;
+  color: var(--fg) !important;
+}
+.editor-btn-save:hover {
+  opacity: 0.85 !important;
+}
+.stage-del-btn:hover {
+  background: var(--danger-soft) !important;
+  color: #fff !important;
+}
+</style>
+
