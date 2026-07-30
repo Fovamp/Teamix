@@ -78,6 +78,9 @@ function toolArgsSummary(args: any) {
 // ── state ──
 const messages = ref<any[]>([])
 const inputText = ref("")
+const pastedBlocks = ref<{ label: string; text: string }[]>([])
+const openPastedLabels = ref<string[]>([])
+let pasteIdCounter = 1
 const running = ref(false)
 const statusText = ref("就绪")
 const planMode = ref(false)
@@ -278,7 +281,7 @@ function handleNewSession() {
     todosState = []
     todosDismissed = false
     showTodoPanel.value = false
-    resetCumulativeStats(); try { sessionStorage.removeItem('teamix_last_usage') } catch {}
+    resetCumulativeStats(); try { sessionStorage.removeItem('teamix_last_usage') } catch {}; pastedBlocks.value = []; openPastedLabels.value = []
     // Refresh sessions list so sidebar shows new session
     api.sessions().then(ss => {
       window.dispatchEvent(new CustomEvent('sessions-update', { detail: ss }))
@@ -917,8 +920,17 @@ async function syncModeBeforeSubmit() {
   } catch { }
 }
 
-async function send() {
-  const v = inputText.value.trim()
+function expandPastedText(text: string): string {
+  let result = text
+  for (const block of pastedBlocks.value) {
+    if (result.includes(block.label)) {
+      result = result.split(block.label).join(block.label + '\n\n--- Begin ' + block.label + ' ---\n' + block.text + '\n--- End ' + block.label + ' ---')
+    }
+  }
+  return result
+}
+\n\nasync function send() {
+  const v = expandPastedText(inputText.value.trim())
   if (!v) return
   await syncModeBeforeSubmit()
 
@@ -1315,7 +1327,24 @@ function onInput() {
 }
 
 // ── File drop ──
-function handleFileDrop(e: DragEvent) {
+function handlePaste(e: ClipboardEvent) {
+  const pasted = e.clipboardData?.getData('text/plain') || ''
+  if (!pasted) return
+  const lines = pasted.split('\n').length
+  if (pasted.length >= 2000 || lines >= 20) {
+    e.preventDefault()
+    const id = pasteIdCounter++
+    const label = '[\u5df2\u7c98\u8d34\u6587\u672c #' + id + ' - ' + lines + ' \u884c]'
+    const selStart = (e.target as HTMLTextAreaElement).selectionStart
+    const selEnd = (e.target as HTMLTextAreaElement).selectionEnd
+    const before = inputText.value.slice(0, selStart)
+    const after = inputText.value.slice(selEnd)
+    inputText.value = before + label + after
+    pastedBlocks.value = [...pastedBlocks.value, { label, text: pasted }]
+    return
+  }
+}
+\n\nfunction handleFileDrop(e: DragEvent) {
   e.preventDefault()
   const inp = document.getElementById('in') as HTMLTextAreaElement
   if (!inp) return
@@ -1344,7 +1373,7 @@ function handleFileDrop(e: DragEvent) {
   }
   const text = e.dataTransfer?.getData('text/plain')
   if (text) {
-    inp.value = text
+    inp.value = inputText.value + (inputText.value && text ? '\n' : '') + text
     inp.focus()
   }
 }
@@ -1527,7 +1556,17 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
       <div class="status" id="turn-info"></div>
     </div>
 
-    <div class="composer" id="composer" style="position:relative">
+    <!-- Pasted blocks -->
+    <div v-if="pastedBlocks.filter(b => inputText.includes(b.label)).length > 0" style="padding:0 28px;display:flex;flex-direction:column;gap:4px;margin-bottom:4px">
+      <div v-for="block in pastedBlocks.filter(b => inputText.includes(b.label))" :key="block.label" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-2);font-size:12px">
+        <span style="color:var(--muted-2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ block.label }}</span>
+        <button @click="togglePastedBlock(block.label)" style="border:none;background:transparent;color:var(--accent);cursor:pointer;font-size:11px;white-space:nowrap">{{ openPastedLabels.includes(block.label) ? '\u6536\u8d77' : '\u5c55\u5f00\u9884\u89c8' }}</button>
+        <button @click="removePastedBlock(block)" style="border:none;background:transparent;color:var(--danger);cursor:pointer;font-size:14px">&times;</button>
+      </div>
+      <!-- Preview panel -->
+      <div v-for="block in pastedBlocks.filter(b => openPastedLabels.includes(b.label) && inputText.includes(b.label))" :key="block.label + '-preview'" style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:11px;font-family:var(--mono);max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-word">{{ block.text }}</div>
+    </div>
+\n    <div class="composer" id="composer" style="position:relative">
       <!-- Slash menu -->
       <div id="slash-menu-anchor" style="position:absolute;bottom:100%;left:0;right:0;z-index:50">
         <div class="slash-menu" id="slash-menu" v-if="slashOpen">
@@ -1565,7 +1604,7 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
         @keydown="onInputKeydown"
         @input="onInput"
         @dragover.prevent
-        @drop="handleFileDrop"></textarea>
+        @paste="handlePaste" @drop="handleFileDrop"></textarea>
       <button class="composer__btn composer__btn--send" id="btn-send" title="发送 (Enter)" v-show="!running" @click="send">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="18" height="18"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
       </button>
