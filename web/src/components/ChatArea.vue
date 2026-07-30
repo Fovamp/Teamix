@@ -491,7 +491,7 @@ function ensureMsg() {
 function appendText(t: string) {
   const m = ensureMsg()
   if (!currentTextEl) {
-    currentTextEl = document.createElement('span')
+    currentTextEl = document.createElement('div')
     currentTextEl.className = 'msg__text'; currentTextEl.style.whiteSpace = 'pre-wrap'; currentTextEl.style.wordBreak = 'break-word'
     const cursor = m.querySelector('.cursor')
     if (cursor) cursor.remove()
@@ -1419,7 +1419,7 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
     <div v-for="(m, i) in messages" :key="i">
       <div v-if="m.role === 'user'" class="msg msg--user">
         <span class="msg__caret"><span style="color:var(--accent);font-family:var(--mono);font-weight:600;font-size:15px">›</span></span>
-        <div class="msg__text" v-text="m.content"></div>
+        <div class="msg__text" style="white-space:pre-wrap;word-break:break-word" v-text="m.content"></div>
       </div>
       <div v-else-if="m.role === 'assistant'" class="msg msg--assistant">
         <div v-if="m.reasoning" class="reasoning">
@@ -1428,7 +1428,7 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
           </button>
           <div class="reasoning__body" v-show="m._showReasoning" v-text="m.reasoning"></div>
         </div>
-        <span class="msg__text" v-text="m.content"></span>
+        <span class="msg__text" style="white-space:pre-wrap;word-break:break-word;display:inline-block;width:100%" v-text="m.content"></span>
       </div>
     </div>
 
