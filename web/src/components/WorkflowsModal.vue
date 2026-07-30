@@ -252,11 +252,11 @@ function onDrop(e: DragEvent, idx: number) {
             <input v-model="s.sname" placeholder="ID" style="width:80px;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font-size:11px;font-family:var(--mono)">
             <input v-model="s.label" placeholder="标签" style="width:80px;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font-size:11px" @input="updateDesc">
             <textarea v-model="s.prompt" placeholder="提示词" style="flex:1;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font-size:11px;height:28px;resize:vertical"></textarea>
-            <button title="全屏编辑" style="width:20px;height:20px;border:none;border-radius:3px;background:transparent;color:var(--accent);cursor:pointer;font-size:14px;flex-shrink:0" @click="openFse(s)">↑</button>
+            <button title="全屏编辑" class="fse-btn" style="width:20px;height:20px;border:none;border-radius:3px;background:transparent;color:var(--accent);cursor:pointer;font-size:14px;flex-shrink:0" @click="openFse(s)">↑</button>
             <button class="stage-del-btn" style="width:20px;height:20px;border:none;border-radius:3px;background:transparent;color:var(--danger);cursor:pointer;font-size:14px" @click="removeStage(i)">×</button>
           </div>
         </div>
-        <button @click="addStage" style="padding:5px 0;border:1px dashed var(--border);border-radius:4px;background:transparent;color:var(--muted);font-size:11px;cursor:pointer">+ 新增阶段</button>
+        <button @click="addStage" class="add-stage-btn" style="width:100%;padding:7px 0;border:1px dashed var(--accent);border-radius:6px;background:transparent;color:var(--accent);font-size:12px;cursor:pointer">＋ 新增阶段</button>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;padding:8px 12px;border-top:1px solid var(--border)">
         <button @click="closeEditor" class="editor-btn-cancel" style="padding:6px 16px;border:1px solid var(--border);border-radius:6px;background:var(--bg-2);color:var(--fg-2);font-size:12px;cursor:pointer">取消</button>
@@ -336,6 +336,15 @@ function onDrop(e: DragEvent, idx: number) {
 .stage-del-btn:hover {
   background: var(--danger-soft) !important;
   color: #fff !important;
+}
+.fse-btn:hover {
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
+}
+.add-stage-btn:hover {
+  border-color: var(--accent) !important;
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
 }
 </style>
 
