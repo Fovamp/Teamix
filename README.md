@@ -20,6 +20,6 @@ teamix.exe serve --teamix --addr :8787
 
 ## 技术栈
 
-- 后端: Go，单二进制部署
-- 前端: HTML/CSS/JS
-- AI: 兼容 OpenAI / Anthropic / DeepSeek API
+- 后端: Go 1.23+，单二进制部署
+- 前端: Vue3
+- AI: DeepSeek

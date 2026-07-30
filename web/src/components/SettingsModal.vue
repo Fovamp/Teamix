@@ -1,11 +1,296 @@
-﻿<script setup lang="ts">
-import { ref } from "vue"
+<script setup lang="ts">
+import { ref, watch } from "vue"
 import { api } from "../api"
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: "close"): void }>()
 const tab = ref("keys")
-const tabs = ["keys", "mcp", "skills", "memory", "capabilities"]
-const tabLbl: Record<string, string> = { keys: "API密钥", mcp: "MCP", skills: "Skills", memory: "记忆", capabilities: "Capabilities" }
+const tabs = ["keys", "mcp", "soul", "skills", "memory"]
+const tabLbl: Record<string, string> = { keys: "\u5bc6\u94a5\u6c60", mcp: "MCP", soul: "AI \u4eba\u683c", skills: "Skills", memory: "\u8bb0\u5fc6" }
+const tabIcon: Record<string, string> = { keys: "\ud83d\udd11", mcp: "\ud83d\udd27", soul: "\ud83e\udde0", skills: "\ud83d\udcdc", memory: "\ud83e\udde0" }
+
+// Content state
+const contentHtml = ref("\u52a0\u8f7d\u4e2d...")
+const loading = ref(false)
+
+watch(() => props.visible, (v) => {
+  if (v) { switchTab(tab.value) }
+})
+
+watch(tab, (t) => { switchTab(t) })
+
+async function switchTab(t: string) {
+  loading.value = true
+  contentHtml.value = "\u52a0\u8f7d\u4e2d..."
+  try {
+    if (t === "keys") { await renderKeys() }
+    else if (t === "mcp") { await renderMCP() }
+    else if (t === "skills") { await renderSkills() }
+    else if (t === "memory") { await renderMemory() }
+    else { await renderCapability(t) }
+  } catch (e: any) {
+    contentHtml.value = `<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25: ${e.message}</div>`
+  }
+  loading.value = false
+}
+
+async function renderKeys() {
+  const q = tokenQuery()
+  const resp = await fetch("/teamix/secrets/status" + q)
+  const data = await resp.json()
+  const keys = data.keyList || []
+  let h = '<div class="section"><h3>\ud83d\udd11 \u5bc6\u94a5\u6c60</h3><p class="desc">\u56e2\u961f\u5171\u4eab\u7684 API Key\uff0c\u8d1f\u8f7d\u5747\u8861\u5206\u53d1\u5230\u6bcf\u4e2a Agent \u4f1a\u8bdd\u3002\u5bc6\u94a5\u4ec5\u5b58\u50a8\u5728\u670d\u52a1\u5668\u672c\u5730 .teamix/secrets/ \u76ee\u5f55\u3002</p></div><div id="key-render">'
+  h += '<div class="section"><div class="section-title">\u8d1f\u8f7d\u7b56\u7565</div>'
+  h += '<div class="card" style="flex-direction:row;align-items:center;justify-content:space-between;padding:8px 12px"><div class="card-info"><div class="card-title">\u5206\u914d\u65b9\u5f0f</div><div class="card-sub">\u73af\u5883\u53d8\u91cf: <code>' + (data.target || '-') + '</code></div></div>'
+  h += '<select id="key-strategy-select" style="width:140px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;cursor:pointer">'
+  h += '<option value="round-robin"' + (data.strategy === "round-robin" ? " selected" : "") + '>Round Robin</option>'
+  h += '<option value="random"' + (data.strategy === "random" ? " selected" : "") + '>Random</option>'
+  h += '</select>'
+  h += '<button class="btn" onclick="saveKeyStrategy()" style="padding:5px 12px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:12px;cursor:pointer">\u5e94\u7528</button></div></div>'
+  h += '<div class="section"><div class="section-title">\u5bc6\u94a5\u5217\u8868 (' + keys.length + ')</div>'
+  if (keys.length === 0) h += '<div style="color:var(--muted-2);text-align:center;padding:16px 0;font-size:13px">\u5c1a\u65e0\u5bc6\u94a5</div>'
+  keys.forEach((k: any) => {
+    h += '<div class="card" style="flex-direction:row;align-items:center;justify-content:space-between;padding:8px 12px">'
+    h += '<div class="card-info"><div class="card-title"><code>' + k.envName + '</code></div><div class="card-sub">\u4f7f\u7528 ' + k.useCount + ' \u6b21</div></div>'
+    h += '<span class="badge ' + (k.enabled ? "on" : "off") + '" style="padding:1px 8px;border-radius:99px;font-size:10px;font-weight:500;">' + (k.enabled ? "\u5df2\u542f\u7528" : "\u5df2\u7981\u7528") + '</span>'
+    h += '<button class="btn danger sm" onclick="deleteKey(\'' + k.envName.replace(/'/g, "\\'") + '\')" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button></div>'
+  })
+  h += '<div class="section"><div class="section-title">\u6dfb\u52a0\u5bc6\u94a5</div>'
+  h += '<div style="display:flex;gap:8px;margin-bottom:8px"><input id="new-key-env" type="text" placeholder="\u73af\u5883\u53d8\u91cf\u540d" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><input id="new-key-value" type="password" placeholder="API Key" style="flex:2;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+  h += '<button class="btn primary" onclick="addKey()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0\u5bc6\u94a5</button></div>'
+  h += '</div>'
+  contentHtml.value = h
+}
+
+async function renderMCP() {
+  const q = tokenQuery()
+  let h = '<div class="section"><h3>\ud83d\udd27 MCP \u670d\u52a1\u5668</h3><p class="desc">\u7ba1\u7406 MCP \u670d\u52a1\u5668\uff0c\u6269\u5c55 Agent \u7684\u5de5\u5177\u80fd\u529b\u3002</p></div><div id="mcp-render">'
+  try {
+    let servers: any[] = []
+    for (let retry = 0; retry < 5; retry++) {
+      try {
+        const resp = await fetch("/teamix/mcp/servers" + q)
+        servers = await resp.json()
+        if (servers.length > 0) break
+      } catch (e) { }
+      if (retry < 4) await new Promise(r => setTimeout(r, 1000))
+    }
+    if (servers.length === 0) {
+      h += '<div style="color:var(--muted-2);text-align:center;padding:20px;font-size:13px">\u5c1a\u65e0 MCP \u670d\u52a1\u5668</div>'
+    }
+    servers.forEach((s: any) => {
+      const toolHtml = s.toolList && s.toolList.length > 0
+        ? '<div style="padding:4px 0;font-size:12px;font-weight:500;color:var(--muted-2)">\u5de5\u5177\u5217\u8868 (' + s.tools + '):</div>' +
+          s.toolList.map((t: any) => '<div style="padding:3px 4px;border-bottom:1px solid var(--border)"><code>' + t.name + '</code>' +
+            (t.description ? '<br><span style="color:var(--muted-2);font-size:11px">' + escH(t.description) + '</span>' : '') + '</div>').join('')
+        : ''
+      const isFailed = s.status === "failed"
+      h += '<div class="card" style="flex-direction:column;align-items:stretch" data-open="false">'
+      h += '<div class="card-head" onclick="const c=this.closest(\'.card\');const b=c.querySelector(\'.card-body\');const o=c.dataset.open===\'true\';c.dataset.open=o?\'false\':\'true\';b.style.display=o?\'none\':\'\'">'
+      h += '<span class="chev" style="color:var(--muted-2);transition:transform .15s;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>'
+      h += '<div class="card-main"><div class="card-title"><span class="name"><code>' + escH(s.name) + '</code></span></div>'
+      h += '<span class="subject">' + (s.transport || "stdio") + ' \u00b7 ' + s.tools + ' \u4e2a\u5de5\u5177' + (isFailed ? ' <span style="color:#f44336">\u79bb\u7ebf</span>' : '') + '</span></div>'
+      h += '</div>'
+      h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2)">' + (isFailed && s.error ? '<span style="color:#f44336;font-size:11px">' + escH(s.error) + '</span>' : (toolHtml || '<span style="color:var(--muted-2)">\u65e0\u5de5\u5177</span>')) + '</div>'
+      h += '</div>'
+    })
+    h += '<div class="section"><div class="section-title">\u6dfb\u52a0 MCP \u670d\u52a1\u5668</div>'
+    h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u540d\u79f0</label><input id="mcp-name" type="text" placeholder="server-name" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+    h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u547d\u4ee4</label><input id="mcp-cmd" type="text" placeholder="npx" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+    h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u4f20\u8f93</label><select id="mcp-transport" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="stdio">stdio</option><option value="http">http</option></select></div>'
+    h += '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u53c2\u6570</label><input id="mcp-args" type="text" placeholder="-y @modelcontextprotocol/server-filesystem" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+    h += '<button class="btn primary" onclick="addMCPServer()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0\u670d\u52a1\u5668</button></div>'
+  } catch (e: any) {
+    h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25: ' + e.message + '</div>'
+  }
+  h += '</div>'
+  contentHtml.value = h
+}
+
+async function renderSkills() {
+  const q = tokenQuery()
+  let h = '<div class="section"><h3>\ud83d\udcdc Skills</h3><p class="desc">\u7ba1\u7406 Agent \u53ef\u7528\u7684\u6280\u80fd\u3002</p></div><div id="skills-render">'
+  try {
+    const resp = await fetch("/teamix/skills" + q)
+    const skills = await resp.json()
+    h += '<div class="section"><div class="section-title">\u6280\u80fd\u5217\u8868 (' + skills.length + ')</div>'
+    if (skills.length === 0) h += '<div style="color:var(--muted-2);text-align:center;padding:20px;font-size:13px">\u5c1a\u65e0 Skills</div>'
+    skills.forEach((s: any) => {
+      const hasDesc = s.description && s.description.length > 0
+      h += '<div class="card" style="flex-direction:column;align-items:stretch" data-open="false">'
+      h += '<div class="card-head" onclick="const c=this.closest(\'.card\');const b=c.querySelector(\'.card-body\');const o=c.dataset.open===\'true\';c.dataset.open=o?\'false\':\'true\';b.style.display=o?\'none\':\'\'">'
+      h += '<span class="chev" style="color:var(--muted-2);transition:transform .15s;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>'
+      h += '<div class="card-main"><div class="card-title"><span class="name">' + escH(s.name) + '</span></div>'
+      h += '<span class="subject">' + (s.scope || "project") + '</span></div>'
+      h += '<label class="switch" style="position:relative;display:inline-block;width:32px;height:18px"><input type="checkbox" ' + (s.enabled ? "checked" : "") + ' onchange="toggleSkill(\'' + s.name.replace(/'/g, "\\'") + '\', this.checked)" style="opacity:0;width:0;height:0"><span class="slider" style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:' + (s.enabled ? 'var(--accent)' : 'var(--panel-2)') + ';border-radius:99px;transition:.3s"></span></label>'
+      h += '</div>'
+      h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2)">' + (hasDesc ? escH(s.description) : '<span style="color:var(--muted-2)">\u6682\u65e0\u63cf\u8ff0</span>') + '</div>'
+      h += '</div>'
+    })
+  } catch (e) {
+    h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
+  }
+  h += '</div>'
+  contentHtml.value = h
+}
+
+async function renderMemory() {
+  const q = tokenQuery()
+  let h = '<div class="section"><h3>\ud83e\udde0 \u8bb0\u5fc6</h3><p class="desc">\u67e5\u770b\u548c\u7ba1\u7406 Agent \u8bb0\u4f4f\u7684\u4e8b\u5b9e\u3002</p></div><div id="mem-render">'
+  try {
+    const resp = await fetch("/teamix/memory" + q)
+    const data = await resp.json()
+    const memories = data.memories || []
+    h += '<div class="section"><div class="section-title">\u5df2\u4fdd\u5b58\u7684\u8bb0\u5fc6 (' + memories.length + ')</div>'
+    if (memories.length === 0) h += '<div style="color:var(--muted-2);text-align:center;padding:20px;font-size:13px">\u5c1a\u65e0\u8bb0\u5fc6</div>'
+    memories.forEach((m: any) => {
+      const typeLabel = m.type || "user"
+      const bodyPreview = m.body ? m.body.slice(0, 80).replace(/</g, "&lt;") : ""
+      const hasMore = m.body && m.body.length > 80
+      h += '<div class="card" style="flex-direction:column;align-items:stretch" data-open="false">'
+      h += '<div class="card-head" onclick="const c=this.closest(\'.card\');const b=c.querySelector(\'.card-body\');const o=c.dataset.open===\'true\';c.dataset.open=o?\'false\':\'true\';b.style.display=o?\'none\':\'\'">'
+      h += '<span class="chev" style="color:var(--muted-2);transition:transform .15s;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>'
+      h += '<div class="card-main"><div class="card-title"><span class="name">' + escH(m.title || m.name) + '</span>'
+      h += '<span class="badge" style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:var(--accent-soft);color:var(--accent)">' + typeLabel + '</span></div>'
+      if (m.description) h += '<span class="subject">' + escH(m.description) + '</span>'
+      else if (bodyPreview) h += '<span class="subject">' + bodyPreview + (hasMore ? "..." : "") + '</span>'
+      h += '</div>'
+      h += '<button class="btn danger sm" onclick="deleteMemory(\'' + (m.name || '').replace(/'/g, "\\'") + '\')" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>'
+      h += '</div>'
+      h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2);white-space:pre-wrap">' + (m.body ? escH(m.body) : '<span style="color:var(--muted-2)">\u65e0\u5185\u5bb9</span>') + '</div>'
+      h += '</div>'
+    })
+    h += '<div class="section"><div class="section-title">\u6dfb\u52a0\u8bb0\u5fc6</div>'
+    h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u540d\u79f0</label><input id="mem-name" type="text" placeholder="kebab-case-slug" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+    h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u6807\u9898</label><input id="mem-title" type="text" placeholder="\u4eba\u53ef\u8bfb\u7684\u6807\u9898" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+    h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u63cf\u8ff0</label><input id="mem-desc" type="text" placeholder="\u4e00\u884c\u6982\u8ff0" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+    h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u7c7b\u578b</label><select id="mem-type" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="user">user</option><option value="feedback">feedback</option><option value="project">project</option><option value="reference">reference</option></select></div>'
+    h += '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u5185\u5bb9</label><textarea id="mem-body" style="min-height:100px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)" placeholder="Markdown \u683c\u5f0f..."></textarea></div>'
+    h += '<button class="btn primary" onclick="addMemory()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58\u8bb0\u5fc6</button></div>'
+  } catch (e) {
+    h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
+  }
+  h += '</div>'
+  contentHtml.value = h
+}
+
+async function renderCapability(kind: string) {
+  const q = tokenQuery()
+  const labels: Record<string, string> = { mcp: "MCP \u670d\u52a1\u5668", soul: "AI \u4eba\u683c", skills: "Skills" }
+  const descs: Record<string, string> = { mcp: "\u914d\u7f6e MCP \u670d\u52a1\u5668\u6765\u6269\u5c55 Agent \u7684\u5de5\u5177\u80fd\u529b\u3002", soul: "\u5b9a\u5236 AI \u7684\u7cfb\u7edf\u63d0\u793a\u8bcd\u548c\u884c\u4e3a\u98ce\u683c\u3002", skills: "\u7ba1\u7406\u9879\u76ee\u7ea7\u7684\u53ef\u590d\u7528\u811a\u672c\u548c\u81ea\u52a8\u5316\u6d41\u7a0b\u3002" }
+  const icons: Record<string, string> = { mcp: "\ud83d\udd27", soul: "\ud83e\udde0", skills: "\ud83d\udcdc" }
+  let h = '<div class="section"><h3>' + (icons[kind] || "") + " " + (labels[kind] || kind) + '</h3><p class="desc">' + (descs[kind] || "") + '</p></div>'
+  try {
+    const resp = await fetch("/teamix/capabilities" + q)
+    const data = await resp.json()
+    const cfg = data[kind] || {}
+    h += '<div class="section"><div class="section-title">\u5f53\u524d\u914d\u7f6e</div>'
+    h += '<div style="color:var(--muted-2);font-size:12px;margin-bottom:8px">\u4fdd\u5b58\u5230 .teamix/capabilities/' + kind + '.yaml</div>'
+    h += '<textarea id="' + kind + '-raw" style="min-height:180px;width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)">' + escH(JSON.stringify(cfg, null, 2)) + '</textarea>'
+    h += '<div style="margin-top:8px;display:flex;gap:8px"><button class="btn primary" onclick="saveCapability(\'' + kind + '\')" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58\u914d\u7f6e</button><button class="btn" onclick="switchSettingsTab(\'' + kind + '\')" style="padding:6px 16px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:12px;cursor:pointer">\u8fd8\u539f</button></div></div>'
+  } catch (e) {
+    h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
+  }
+  contentHtml.value = h
+}
+
+function tokenQuery() {
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return ""
+  return "?token=" + encodeURIComponent(t)
+}
+function escH(s: any) { return String(s).replace(/</g, "&lt;").replace(/>/g, "&gt;") }
+
+// Global functions needed by inline onclick handlers
+const w = window as any
+w.saveKeyStrategy = async function() {
+  const sel = document.getElementById("key-strategy-select") as HTMLSelectElement
+  if (!sel) return
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  await fetch("/teamix/keypool/strategy?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ strategy: sel.value })
+  })
+}
+w.deleteKey = async function(envName: string) {
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  await fetch("/teamix/secrets/delete?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ envName })
+  })
+  tab.value = "keys"
+}
+w.addKey = async function() {
+  const env = document.getElementById("new-key-env") as HTMLInputElement
+  const val = document.getElementById("new-key-value") as HTMLInputElement
+  if (!val || !val.value.trim()) return
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  await fetch("/teamix/secrets/set?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ envName: env ? env.value.trim() : "", value: val.value.trim() })
+  })
+  tab.value = "keys"
+}
+w.addMCPServer = async function() {
+  const name = (document.getElementById("mcp-name") as HTMLInputElement)?.value.trim()
+  const cmd = (document.getElementById("mcp-cmd") as HTMLInputElement)?.value.trim()
+  const transport = (document.getElementById("mcp-transport") as HTMLSelectElement)?.value
+  const args = (document.getElementById("mcp-args") as HTMLInputElement)?.value.trim()
+  if (!name || !cmd) return
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  await fetch("/teamix/mcp/add?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, command: cmd, transport, args })
+  })
+  tab.value = "mcp"
+}
+w.toggleSkill = async function(name: string, checked: boolean) {
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  await fetch("/teamix/skills/toggle?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, enabled: checked })
+  })
+}
+w.deleteMemory = async function(name: string) {
+  if (!name) return
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  await fetch("/forget?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name })
+  })
+  tab.value = "memory"
+}
+w.addMemory = async function() {
+  const name = (document.getElementById("mem-name") as HTMLInputElement)?.value.trim()
+  const title = (document.getElementById("mem-title") as HTMLInputElement)?.value.trim()
+  const desc = (document.getElementById("mem-desc") as HTMLInputElement)?.value.trim()
+  const mtype = (document.getElementById("mem-type") as HTMLSelectElement)?.value
+  const body = (document.getElementById("mem-body") as HTMLTextAreaElement)?.value
+  if (!name) return
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  await fetch("/teamix/memory/save?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, title, description: desc, type: mtype || "user", body: body || "" })
+  })
+  tab.value = "memory"
+}
+w.saveCapability = async function(kind: string) {
+  const el = document.getElementById(kind + "-raw") as HTMLTextAreaElement
+  if (!el) return
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  await fetch("/teamix/capabilities/save?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, data: el.value })
+  })
+}
+w.switchSettingsTab = function(t: string) { tab.value = t }
 </script>
 
 <template>
@@ -13,34 +298,21 @@ const tabLbl: Record<string, string> = { keys: "API密钥", mcp: "MCP", skills: 
     <div class="modal" style="width:min(780px,90vw);height:65vh;display:flex;flex-direction:column">
       <div class="modal__head" style="flex-shrink:0">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-        <span>设置</span>
+        <span>\u9879\u76ee\u914d\u7f6e</span>
         <span class="modal__close" @click="emit('close')">&times;</span>
       </div>
       <div style="display:flex;flex:1;min-height:0;overflow:hidden">
-        <div class="settings-tabs" style="width:140px;flex-shrink:0;border-right:1px solid var(--border);padding:8px">
-          <div v-for="t in tabs" :key="t" class="settings-tab" :class="{ active: tab === t }" @click="tab = t" style="padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px;margin-bottom:2px">{{ tabLbl[t] }}</div>
+        <div style="width:140px;flex-shrink:0;border-right:1px solid var(--border);padding:8px">
+          <div v-for="t in tabs" :key="t"
+            class="settings-tab" :class="{ active: tab === t }"
+            @click="tab = t"
+            style="padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px;margin-bottom:2px;display:flex;align-items:center;gap:6px">
+            <span>{{ tabIcon[t] }}</span>
+            <span>{{ tabLbl[t] }}</span>
+          </div>
         </div>
-        <div style="flex:1;overflow-y:auto;padding:12px;font-size:13px;color:var(--muted)">
-          <div v-if="tab === 'keys'">
-            <h3 style="margin-bottom:8px">API密钥池</h3>
-            <p>密钥池状态和策略配置</p>
-          </div>
-          <div v-if="tab === 'mcp'">
-            <h3 style="margin-bottom:8px">MCP 服务器</h3>
-            <p>MCP 服务器列表和管理</p>
-          </div>
-          <div v-if="tab === 'skills'">
-            <h3 style="margin-bottom:8px">Skills</h3>
-            <p>技能开关列表</p>
-          </div>
-          <div v-if="tab === 'memory'">
-            <h3 style="margin-bottom:8px">记忆管理</h3>
-            <p>已保存的记忆条目</p>
-          </div>
-          <div v-if="tab === 'capabilities'">
-            <h3 style="margin-bottom:8px">Capabilities</h3>
-            <p>能力配置管理</p>
-          </div>
+        <div class="settings-content" style="flex:1;overflow-y:auto;padding:12px;font-size:13px;color:var(--muted)">
+          <div v-html="contentHtml"></div>
         </div>
       </div>
     </div>

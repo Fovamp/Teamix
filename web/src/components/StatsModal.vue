@@ -1,10 +1,24 @@
 ﻿<script setup lang="ts">
-import { ref, onMounted } from "vue"
+import { ref, watch } from "vue"
 import { api } from "../api"
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: "close"): void }>()
 const status = ref<any>(null)
-onMounted(async () => { try { status.value = await api.status() } catch {} })
+
+watch(() => props.visible, async (v) => {
+  if (v) {
+    try {
+      const s = await api.status()
+      status.value = s
+      // Also get cumulative stats from window event
+      const cumulative = (window as any)._cumulativeStats
+      if (cumulative) {
+        s.totalCost = cumulative.cost || s.totalCost
+        s.totalTokens = cumulative.tokens || s.totalTokens
+      }
+    } catch {}
+  }
+})
 </script>
 
 <template>
@@ -21,8 +35,8 @@ onMounted(async () => { try { status.value = await api.status() } catch {} })
           <div class="stat-card"><div class="stat-card__label">会话</div><div class="stat-card__value" id="stats-sessions">{{ status?.sessions || 0 }}</div></div>
           <div class="stat-card"><div class="stat-card__label">总 Token</div><div class="stat-card__value acc" id="stats-total-tokens">{{ status?.totalTokens || 0 }}</div></div>
           <div class="stat-card"><div class="stat-card__label">缓存命中率</div><div class="stat-card__value ok" id="stats-cache-rate">{{ status?.cacheHitRate || "0%" }}</div></div>
-          <div class="stat-card"><div class="stat-card__label">会话费用</div><div class="stat-card__value" id="stats-total-cost">{{ status?.totalCost || "-" }}</div></div>
-          <div class="stat-card"><div class="stat-card__label">余额</div><div class="stat-card__value" id="stats-balance">{{ status?.balance || "-" }}</div></div>
+          <div class="stat-card"><div class="stat-card__label">会话费用</div><div class="stat-card__value" id="stats-total-cost">{{ typeof status?.totalCost === "number" ? "$" + status.totalCost.toFixed(4) : "-" }}</div></div>
+          <div class="stat-card"><div class="stat-card__label">余额</div><div class="stat-card__value" id="stats-balance">{{ status?.balance?.display || "-" }}</div></div>
           <div class="stat-card stat-card--wide">
             <div class="stat-card__label">上下文用量</div>
             <div class="ctx-bar" style="margin-top:8px"><div class="ctx-bar__fill" id="stats-ctx-fill" :style="{ width: (status?.window ? Math.round(status.used/status.window*100) : 0) + '%' }"></div></div>

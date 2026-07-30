@@ -60,3 +60,5 @@ Thumbs.db
 # Local scratch
 temp/
 *.exe
+
+*.exe~
