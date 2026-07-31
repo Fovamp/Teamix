@@ -325,7 +325,8 @@ func (ts *TeamixServer) handleV3Index(w http.ResponseWriter, r *http.Request) {
 
 func (ts *TeamixServer) handleV3Assets(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	importPath := "webdist-v3" + path
+	// path 形如 /v3/assets/xxx -> 去掉 /v3 前缀得到 assets/xxx，再拼到 embed 根
+	importPath := "webdist-v3" + strings.TrimPrefix(path, "/v3")
 	data, err := v3Assets.ReadFile(importPath)
 	if err != nil {
 		http.NotFound(w, r)
@@ -345,7 +346,7 @@ func (ts *TeamixServer) handleV3Assets(w http.ResponseWriter, r *http.Request) {
 
 func (ts *TeamixServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(webIndexHTML)
+	_, _ = w.Write(v3IndexHTML)
 }
 
 func (ts *TeamixServer) handleLogo(w http.ResponseWriter, r *http.Request) {
