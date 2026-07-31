@@ -77,14 +77,37 @@ function initDividers() {
   dividersReady = true
 }
 
-// 已登录则立即初始化；否则等登录弹窗关闭后（v-else 渲染 .app）再初始化
+// 登录成功后（v-else 渲染 .app）初始化拖拽条。
+// 用轮询重试 + MutationObserver 兜底，确保任何挂载时序下都能创建。
+let dividerRetryTimer: any = null
+let dividerObserver: MutationObserver | null = null
+
+function tryInitDividers() {
+  if (dividersReady) return
+  initDividers()
+  if (!dividersReady) {
+    // 元素还没就绪，稍后重试（登录渲染 + 子组件挂载需要时间）
+    clearTimeout(dividerRetryTimer)
+    dividerRetryTimer = setTimeout(tryInitDividers, 200)
+  } else {
+    clearTimeout(dividerRetryTimer)
+    if (dividerObserver) { dividerObserver.disconnect(); dividerObserver = null }
+  }
+}
+
 watch(showLogin, (v) => {
-  if (!v) nextTick(initDividers)
+  if (v) return
+  // 观察 body 变化，.app 子树挂载完成即触发
+  dividerObserver = new MutationObserver(() => tryInitDividers())
+  dividerObserver.observe(document.body, { childList: true, subtree: true })
+  nextTick(tryInitDividers)
 }, { immediate: true })
 
 onUnmounted(() => {
   if (dragMoveFn) document.removeEventListener('mousemove', dragMoveFn)
   if (dragUpFn) document.removeEventListener('mouseup', dragUpFn)
+  clearTimeout(dividerRetryTimer)
+  if (dividerObserver) dividerObserver.disconnect()
 })
 </script>
 
