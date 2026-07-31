@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue"
+import { ref, watch, nextTick, onUnmounted } from "vue"
 import { api } from "./api"
 import LoginOverlay from "./components/LoginOverlay.vue"
 import SideBar from "./components/SideBar.vue"
@@ -18,13 +18,19 @@ const showModels = ref(false)
 const showWorkflows = ref(false)
 const showSettings = ref(false)
 
-// Resizable dividers
-onMounted(() => {
+// Resizable dividers — 登录成功（v-else 渲染 .app）后再初始化，
+// 避免首次进入时 .sidebar/.right-panel 不存在导致拖拽条永不创建。
+let dividersReady = false
+let dragging: any = null, startX = 0, startW = 0
+// 引用提升到组件作用域，便于 onUnmounted 按名移除
+let dragMoveFn: ((e: MouseEvent) => void) | null = null
+let dragUpFn: (() => void) | null = null
+
+function initDividers() {
+  if (dividersReady) return
   const sidebar = document.querySelector('.sidebar') as HTMLElement
   const rightPanel = document.querySelector('.right-panel') as HTMLElement
   if (!sidebar || !rightPanel) return
-
-  let dragging: any = null, startX = 0, startW = 0
 
   function onStart(e: MouseEvent, panel: HTMLElement, cssVar: string) {
     dragging = { panel, cssVar }
@@ -41,7 +47,6 @@ onMounted(() => {
   sd.style.cssText = 'position:absolute;right:-2px;top:0;bottom:0;width:4px;cursor:col-resize;z-index:10'
   sidebar.style.position = 'relative'
   sidebar.appendChild(sd)
-
   sd.addEventListener('mousedown', (e) => onStart(e, sidebar, '--sidebar-w'))
 
   // Right panel resize handle
@@ -50,7 +55,6 @@ onMounted(() => {
   rd.style.cssText = 'position:absolute;left:-2px;top:0;bottom:0;width:4px;cursor:col-resize;z-index:10'
   rightPanel.style.position = 'relative'
   rightPanel.appendChild(rd)
-
   rd.addEventListener('mousedown', (e) => onStart(e, rightPanel, '--right-w'))
 
   const onMove = (e: MouseEvent) => {
@@ -60,22 +64,27 @@ onMounted(() => {
     const newW = Math.max(180, Math.min(800, startW + delta))
     document.documentElement.style.setProperty(dragging.cssVar, newW + 'px')
   }
-
   const onUp = () => {
     if (!dragging) return
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
     dragging = null
   }
-
+  dragMoveFn = onMove
+  dragUpFn = onUp
   document.addEventListener('mousemove', onMove)
   document.addEventListener('mouseup', onUp)
+  dividersReady = true
+}
 
-  // Cleanup on unmount
-  onUnmounted(() => {
-    document.removeEventListener('mousemove', onMove)
-    document.removeEventListener('mouseup', onUp)
-  })
+// 已登录则立即初始化；否则等登录弹窗关闭后（v-else 渲染 .app）再初始化
+watch(showLogin, (v) => {
+  if (!v) nextTick(initDividers)
+}, { immediate: true })
+
+onUnmounted(() => {
+  if (dragMoveFn) document.removeEventListener('mousemove', dragMoveFn)
+  if (dragUpFn) document.removeEventListener('mouseup', dragUpFn)
 })
 </script>
 
