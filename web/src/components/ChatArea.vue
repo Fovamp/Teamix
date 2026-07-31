@@ -904,6 +904,8 @@ function toggleGoalMode() {
   }
   if (goalMode.value) { goalMode.value = false } else { goalMode.value = true }
   inputText.value = ''
+  pastedBlocks.value = []
+  openPastedLabels.value = []
   nextTick(() => document.getElementById('in')?.focus())
 }
 
@@ -926,9 +928,7 @@ async function syncModeBeforeSubmit() {
 function expandPastedText(text: string): string {
   let result = text
   for (const block of pastedBlocks.value) {
-    if (result.includes(block.label)) {
-      result = result.split(block.label).join(block.label + '\n\n--- Begin ' + block.label + ' ---\n' + block.text + '\n--- End ' + block.label + ' ---')
-    }
+    result += '\n\n--- Begin ' + block.label + ' ---\n' + block.text + '\n--- End ' + block.label + ' ---'
   }
   return result
 }
@@ -947,6 +947,8 @@ async function send() {
     if (chatHistory.length > 50) chatHistory.shift()
     chatHistoryIndex = chatHistory.length
     inputText.value = ''
+    pastedBlocks.value = []
+    openPastedLabels.value = []
     const reasonText = stageCompleteReason ? '（' + stageCompleteReason + '）' : ''
     showWfConfirm('阶段已完成' + reasonText + '，是否进入下一阶段？', (ok: boolean) => {
       if (!ok) { stageCompletePending = false; stageCompleteReason = ''; stageCompleteExtra = ''; return }
@@ -975,6 +977,8 @@ async function send() {
   if (chatHistory.length > 50) chatHistory.shift()
   chatHistoryIndex = chatHistory.length
   inputText.value = ''
+  pastedBlocks.value = []
+  openPastedLabels.value = []
   running.value = true
   statusText.value = "思考中..."
   // Post and forget - SSE handles the response
@@ -1311,7 +1315,7 @@ function onInputKeydown(e: KeyboardEvent) {
   if (e.key === 'ArrowDown' && chatHistory.length > 0) { e.preventDefault(); chatHistoryIndex = Math.min(chatHistory.length, chatHistoryIndex + 1); inputText.value = chatHistoryIndex < chatHistory.length ? chatHistory[chatHistoryIndex] : ''; return }
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); return }
   if (e.key === 'Escape') {
-    if (goalMode.value && !running.value) { goalMode.value = false; inputText.value = ''; closeSlashMenu(); return }
+    if (goalMode.value && !running.value) { goalMode.value = false; inputText.value = ''; pastedBlocks.value = []; openPastedLabels.value = []; closeSlashMenu(); return }
     if (running.value) { doStop(); return }
     if (inputText.value === '') {
       if (escTimer) { clearTimeout(escTimer); escTimer = null; openRewindPicker() }
@@ -1340,11 +1344,6 @@ function handlePaste(e: ClipboardEvent) {
     e.preventDefault()
     const id = pasteIdCounter++
     const label = '[\u5df2\u7c98\u8d34\u6587\u672c #' + id + ' - ' + lines + ' \u884c]'
-    const selStart = (e.target as HTMLTextAreaElement).selectionStart
-    const selEnd = (e.target as HTMLTextAreaElement).selectionEnd
-    const before = inputText.value.slice(0, selStart)
-    const after = inputText.value.slice(selEnd)
-    inputText.value = before + label + after
     pastedBlocks.value = [...pastedBlocks.value, { label, text: pasted }]
     return
   }
@@ -1468,7 +1467,6 @@ function togglePastedBlock(label: string) {
 function removePastedBlock(block: { label: string; text: string }) {
   pastedBlocks.value = pastedBlocks.value.filter(b => b.label !== block.label)
   openPastedLabels.value = openPastedLabels.value.filter(l => l !== block.label)
-  inputText.value = inputText.value.replace(block.label, '')
 }const previewRef = ref<HTMLElement | null>(null)
 let previewResizing = false
 let previewStartY = 0
@@ -1633,7 +1631,7 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
       </div>
       <div class="status" id="turn-info"></div>
     </div>
-<template v-for="block in pastedBlocks.filter(b => openPastedLabels.includes(b.label) && inputText.includes(b.label))">
+<template v-for="block in pastedBlocks.filter(b => openPastedLabels.includes(b.label))">
       <div style="padding:4px 28px;margin-bottom:2px;position:relative">
         <div class="preview-resize-handle" @mousedown="startPreviewResize($event)" style="height:10px;cursor:row-resize;position:relative;margin-bottom:-1px;display:flex;align-items:center;justify-content:center">
           <div style="height:2px;background:var(--border);border-radius:2px;flex:1;margin:0 20px;transition:all .15s"></div>
@@ -1674,8 +1672,8 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
 
       <div class="composer__input-row" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
         <span class="composer__caret">›</span>
-        <template v-if="pastedBlocks.filter(b => inputText.includes(b.label)).length > 0">
-          <div v-for="block in pastedBlocks.filter(b => inputText.includes(b.label))" :key="block.label" class="pasted-chip">
+        <template v-if="pastedBlocks.length > 0">
+          <div v-for="block in pastedBlocks" :key="block.label" class="pasted-chip">
             <span class="pasted-chip__label">{{ block.label }}</span>
             <button class="pasted-expand-btn" @click.stop="togglePastedBlock(block.label)">{{ openPastedLabels.includes(block.label) ? '收起' : '展开' }}</button>
             <button class="pasted-del-btn" @click.stop="removePastedBlock(block)" title="删除">&times;</button>
