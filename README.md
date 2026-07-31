@@ -12,7 +12,7 @@
 ## 快速开始
 
 ```bash
-# 1. 构建前端（包管理器为 pnpm，首次需 pnpm install）
+# 1. 构建前端
 cd web && pnpm build
 cd ..
 
