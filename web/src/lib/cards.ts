@@ -1,0 +1,376 @@
+// 卡片类 DOM 渲染：从 ChatArea.vue 拆出（tool/approval/ask/compaction/usage/notice/phase/error/openpage/jump/stageApproval/wfConfirm）。
+// 不持有任何组件状态：共享状态通过 CardsContext 注入，保证与原实现行为一致。
+import { el, escHtml, fmtTok, fmtMoney, fmtElapsed, lineCount, toolArgsSummary } from "../utils/format"
+
+export interface StageState { pending: boolean; reason: string; extra: string }
+
+export interface CardsContext {
+  /** #log 容器 */
+  log(): HTMLElement | null
+  /** 滚动到底部 */
+  scrollDown(force?: boolean): void
+  /** 隐藏欢迎页（含 hasVisibleHistory 同步） */
+  hideWelcome(): void
+  /** 获取/设置 pendingPrompts（approval/ask/openpage 清理用） */
+  getPendingPrompts(): Function[]
+  setPendingPrompts(fs: Function[]): void
+  /** tool 卡片索引（id -> 卡片元素） */
+  toolCards: Record<string, HTMLElement>
+  /** 读取工作流阶段完成态 */
+  getStageState(): StageState
+  setStageState(s: Partial<StageState>): void
+  /** 重新加载工作流（跳转/推进后调用） */
+  onWorkflowChanged(): void
+}
+
+function toolIcon(kind: string): string {
+  if (kind === 'success') return '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>'
+  if (kind === 'danger') return '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
+  return '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10" stroke-dasharray="60" stroke-dashoffset="20"/></svg>'
+}
+
+function setToolStatus(card: HTMLElement, tone: string, label: string) {
+  card.dataset.tone = tone
+  const badge = card.querySelector('.card-badge')
+  if (badge) badge.textContent = label
+  const ico = card.querySelector('.ico')
+  if (ico) { ico.className = 'ico' + (tone === 'accent' ? ' spin' : ''); ico.innerHTML = toolIcon(tone) }
+}
+
+async function copyText(text: string): Promise<boolean> {
+  if (!text) return false
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text).then(() => true).catch(() => false)
+  return false
+}
+
+export function createCards(ctx: CardsContext) {
+  // ── Tool cards ──
+  function renderToolDispatch(tool: any) {
+    ctx.hideWelcome()
+    const card = el('div', 'card')
+    card.id = 'tool-' + tool.id
+    card.dataset.open = 'false'
+    card.dataset.tone = 'accent'
+    card.dataset.startedAt = String(Date.now())
+    const head = el('div', 'card-head')
+    const summary = toolArgsSummary(tool.args)
+    head.innerHTML = '<span class="ico spin">' + toolIcon('accent') + '</span><div class="card-main"><div class="card-title"><span class="name">' + escHtml(tool.name) + '</span>' + (summary ? '<span class="subject">' + escHtml(summary) + '</span>' : '') + '</div><div class="card-meta">参数 ' + fmtTok(String(tool.args || '').length) + '</div></div><span class="card-badge">运行中</span><div class="card-actions"><button type="button" class="card-action card-copy" title="复制输出" aria-label="复制输出"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button><span class="chev"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span></div>'
+    const body = el('div', 'card-body')
+    body.style.display = 'none'
+    head.onclick = (e) => {
+      if ((e.target as HTMLElement).closest('button')) return
+      const open = card.dataset.open === 'true'
+      card.dataset.open = open ? 'false' : 'true'
+      body.style.display = open ? 'none' : ''
+    }
+    const copy = head.querySelector('.card-copy') as HTMLElement
+    if (copy) {
+      copy.onclick = async (e) => {
+        e.stopPropagation()
+        const ok = await copyText(body.textContent || tool.args || '')
+        copy.title = ok ? '已复制' : '复制输出'
+        setTimeout(() => { copy.title = '复制输出' }, 1200)
+      }
+    }
+    card.appendChild(head)
+    card.appendChild(body)
+    ctx.log()?.appendChild(card)
+    ctx.toolCards[tool.id] = card
+    ctx.scrollDown()
+  }
+
+  function renderToolResult(tool: any) {
+    const card = ctx.toolCards[tool.id]
+    if (!card) return
+    const elapsed = Math.max(0, Date.now() - Number(card.dataset.startedAt || Date.now()))
+    setToolStatus(card, tool.err ? 'danger' : 'success', tool.err ? '失败' : '完成')
+    if (tool.err) {
+      card.appendChild(el('div', 'err-body', tool.err))
+      const meta = card.querySelector('.card-meta')
+      if (meta) meta.textContent = fmtElapsed(elapsed)
+    } else {
+      const body = card.querySelector('.card-body')
+      const output = String(tool.output || '')
+      if (body) body.textContent = output ? output.slice(0, 2000) + (tool.truncated ? '\n...[truncated]' : '') : '无输出'
+      const meta = card.querySelector('.card-meta')
+      if (meta) meta.textContent = fmtElapsed(elapsed) + ' · ' + lineCount(output) + ' 行'
+    }
+    ctx.scrollDown()
+  }
+
+  function renderToolProgress(tool: any) {
+    const card = ctx.toolCards[tool.id]
+    if (!card) return
+    const body = card.querySelector('.card-body') as HTMLElement
+    if (!body) return
+    body.style.display = ''
+    card.dataset.open = 'true'
+    body.textContent += tool.output || ''
+    if (body.textContent.length > 4000) body.textContent = body.textContent.slice(-3000)
+    const meta = card.querySelector('.card-meta')
+    if (meta) meta.textContent = fmtElapsed(Date.now() - Number(card.dataset.startedAt || Date.now())) + ' · ' + lineCount(body.textContent) + ' 行'
+    ctx.scrollDown()
+  }
+
+  // ── Approval card ──
+  function showApproval(a: any) {
+    const d = el('div', 'approval')
+    const actions = [
+      '<button class="approval__btn approval__btn--allow" data-allow="true" data-session="false"><span class="approval__key">Y</span> 允许</button>',
+      '<button class="approval__btn approval__btn--allow" data-allow="true" data-session="true"><span class="approval__key">A</span> 本会话允许</button>',
+      '<button class="approval__btn approval__btn--allow" data-allow="true" data-session="true" data-persist="true"><span class="approval__key">P</span> 总是允许</button>',
+      '<button class="approval__btn approval__btn--deny" data-allow="false"><span class="approval__key">N</span> 拒绝</button>',
+    ]
+    d.innerHTML = '<div class="approval__header"><svg class="approval__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="approval__title">需要批准</span></div><div class="approval__subject">' + escHtml(a.tool) + (a.subject ? ' — ' + escHtml(a.subject) : '') + '</div><div class="approval__actions">' + actions.join('') + '</div>'
+    ctx.log()?.appendChild(d)
+    ctx.scrollDown(true)
+    const cleanup = () => { ctx.setPendingPrompts(ctx.getPendingPrompts().filter(f => f !== cleanup)); d.remove() }
+    ctx.setPendingPrompts([...ctx.getPendingPrompts(), cleanup])
+    const resolve = (payload: any) => {
+      fetch('/approve?token=' + encodeURIComponent(localStorage.getItem('teamix_token') || ''), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign({ id: a.id }, payload))
+      })
+      cleanup()
+    }
+    d.querySelectorAll('.approval__btn').forEach(btn => {
+      btn.addEventListener('click', () => resolve({
+        allow: (btn as HTMLElement).dataset.allow === 'true',
+        session: (btn as HTMLElement).dataset.session === 'true',
+        persist: (btn as HTMLElement).dataset.persist === 'true',
+      }))
+    })
+  }
+
+  // ── Ask card ──
+  function showAsk(ask: any) {
+    const d = el('div', 'ask')
+    const cleanup = () => { ctx.setPendingPrompts(ctx.getPendingPrompts().filter(f => f !== cleanup)); d.remove() }
+    const allSelected: Map<number, Set<number>> = new Map()
+    ask.questions.forEach((q: any, qi: number) => {
+      const qDiv = el('div')
+      qDiv.style.marginBottom = '16px'
+      qDiv.appendChild(el('div', 'ask__prompt', q.prompt))
+      const opts = el('div', 'ask__options')
+      const selected = new Set<number>()
+      allSelected.set(qi, selected)
+      q.options.forEach((o: any, i: number) => {
+        const opt = el('button', 'ask__opt')
+        opt.innerHTML = '<div><div class="ask__opt-label">' + escHtml(o.label) + '</div>' + (o.description ? '<div class="ask__opt-desc">' + escHtml(o.description) + '</div>' : '') + '</div>'
+        opt.onclick = () => {
+          if (q.multi) { selected.has(i) ? selected.delete(i) : selected.add(i); opt.classList.toggle('ask__opt--selected', selected.has(i)) }
+          else { selected.clear(); selected.add(i); opts.querySelectorAll('.ask__opt').forEach((oj, j) => oj.classList.toggle('ask__opt--selected', j === i)) }
+          const sa = d.querySelector('.ask__submit') as HTMLButtonElement
+          if (sa) sa.disabled = !Array.from(allSelected.values()).some(s => s.size > 0)
+        }
+        opts.appendChild(opt)
+      })
+      qDiv.appendChild(opts)
+      d.appendChild(qDiv)
+    })
+    const submitAll = el('button', 'ask__submit', '提交')
+    submitAll.disabled = true
+    submitAll.onclick = () => {
+      const answers = ask.questions.map((qq: any, qi: number) => ({
+        questionId: qq.id,
+        selected: Array.from(allSelected.get(qi) || new Set()).map(i => qq.options[i].label)
+      }))
+      fetch('/answer?token=' + encodeURIComponent(localStorage.getItem('teamix_token') || ''), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: ask.id, answers })
+      })
+      cleanup()
+    }
+    d.appendChild(submitAll)
+    ctx.log()?.appendChild(d)
+    ctx.scrollDown(true)
+    ctx.setPendingPrompts([...ctx.getPendingPrompts(), cleanup])
+  }
+
+  // ── Compaction ──
+  function showCompaction(c: any) {
+    const d = el('div', 'compaction')
+    if (c.summary) {
+      const head = el('div', 'compaction__head')
+      head.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>'
+      head.appendChild(el('span', 'compaction__title', '已压缩'))
+      head.appendChild(el('span', '', c.messages + ' 条消息'))
+      const body = el('div', 'compaction__body', c.summary)
+      head.onclick = () => body.classList.toggle('compaction__body--open')
+      d.appendChild(head); d.appendChild(body)
+    } else {
+      d.textContent = '压缩中...'
+    }
+    ctx.log()?.appendChild(d)
+    ctx.scrollDown()
+  }
+
+  // ── Usage strip ──
+  function showUsageStrip(usage: any) {
+    try { sessionStorage.setItem('teamix_last_usage', JSON.stringify(usage)) } catch { /* ignore */ }
+    const log = ctx.log()
+    if (!log) return
+    const strip = el('div', 'metric-strip')
+    const items = [
+      { l: '总计', v: fmtTok(usage.totalTokens), c: '' },
+      { l: '输入', v: fmtTok(usage.promptTokens), c: 'acc' },
+      { l: '输出', v: fmtTok(usage.completionTokens), c: 'ok' },
+    ]
+    items.forEach(it => {
+      const sp = el('span', 'item')
+      sp.innerHTML = it.l + ' <span class="v ' + it.c + '">' + it.v + '</span>'
+      strip.appendChild(sp)
+    })
+    if (usage.cacheHitTokens) {
+      const sp = el('span', 'item')
+      sp.innerHTML = '缓存 <span class="v acc">' + Math.round(usage.cacheHitTokens / Math.max(1, usage.cacheHitTokens + usage.cacheMissTokens) * 100) + '%</span>'
+      strip.appendChild(sp)
+    }
+    const cost = usage.cost ?? usage.costUsd
+    if (typeof cost === 'number' && cost > 0) {
+      const sp = el('span', 'item')
+      sp.innerHTML = '费用 <span class="v">' + fmtMoney(cost, usage.currency) + '</span>'
+      strip.appendChild(sp)
+    }
+    log.appendChild(strip)
+    ctx.scrollDown()
+  }
+
+  // ── Notice / Phase / Error ──
+  function showNotice(text: string, tone?: string) {
+    ctx.hideWelcome()
+    const n = el('div', 'notice' + (tone === 'warn' ? ' notice--warn' : ''), text)
+    ctx.log()?.appendChild(n)
+    ctx.scrollDown(true)
+  }
+
+  function showPhase(text: string) {
+    ctx.log()?.appendChild(el('div', 'phase', text))
+    ctx.scrollDown()
+  }
+
+  function showError(err: string) {
+    const log = ctx.log()
+    if (log) log.appendChild(el('div', 'msg--error', '✗ ' + err))
+    ctx.scrollDown()
+  }
+
+  // ── Open page card ──
+  function showOpenPageCard(pages: { url: string; label: string }[]) {
+    const d = el('div', 'approval')
+    d.style.borderLeft = '3px solid var(--accent)'
+    d.style.marginBottom = '8px'
+    const btns = pages.map((p, i) => '<button class="approval__btn approval__btn--allow" id="opg-' + i + '"><span class="approval__key">' + (i + 1) + '</span> 打开 ' + escHtml(p.label) + '</button>').join('')
+    const list = pages.map(p => '<div style="font-family:var(--mono);font-size:11px;color:var(--fg-2);padding:2px 0">• ' + p.url + ' <span style="color:var(--muted-2)">(' + p.label + ')</span></div>').join('')
+    d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg><span class="approval__title">查看效果</span></div><div class="approval__subject">修改已完成，请检查效果：</div><div style="padding:6px 12px 8px;border-bottom:1px solid var(--border);background:var(--bg-2)">' + list + '</div><div class="approval__actions">' + btns + '<button class="approval__btn approval__btn--deny" id="opg-dismiss" style="margin-left:auto">暂不打开</button></div>'
+    ctx.log()?.appendChild(d)
+    ctx.scrollDown(true)
+    ctx.setPendingPrompts([...ctx.getPendingPrompts(), () => { if (d.parentNode) d.remove() }])
+    pages.forEach((p, i) => {
+      document.getElementById('opg-' + i)?.addEventListener('click', () => { window.open(p.url, '_blank') })
+    })
+    document.getElementById('opg-dismiss')?.addEventListener('click', () => { d.remove() })
+  }
+
+  // ── Wf jump card ──
+  function showJumpCard() {
+    const d = el('div', 'approval')
+    d.style.borderLeft = '3px solid var(--accent)'
+    d.style.marginBottom = '8px'
+    d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="approval__title">跳转到阶段</span></div><div class="approval__subject">请选择要跳转到的阶段：</div><div id="jump-stage-list" style="padding:6px 12px;border-bottom:1px solid var(--border);background:var(--bg-2)"></div><div class="approval__actions"><button class="approval__btn approval__btn--deny" id="jump-cancel">取消</button></div>'
+    ctx.log()?.appendChild(d)
+    ctx.scrollDown(true)
+    document.getElementById('jump-cancel')!.onclick = () => { d.remove() }
+    const list = document.getElementById('jump-stage-list')!
+    list.innerHTML = '<div style="color:var(--muted-2);padding:4px 0">加载中...</div>'
+    const t = localStorage.getItem('teamix_token')
+    if (!t) return
+    fetch('/teamix/workflow?token=' + encodeURIComponent(t)).then(r => r.json()).then(data => {
+      if (!data || !data.stages || data.stages.length === 0) { list.innerHTML = '<div style="color:var(--muted-2);padding:4px 0">无可用阶段</div>'; return }
+      let html = ''
+      data.stages.forEach((s: any) => {
+        const active = s.status === 'in_progress' ? ' style="background:var(--accent-soft);color:var(--accent);font-weight:500"' : ''
+        html += '<div class="wf-jump-item" data-stage="' + s.stage + '"' + active + ' style="padding:5px 8px;cursor:pointer;border-radius:4px;margin:2px 0">' + (s.label || s.stage) + ' <span style="color:var(--muted-2);font-size:10px">(' + (s.status === 'in_progress' ? '当前' : s.status === 'completed' ? '已完成' : '待开始') + ')</span></div>'
+      })
+      list.innerHTML = html
+      list.querySelectorAll('.wf-jump-item').forEach((elItem) => {
+        (elItem as HTMLElement).onclick = () => {
+          const sn = elItem.getAttribute('data-stage')
+          const tk = localStorage.getItem('teamix_token')
+          if (!sn || !tk) return
+          fetch('/teamix/workflow/setstage?token=' + encodeURIComponent(tk), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: sn }) })
+            .then(r => {
+              if (r.ok) { d.remove(); ctx.onWorkflowChanged() }
+            })
+        }
+      })
+    }).catch(() => { list.innerHTML = '<div style="color:#f44336;padding:4px 0">加载失败</div>' })
+  }
+
+  // ── Stage approval ──
+  function showStageApproval(reason: string) {
+    const st = ctx.getStageState()
+    const extra = st.extra ? '\n\n' + st.extra : ''
+    const msg = (reason ? 'AI认为当前阶段已完成：' + reason : 'AI认为当前阶段已完成') + extra
+    const d = el('div', 'approval')
+    d.style.borderLeft = '3px solid var(--accent)'
+    d.style.marginBottom = '8px'
+    d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="approval__title">阶段完成</span></div><div class="approval__subject">' + msg + '</div><div class="approval__actions"><button class="approval__btn approval__btn--allow" id="sa-confirm"><span class="approval__key">Y</span> 确认进入下一阶段</button><button class="approval__btn approval__btn--deny" id="sa-cancel"><span class="approval__key">N</span> 继续当前阶段</button><button class="approval__btn" id="sa-jump" style="border:1px solid var(--border);color:var(--fg-2);font-size:11px"><span class="approval__key">J</span> 跳转到...</button></div><div id="sa-jump-list" style="display:none;border-top:1px solid var(--border);padding:8px 12px;font-size:12px"></div>'
+    ctx.log()?.appendChild(d)
+    ctx.scrollDown(true)
+    document.getElementById('sa-confirm')!.onclick = () => {
+      ctx.setStageState({ pending: false, reason: '', extra: '' })
+      d.remove()
+      const t = localStorage.getItem('teamix_token')
+      if (!t) return
+      fetch('/teamix/workflow/advance?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        .then(() => { ctx.onWorkflowChanged(); fetch('/submit?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: '请继续' }) }) })
+        .catch(() => { ctx.onWorkflowChanged(); fetch('/submit?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: '请继续' }) }) })
+    }
+    document.getElementById('sa-cancel')!.onclick = () => {
+      ctx.setStageState({ pending: false, reason: '', extra: '' })
+      d.remove()
+    }
+    document.getElementById('sa-jump')!.onclick = () => {
+      const list = document.getElementById('sa-jump-list')!
+      if (list.style.display !== 'none') { list.style.display = 'none'; return }
+      list.innerHTML = '<div style="color:var(--muted-2);padding:4px 0">加载中...</div>'
+      list.style.display = 'block'
+      const t = localStorage.getItem('teamix_token')
+      if (!t) return
+      fetch('/teamix/workflow?token=' + encodeURIComponent(t)).then(r => r.json()).then(data => {
+        if (!data || !data.stages || data.stages.length === 0) { list.innerHTML = '<div style="color:var(--muted-2);padding:4px 0">无可用阶段</div>'; return }
+        let html = ''
+        data.stages.forEach((s: any) => {
+          const active = s.status === 'in_progress' ? ' style="background:var(--accent-soft);color:var(--accent);font-weight:500"' : ''
+          html += '<div class="wf-jump-item" data-stage="' + s.stage + '"' + active + ' style="padding:5px 8px;cursor:pointer;border-radius:4px;margin:2px 0">' + (s.label || s.stage) + ' <span style="color:var(--muted-2);font-size:10px">(' + s.status + ')</span></div>'
+        })
+        list.innerHTML = html
+        list.querySelectorAll('.wf-jump-item').forEach((elItem) => {
+          (elItem as HTMLElement).onclick = () => {
+            const sn = elItem.getAttribute('data-stage')
+            const tk = localStorage.getItem('teamix_token')
+            if (!sn || !tk) return
+            fetch('/teamix/workflow/setstage?token=' + encodeURIComponent(tk), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: sn }) })
+              .then(r => { if (r.ok) { ctx.setStageState({ pending: false }); d.remove(); ctx.onWorkflowChanged(); fetch('/submit?token=' + encodeURIComponent(tk), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: '请继续' }) }) } })
+          }
+        })
+      }).catch(() => { list.innerHTML = '<div style="color:#f44336;padding:4px 0">加载失败</div>' })
+    }
+  }
+
+  // ── Wf confirm ──
+  function showWfConfirm(msg: string, callback: (ok: boolean) => void) {
+    const d = el('div', 'approval')
+    d.style.borderLeft = '3px solid var(--accent)'
+    d.style.marginBottom = '8px'
+    d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="approval__title">工作流确认</span></div><div class="approval__subject">' + msg + '</div><div class="approval__actions"><button class="approval__btn approval__btn--allow" id="wfc-yes"><span class="approval__key">Y</span> 确认</button><button class="approval__btn approval__btn--deny" id="wfc-no"><span class="approval__key">N</span> 取消</button></div>'
+    ctx.log()?.appendChild(d)
+    ctx.scrollDown(true)
+    const cleanup = () => { d.remove() }
+    document.getElementById('wfc-yes')!.onclick = () => { cleanup(); callback(true) }
+    document.getElementById('wfc-no')!.onclick = () => { cleanup(); callback(false) }
+  }
+
+  return { renderToolDispatch, renderToolResult, renderToolProgress, showApproval, showAsk, showCompaction, showUsageStrip, showNotice, showPhase, showError, showOpenPageCard, showJumpCard, showStageApproval, showWfConfirm }
+}

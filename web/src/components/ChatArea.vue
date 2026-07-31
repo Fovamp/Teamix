@@ -1,79 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from "vue"
 import { api } from "../api"
+import { stripSystemTags, el, fmtTok, fmtElapsed } from "../utils/format"
+import { SLASH_CMDS, SCOPES } from "../utils/constants"
+import { useVerticalDragResize } from "../composables/useDragResize"
+import { useSSE } from "../composables/useSSE"
+import { createCards } from "../lib/cards"
+import MessageItem from "./MessageItem.vue"
 
-// ── helpers ──
-function stripSystemTags(text: string): string {
-  if (!text) return text
-  // Remove <reasoning-language>...</reasoning-language> and <capability-route>...</capability-route> blocks
-  return text.replace(/<reasoning-language>[\s\S]*?<\/reasoning-language>/g, '')
-    .replace(/<capability-route[\s\S]*?<\/capability-route>/g, '')
-    .replace(/--- Begin \[.*?\][\s\S]*?--- End \[.*?\] ---/g, '')
-    .trim()
-}
-
-function el(tag: string, cls?: string, text?: string) {
-  const e = document.createElement(tag)
-  if (cls) e.className = cls
-  if (text) e.textContent = text
-  return e
-}
-function escHtml(s: any) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') }
-function fmtTok(n: number) { return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n) }
-function bashCommandPrefix(subject: string): string {
-  const command = String(subject || '').trim();
-  if (!command || command.includes('`') || command.includes('$(') || /[;|&<>\n]/.test(command)) return '';
-  const fields = command.split(/\s+/).filter(Boolean);
-  if (fields.length < 2) return '';
-  if (dangerousBashCommand(command)) return '';
-  const base = fields[0].toLowerCase();
-  if (['npm','pnpm','yarn','bun'].includes(base) && fields[1] && fields[1].toLowerCase() === 'run') return fields.length >= 3 ? fields[0]+' '+fields[1]+' '+fields[2]+':*' : '';
-  return fields[0]+' '+fields[1]+':*';
-}
-function dangerousBashCommand(command: string): boolean {
-  return /^rm\s+-[^\s]*[rf][^\s]*\b/.test(command)
-    || /^git\s+push\b.*\s--force\b/.test(command)
-    || /^git\s+push\b.*\s-f\b/.test(command)
-    || /^git\s+reset\s+--hard\b/.test(command)
-    || /^git\s+clean\s+-f\b/.test(command)
-    || /^chmod\s+(?:-R\s+)?777\b/.test(command)
-    || /^chown\b/.test(command)
-    || /^sudo\b/.test(command)
-    || /^mkfs\b/.test(command)
-    || /^dd\s+if=/.test(command)
-    || /^fdisk\b/.test(command);
-}
-
-function fmtMoney(n: number, c?: string) {
-  if (typeof n !== 'number' || !isFinite(n)) return '—'
-  const s = String(c || '¥').trim()
-  const sym = /^(cny|rmb|yuan)$/i.test(s) ? '¥' : /^(usd|dollar)$/i.test(s) ? '$' : s || '¥'
-  return sym + (n < 1 ? n.toFixed(4) : n.toFixed(2))
-}
-function fmtElapsed(ms: number) {
-  const s = Math.floor(ms / 1000)
-  return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + s % 60 + 's'
-}
-function compactText(s: any, max: number) {
-  const text = String(s || '').replace(/\s+/g, ' ').trim()
-  return text.length > max ? text.slice(0, max - 1) + '…' : text
-}
-function lineCount(s: any) {
-  const text = String(s || '')
-  return text ? text.split(/\r\n|\r|\n/).length : 0
-}
-function toolArgsSummary(args: any) {
-  const raw = String(args || '').trim()
-  if (!raw) return ''
-  try {
-    const parsed = JSON.parse(raw)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const key = ['cmd', 'command', 'path', 'file', 'query', 'q', 'url', 'prompt', 'input'].find(k => parsed[k])
-      if (key) return compactText(parsed[key], 90)
-    }
-  } catch { }
-  return compactText(raw, 90)
-}
+// ── helpers（见 utils/format.ts）──
 
 // ── state ──
 const messages = ref<any[]>([])
@@ -113,39 +48,21 @@ let rewindStage = 0
 let rewindSelected = 0
 let rewindScope = 0
 const rewindKey = ref(0)
-const SCOPES = [
-  { key: 'b', label: '代码 + 对话', scope: 'both' },
-  { key: 'c', label: '仅对话', scope: 'conversation' },
-  { key: 'd', label: '仅代码', scope: 'code' },
-  { key: 'f', label: '分叉（新分支）', scope: 'fork' },
-  { key: 's', label: '从此处总结', scope: 'sumfrom' },
-  { key: 'u', label: '总结到此处', scope: 'sumupto' },
-]
 
 // tool cards
 const toolCards: Record<string, HTMLElement> = {}
 
-// slash commands
-const SLASH_CMDS = [
-  { cmd: 'new', sig: '/new', desc: '新建会话', group: 'session' },
-  { cmd: 'resume', sig: '/resume [n]', desc: '恢复会话', group: 'session' },
-  { cmd: 'compact', sig: '/compact', desc: '压缩对话', group: 'session' },
-  { cmd: 'rewind', sig: '/rewind', desc: '回退到检查点', group: 'session' },
-  { cmd: 'tree', sig: '/tree', desc: '显示分支树', group: 'branch' },
-  { cmd: 'branch', sig: '/branch <name>', desc: '创建分支', group: 'branch' },
-  { cmd: 'switch', sig: '/switch <id>', desc: '切换分支', group: 'branch' },
-  { cmd: 'model', sig: '/model [provider/model]', desc: '列出/切换模型', group: 'model' },
-  { cmd: 'effort', sig: '/effort <level>', desc: '推理努力级别', group: 'model' },
-  { cmd: 'goal', sig: '/goal <task>', desc: '设置目标让代理自主执行', group: 'agent' },
-  { cmd: 'thinking', sig: '/thinking <level>', desc: '思考努力', group: 'agent' },
-  { cmd: 'verbose', sig: '/verbose', desc: '切换推理显示', group: 'agent' },
-  { cmd: 'mcp', sig: '/mcp', desc: 'MCP 服务器', group: 'system' },
-  { cmd: 'skill', sig: '/skill', desc: '技能', group: 'system' },
-  { cmd: 'hooks', sig: '/hooks', desc: '钩子', group: 'system' },
-  { cmd: 'memory', sig: '/memory', desc: '显示记忆', group: 'memory' },
-  { cmd: 'forget', sig: '/forget <item>', desc: '忘记记忆', group: 'memory', danger: true },
-  { cmd: 'help', sig: '/help', desc: '帮助', group: 'help' },
-]
+const cards = createCards({
+  log: () => document.getElementById('log'),
+  scrollDown,
+  hideWelcome,
+  getPendingPrompts: () => pendingPrompts,
+  setPendingPrompts: (fs) => { pendingPrompts = fs },
+  toolCards,
+  getStageState: () => ({ pending: stageCompletePending, reason: stageCompleteReason, extra: stageCompleteExtra }),
+  setStageState: (s) => { if (s.pending !== undefined) stageCompletePending = s.pending; if (s.reason !== undefined) stageCompleteReason = s.reason; if (s.extra !== undefined) stageCompleteExtra = s.extra },
+  onWorkflowChanged: () => { loadWorkflow() },
+})
 
 let slashOpen = ref(false)
 let slashIndex = 0
@@ -173,7 +90,6 @@ let todosState: any[] = []
 let todosDismissed = false
 
 // SSE
-let es: EventSource | null = null
 let escTimer: ReturnType<typeof setTimeout> | null = null
 let tickTimer: ReturnType<typeof setInterval> | null = null
 let turnStartAt = 0
@@ -197,7 +113,7 @@ onMounted(() => {
     messages.value = []
     hasVisibleHistory.value = false
     finalizeMsg()
-    currentMsgEl = null; currentTextEl = null; currentReasoningEl = null
+    streamingMsg.value = null
     showWelcome()
     document.querySelectorAll('.card, .approval, .ask, .compaction, .metric-strip, .notice, .phase, .msg--error').forEach(el => el.remove())
     checkpointCount = 0
@@ -237,7 +153,7 @@ onMounted(() => {
   }
 })
 onUnmounted(() => {
-  if (es) es.close()
+  sse.close()
   if (statusPollTimer) clearInterval(statusPollTimer)
   if (tickTimer) clearInterval(tickTimer)
   window.removeEventListener("workflow-changed", loadWorkflow)
@@ -336,21 +252,16 @@ function renderHistoryMessages(ms: any[]) {
     if (saved && messages.value.length > 0) {
       const lastMsg = messages.value[messages.value.length - 1]
       if (lastMsg.role === 'assistant' || lastMsg.role === 'user') {
-        showUsageStrip(JSON.parse(saved))
+        cards.showUsageStrip(JSON.parse(saved))
       }
     }
   } catch {}
 }
 
 // ── SSE ──
-function connectSSE() {
-  const t = localStorage.getItem("teamix_token")
-  if (!t) { console.log("no token for SSE"); return }
-  const url = "/events?token=" + encodeURIComponent(t)
-  console.log("SSE connecting to", url)
-  es = new EventSource(url)
-  es.onopen = () => { setConnState('connected'); fetchStatus(); fetchTodos(); loadWorkflow() }
-  es.onmessage = (evt) => {
+const sse = useSSE({
+  onOpen: () => { setConnState('connected'); fetchStatus(); fetchTodos(); loadWorkflow() },
+  onMessage: (evt) => {
     setConnState('connected')
     try {
       const e = JSON.parse(evt.data)
@@ -376,11 +287,11 @@ function connectSSE() {
           finalizeMsg()
           break
         case 'tool_dispatch':
-          if (e.tool) renderToolDispatch(e.tool)
+          if (e.tool) cards.renderToolDispatch(e.tool)
           break
         case 'tool_result':
           if (e.tool) {
-            renderToolResult(e.tool)
+            cards.renderToolResult(e.tool)
             if (e.tool.name === 'todo_write' && !e.tool.parentId && !e.tool.err) {
               try {
                 const ts = parseTodos(e.tool.args)
@@ -390,7 +301,7 @@ function connectSSE() {
           }
           break
         case 'tool_progress':
-          if (e.tool) renderToolProgress(e.tool)
+          if (e.tool) cards.renderToolProgress(e.tool)
           break
         case 'usage':
           if (e.usage) {
@@ -398,27 +309,27 @@ function connectSSE() {
             cumulativeCost += e.usage.cost ?? e.usage.costUsd ?? 0
             cumulativeCacheHit += e.usage.cacheHitTokens || 0
             cumulativeCacheMiss += e.usage.cacheMissTokens || 0
-            showUsageStrip(e.usage)
+            cards.showUsageStrip(e.usage)
           }
           break
         case 'notice':
-          showNotice(e.text || '', e.level === 'warn' ? 'warn' : '')
+          cards.showNotice(e.text || '', e.level === 'warn' ? 'warn' : '')
           break
         case 'phase':
           finalizeMsg()
-          showPhase(e.text || '')
+          cards.showPhase(e.text || '')
           break
         case 'approval_request':
-          if (e.approval) showApproval(e.approval)
+          if (e.approval) cards.showApproval(e.approval)
           break
         case 'ask_request':
-          if (e.ask) showAsk(e.ask)
+          if (e.ask) cards.showAsk(e.ask)
           break
         case 'compaction_started':
-          showCompaction({ trigger: e.compaction?.trigger })
+          cards.showCompaction({ trigger: e.compaction?.trigger })
           break
         case 'compaction_done':
-          showCompaction(e.compaction || {})
+          cards.showCompaction(e.compaction || {})
           break
         case 'retrying':
           setRetrying(e.retryAttempt, e.retryMax)
@@ -427,31 +338,29 @@ function connectSSE() {
           clearPendingPrompts()
           finalizeMsg()
           setRunning(false)
-          if (e.err) { showError(e.err) }
+          if (e.err) { cards.showError(e.err) }
           fetchStatus()
           fetchNotifications()
           fetchTodos()
           refreshCheckpointAvailability()
           loadWorkflow()
           if (!firstTurnDone && !e.err) { firstTurnDone = true; loadSessions() }
-          if (pendingPages.length > 0 && !e.err) { showOpenPageCard(pendingPages); pendingPages = [] }
-          if (stageCompletePending && !e.err) { showStageApproval(stageCompleteReason) }
+          if (pendingPages.length > 0 && !e.err) { cards.showOpenPageCard(pendingPages); pendingPages = [] }
+          if (stageCompletePending && !e.err) { cards.showStageApproval(stageCompleteReason) }
           // Fallback: check accumulated text in case marker was split across chunks
           if (!stageCompletePending && !e.err && window._wfLastText && window._wfLastText.indexOf('\u9636\u6bb5\u5b8c\u6210') >= 0) {
             stageCompletePending = true
             try { sessionStorage.setItem('wf_advance_pending', '1') } catch (e) {}
-            showStageApproval('')
+            cards.showStageApproval('')
           }
           window._wfLastText = ''
           break
       }
     } catch (ex) { console.error("SSE parse error", ex, evt.data) }
-  }
-  es.onerror = () => {
-    if (es?.readyState === EventSource.CONNECTING) setConnState('reconnecting')
-    else setConnState('disconnected')
-  }
-}
+  },
+  onError: (state) => { setConnState(state) },
+})
+function connectSSE() { sse.connect() }
 
 // ── SSE text handler ──
 function handleTextSSE(txt: string) {
@@ -486,340 +395,62 @@ function handleTextSSE(txt: string) {
   }
 }
 
-// ── Message rendering ──
-let currentMsgEl: HTMLElement | null = null
-let currentTextEl: HTMLElement | null = null
-let currentReasoningEl: HTMLElement | null = null
+// ── Message rendering（响应式：历史与流式统一由 MessageItem 渲染）──
+const streamingMsg = ref<any>(null)
+const welcomeVisible = ref(true)
 
 function hideWelcome() {
-  const w = document.getElementById('welcome')
-  if (w) w.style.display = 'none'
+  welcomeVisible.value = false
   if (!hasVisibleHistory.value) {
     hasVisibleHistory.value = true
     window.dispatchEvent(new CustomEvent('hasVisibleHistory-changed', { detail: true }))
   }
 }
 function showWelcome() {
-  const w = document.getElementById('welcome')
-  if (w) w.style.display = ''
-  // Clear log of non-Vue rendered elements
+  welcomeVisible.value = true
+  // Clear DOM-rendered cards（消息由 messages/streamingMsg 响应式控制，无需清理）
   const log = document.getElementById('log')
   if (log) {
     // Remove tool cards, approvals, asks, compaction, usage strips, notices, phases, errors
-    log.querySelectorAll('.card, .approval, .ask, .compaction, .metric-strip, .notice, .phase, .msg--error, .msg--user, .msg--assistant').forEach(el => el.remove())
+    log.querySelectorAll('.card, .approval, .ask, .compaction, .metric-strip, .notice, .phase, .msg--error').forEach(el => el.remove())
   }
 }
 
 function addUserMsg(text: string) {
   hideWelcome()
-  const d = el('div', 'msg msg--user')
-  var _body = document.createElement('div'); _body.className = 'msg__body'; var _txt = document.createElement('div'); _txt.className = 'msg__text'; _txt.textContent = text; _body.appendChild(_txt); d.appendChild(_body)
-  document.getElementById('log')?.appendChild(d)
+  messages.value.push({ role: 'user', content: text })
   scrollDown(true)
-  currentMsgEl = null; currentTextEl = null; currentReasoningEl = null
 }
 
 function ensureMsg() {
-  if (!currentMsgEl) {
+  if (!streamingMsg.value) {
     hideWelcome()
-    currentMsgEl = el('div', 'msg msg--assistant')
-    document.getElementById('log')?.appendChild(currentMsgEl)
+    streamingMsg.value = { role: 'assistant', content: '', reasoning: '', _showReasoning: false, streaming: true }
   }
-  return currentMsgEl
+  return streamingMsg.value
 }
 
 function appendText(t: string) {
-  const m = ensureMsg()
-  if (!currentTextEl) {
-    currentTextEl = document.createElement('span')
-    currentTextEl.className = 'msg__text'
-    const cursor = m.querySelector('.cursor')
-    if (cursor) cursor.remove()
-    m.appendChild(currentTextEl)
-    m.appendChild(el('span', 'cursor'))
-  }
-  currentTextEl.textContent += t
+  ensureMsg()
+  streamingMsg.value!.content += t
   scrollDown()
 }
 
 function appendReasoning(t: string) {
-  const m = ensureMsg()
-  if (!currentReasoningEl) {
-    const w = el('div', 'reasoning')
-    const b = el('button', 'reasoning__toggle')
-    b.innerHTML = '<span class="reasoning__chevron">▶</span> 思考过程'
-    const body = el('div', 'reasoning__body')
-    body.style.display = 'none'
-    b.onclick = () => {
-      body.style.display = body.style.display === 'none' ? '' : 'none'
-      b.querySelector('.reasoning__chevron')!.className = 'reasoning__chevron' + (body.style.display !== 'none' ? ' reasoning__chevron--open' : '')
-    }
-    w.appendChild(b)
-    w.appendChild(body)
-    if (currentTextEl) m.insertBefore(w, currentTextEl)
-    else m.appendChild(w)
-    currentReasoningEl = body
-  }
-  currentReasoningEl.textContent += stripSystemTags(t)
+  ensureMsg()
+  streamingMsg.value!.reasoning += stripSystemTags(t)
   scrollDown()
 }
 
 function finalizeMsg() {
-  if (currentMsgEl) {
-    const c = currentMsgEl.querySelector('.cursor')
-    if (c) c.remove()
+  if (streamingMsg.value) {
+    streamingMsg.value.streaming = false
+    messages.value.push(streamingMsg.value)
+    streamingMsg.value = null
   }
-  currentMsgEl = null; currentTextEl = null; currentReasoningEl = null
 }
 
-// ── Tool cards ──
-function toolIcon(kind: string) {
-  if (kind === 'success') return '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>'
-  if (kind === 'danger') return '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
-  return '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10" stroke-dasharray="60" stroke-dashoffset="20"/></svg>'
-}
-
-function setToolStatus(card: HTMLElement, tone: string, label: string) {
-  card.dataset.tone = tone
-  const badge = card.querySelector('.card-badge')
-  if (badge) badge.textContent = label
-  const ico = card.querySelector('.ico')
-  if (ico) { ico.className = 'ico' + (tone === 'accent' ? ' spin' : ''); ico.innerHTML = toolIcon(tone) }
-}
-
-async function copyText(text: string) {
-  if (!text) return false
-  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text).then(() => true).catch(() => false)
-  return false
-}
-
-function renderToolDispatch(tool: any) {
-  hideWelcome()
-  const card = el('div', 'card')
-  card.id = 'tool-' + tool.id
-  card.dataset.open = 'false'
-  card.dataset.tone = 'accent'
-  card.dataset.startedAt = String(Date.now())
-  const head = el('div', 'card-head')
-  const summary = toolArgsSummary(tool.args)
-  head.innerHTML = '<span class="ico spin">' + toolIcon('accent') + '</span><div class="card-main"><div class="card-title"><span class="name">' + escHtml(tool.name) + '</span>' + (summary ? '<span class="subject">' + escHtml(summary) + '</span>' : '') + '</div><div class="card-meta">参数 ' + fmtTok(String(tool.args || '').length) + '</div></div><span class="card-badge">运行中</span><div class="card-actions"><button type="button" class="card-action card-copy" title="复制输出" aria-label="复制输出"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button><span class="chev"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span></div>'
-  const body = el('div', 'card-body')
-  body.style.display = 'none'
-  head.onclick = (e) => {
-    if ((e.target as HTMLElement).closest('button')) return
-    const open = card.dataset.open === 'true'
-    card.dataset.open = open ? 'false' : 'true'
-    body.style.display = open ? 'none' : ''
-  }
-  const copy = head.querySelector('.card-copy') as HTMLElement
-  if (copy) {
-    copy.onclick = async (e) => {
-      e.stopPropagation()
-      const ok = await copyText(body.textContent || tool.args || '')
-      copy.title = ok ? '已复制' : '复制输出'
-      setTimeout(() => { copy.title = '复制输出' }, 1200)
-    }
-  }
-  card.appendChild(head)
-  card.appendChild(body)
-  document.getElementById('log')?.appendChild(card)
-  toolCards[tool.id] = card
-  scrollDown()
-}
-
-function renderToolResult(tool: any) {
-  const card = toolCards[tool.id]
-  if (!card) return
-  const elapsed = Math.max(0, Date.now() - Number(card.dataset.startedAt || Date.now()))
-  setToolStatus(card, tool.err ? 'danger' : 'success', tool.err ? '失败' : '完成')
-  if (tool.err) {
-    card.appendChild(el('div', 'err-body', tool.err))
-    const meta = card.querySelector('.card-meta')
-    if (meta) meta.textContent = fmtElapsed(elapsed)
-  } else {
-    const body = card.querySelector('.card-body')
-    const output = String(tool.output || '')
-    if (body) body.textContent = output ? output.slice(0, 2000) + (tool.truncated ? '\n...[truncated]' : '') : '无输出'
-    const meta = card.querySelector('.card-meta')
-    if (meta) meta.textContent = fmtElapsed(elapsed) + ' · ' + lineCount(output) + ' 行'
-  }
-  scrollDown()
-}
-
-function renderToolProgress(tool: any) {
-  const card = toolCards[tool.id]
-  if (!card) return
-  const body = card.querySelector('.card-body') as HTMLElement
-  if (!body) return
-  body.style.display = ''
-  card.dataset.open = 'true'
-  body.textContent += tool.output || ''
-  if (body.textContent.length > 4000) body.textContent = body.textContent.slice(-3000)
-  const meta = card.querySelector('.card-meta')
-  if (meta) meta.textContent = fmtElapsed(Date.now() - Number(card.dataset.startedAt || Date.now())) + ' · ' + lineCount(body.textContent) + ' 行'
-  scrollDown()
-}
-
-// ── Approval card ──
-function showApproval(a: any) {
-  const d = el('div', 'approval')
-  const actions = [
-    '<button class="approval__btn approval__btn--allow" data-allow="true" data-session="false"><span class="approval__key">Y</span> 允许</button>',
-    '<button class="approval__btn approval__btn--allow" data-allow="true" data-session="true"><span class="approval__key">A</span> 本会话允许</button>',
-    '<button class="approval__btn approval__btn--allow" data-allow="true" data-session="true" data-persist="true"><span class="approval__key">P</span> 总是允许</button>',
-    '<button class="approval__btn approval__btn--deny" data-allow="false"><span class="approval__key">N</span> 拒绝</button>',
-  ]
-  d.innerHTML = '<div class="approval__header"><svg class="approval__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="approval__title">需要批准</span></div><div class="approval__subject">' + escHtml(a.tool) + (a.subject ? ' — ' + escHtml(a.subject) : '') + '</div><div class="approval__actions">' + actions.join('') + '</div>'
-  document.getElementById('log')?.appendChild(d)
-  scrollDown(true)
-  const cleanup = () => { pendingPrompts = pendingPrompts.filter(f => f !== cleanup); d.remove() }
-  pendingPrompts.push(cleanup)
-  const resolve = (payload: any) => {
-    fetch('/approve?token=' + encodeURIComponent(localStorage.getItem('teamix_token') || ''), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.assign({ id: a.id }, payload))
-    })
-    cleanup()
-  }
-  d.querySelectorAll('.approval__btn').forEach(btn => {
-    btn.addEventListener('click', () => resolve({
-      allow: (btn as HTMLElement).dataset.allow === 'true',
-      session: (btn as HTMLElement).dataset.session === 'true',
-      persist: (btn as HTMLElement).dataset.persist === 'true',
-    }))
-  })
-}
-
-// ── Ask card ──
-function showAsk(ask: any) {
-  const d = el('div', 'ask')
-  const cleanup = () => { pendingPrompts = pendingPrompts.filter(f => f !== cleanup); d.remove() }
-  const allSelected: Map<number, Set<number>> = new Map()
-  ask.questions.forEach((q: any, qi: number) => {
-    const qDiv = el('div')
-    qDiv.style.marginBottom = '16px'
-    qDiv.appendChild(el('div', 'ask__prompt', q.prompt))
-    const opts = el('div', 'ask__options')
-    const selected = new Set<number>()
-    allSelected.set(qi, selected)
-    q.options.forEach((o: any, i: number) => {
-      const opt = el('button', 'ask__opt')
-      opt.innerHTML = '<div><div class="ask__opt-label">' + escHtml(o.label) + '</div>' + (o.description ? '<div class="ask__opt-desc">' + escHtml(o.description) + '</div>' : '') + '</div>'
-      opt.onclick = () => {
-        if (q.multi) { selected.has(i) ? selected.delete(i) : selected.add(i); opt.classList.toggle('ask__opt--selected', selected.has(i)) }
-        else { selected.clear(); selected.add(i); opts.querySelectorAll('.ask__opt').forEach((oj, j) => oj.classList.toggle('ask__opt--selected', j === i)) }
-        // Update submit button state
-        const sa = d.querySelector('.ask__submit') as HTMLButtonElement
-        if (sa) sa.disabled = !Array.from(allSelected.values()).some(s => s.size > 0)
-      }
-      opts.appendChild(opt)
-    })
-    qDiv.appendChild(opts)
-    d.appendChild(qDiv)
-  })
-  // Single submit button for ALL questions
-  const submitAll = el('button', 'ask__submit', '提交')
-  submitAll.disabled = true
-  submitAll.onclick = () => {
-    const answers = ask.questions.map((qq: any, qi: number) => ({
-      questionId: qq.id,
-      selected: Array.from(allSelected.get(qi) || new Set()).map(i => qq.options[i].label)
-    }))
-    fetch('/answer?token=' + encodeURIComponent(localStorage.getItem('teamix_token') || ''), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: ask.id, answers })
-    })
-    cleanup()
-  }
-  d.appendChild(submitAll)
-  document.getElementById('log')?.appendChild(d)
-  scrollDown(true)
-  pendingPrompts.push(cleanup)
-}
-// ── Compaction ──
-function showCompaction(c: any) {
-  const d = el('div', 'compaction')
-  if (c.summary) {
-    const head = el('div', 'compaction__head')
-    head.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>'
-    head.appendChild(el('span', 'compaction__title', '已压缩'))
-    head.appendChild(el('span', '', c.messages + ' 条消息'))
-    const body = el('div', 'compaction__body', c.summary)
-    head.onclick = () => body.classList.toggle('compaction__body--open')
-    d.appendChild(head); d.appendChild(body)
-  } else {
-    d.textContent = '压缩中...'
-  }
-  document.getElementById('log')?.appendChild(d)
-  scrollDown()
-}
-
-// ── Usage strip ──
-function showUsageStrip(usage: any) {
-  try { sessionStorage.setItem('teamix_last_usage', JSON.stringify(usage)) } catch {}
-  const log = document.getElementById('log')
-  if (!log) return
-  const strip = el('div', 'metric-strip')
-  const items = [
-    { l: '总计', v: fmtTok(usage.totalTokens), c: '' },
-    { l: '输入', v: fmtTok(usage.promptTokens), c: 'acc' },
-    { l: '输出', v: fmtTok(usage.completionTokens), c: 'ok' },
-  ]
-  items.forEach(it => {
-    const sp = el('span', 'item')
-    sp.innerHTML = it.l + ' <span class="v ' + it.c + '">' + it.v + '</span>'
-    strip.appendChild(sp)
-  })
-  if (usage.cacheHitTokens) {
-    const sp = el('span', 'item')
-    sp.innerHTML = '缓存 <span class="v acc">' + Math.round(usage.cacheHitTokens / Math.max(1, usage.cacheHitTokens + usage.cacheMissTokens) * 100) + '%</span>'
-    strip.appendChild(sp)
-  }
-  const cost = usage.cost ?? usage.costUsd
-  if (typeof cost === 'number' && cost > 0) {
-    const sp = el('span', 'item')
-    sp.innerHTML = '费用 <span class="v">' + fmtMoney(cost, usage.currency) + '</span>'
-    strip.appendChild(sp)
-  }
-  log.appendChild(strip)
-  scrollDown()
-}
-
-// ── Notice / Phase / Error ──
-function showNotice(text: string, tone?: string) {
-  hideWelcome()
-  const n = el('div', 'notice' + (tone === 'warn' ? ' notice--warn' : ''), text)
-  document.getElementById('log')?.appendChild(n)
-  scrollDown(true)
-}
-
-function showPhase(text: string) {
-  document.getElementById('log')?.appendChild(el('div', 'phase', text))
-  scrollDown()
-}
-
-function showError(err: string) {
-  const log = document.getElementById('log')
-  if (log) log.appendChild(el('div', 'msg--error', '✗ ' + err))
-  scrollDown()
-}
-
-// ── Open page card ──
-function showOpenPageCard(pages: { url: string; label: string }[]) {
-  const d = el('div', 'approval')
-  d.style.borderLeft = '3px solid var(--accent)'
-  d.style.marginBottom = '8px'
-  const btns = pages.map((p, i) => '<button class="approval__btn approval__btn--allow" id="opg-' + i + '"><span class="approval__key">' + (i + 1) + '</span> 打开 ' + escHtml(p.label) + '</button>').join('')
-  const list = pages.map(p => '<div style="font-family:var(--mono);font-size:11px;color:var(--fg-2);padding:2px 0">• ' + p.url + ' <span style="color:var(--muted-2)">(' + p.label + ')</span></div>').join('')
-  d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg><span class="approval__title">查看效果</span></div><div class="approval__subject">修改已完成，请检查效果：</div><div style="padding:6px 12px 8px;border-bottom:1px solid var(--border);background:var(--bg-2)">' + list + '</div><div class="approval__actions">' + btns + '<button class="approval__btn approval__btn--deny" id="opg-dismiss" style="margin-left:auto">暂不打开</button></div>'
-  document.getElementById('log')?.appendChild(d)
-  scrollDown(true)
-  pendingPrompts.push(() => { if (d.parentNode) d.remove() })
-  pages.forEach((p, i) => {
-    document.getElementById('opg-' + i)?.addEventListener('click', () => { window.open(p.url, '_blank') })
-  })
-  document.getElementById('opg-dismiss')?.addEventListener('click', () => { d.remove() })
-}
+// ── 卡片渲染见 lib/cards.ts（cards.*）──
 
 // ── Todo panel ──
 function parseTodos(args: any) {
@@ -866,7 +497,7 @@ async function loadWorkflow() {
 
 async function setStage(stage: string) {
   if (running.value) return
-  showWfConfirm('确认切换到阶段？', async (ok: boolean) => {
+  cards.showWfConfirm('确认切换到阶段？', async (ok: boolean) => {
     if (!ok) return
     try { await api.workflowSetStage(stage); await loadWorkflow() } catch { }
   })
@@ -949,7 +580,7 @@ async function send() {
     chatHistoryIndex = chatHistory.length
     inputText.value = ''
     const reasonText = stageCompleteReason ? '（' + stageCompleteReason + '）' : ''
-    showWfConfirm('阶段已完成' + reasonText + '，是否进入下一阶段？', (ok: boolean) => {
+    cards.showWfConfirm('阶段已完成' + reasonText + '，是否进入下一阶段？', (ok: boolean) => {
       if (!ok) { stageCompletePending = false; stageCompleteReason = ''; stageCompleteExtra = ''; return }
       const t = localStorage.getItem('teamix_token')
       if (!t) return
@@ -1003,7 +634,7 @@ function openRewindPicker() {
   fetch('/checkpoints?token=' + encodeURIComponent(localStorage.getItem('teamix_token') || ''))
     .then(r => r.json()).then(cps => {
       checkpointCount = Array.isArray(cps) ? cps.length : 0
-      if (!cps || cps.length === 0) { showNotice('暂无可用检查点', 'warn'); return }
+      if (!cps || cps.length === 0) { cards.showNotice('暂无可用检查点', 'warn'); return }
       rewindCheckpoints = cps; rewindStage = 0; rewindSelected = 0; rewindScope = 0
       rewindKey.value++; showRewind.value = true
     }).catch(() => { })
@@ -1081,102 +712,7 @@ function fetchNotifications() {
   }).catch(() => { })
 }
 
-// ── Wf confirm ──
-function showJumpCard() {
-  const d = el('div', 'approval')
-  d.style.borderLeft = '3px solid var(--accent)'
-  d.style.marginBottom = '8px'
-  d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="approval__title">跳转到阶段</span></div><div class="approval__subject">请选择要跳转到的阶段：</div><div id="jump-stage-list" style="padding:6px 12px;border-bottom:1px solid var(--border);background:var(--bg-2)"></div><div class="approval__actions"><button class="approval__btn approval__btn--deny" id="jump-cancel">取消</button></div>'
-  document.getElementById('log')?.appendChild(d)
-  scrollDown(true)
-  document.getElementById('jump-cancel')!.onclick = () => { d.remove() }
-  const list = document.getElementById('jump-stage-list')!
-  list.innerHTML = '<div style="color:var(--muted-2);padding:4px 0">加载中...</div>'
-  const t = localStorage.getItem('teamix_token')
-  if (!t) return
-  fetch('/teamix/workflow?token=' + encodeURIComponent(t)).then(r => r.json()).then(data => {
-    if (!data || !data.stages || data.stages.length === 0) { list.innerHTML = '<div style="color:var(--muted-2);padding:4px 0">无可用阶段</div>'; return }
-    let html = ''
-    data.stages.forEach((s: any) => {
-      const active = s.status === 'in_progress' ? ' style="background:var(--accent-soft);color:var(--accent);font-weight:500"' : ''
-      html += '<div class="wf-jump-item" data-stage="' + s.stage + '"' + active + ' style="padding:5px 8px;cursor:pointer;border-radius:4px;margin:2px 0">' + (s.label || s.stage) + ' <span style="color:var(--muted-2);font-size:10px">(' + (s.status === 'in_progress' ? '当前' : s.status === 'completed' ? '已完成' : '待开始') + ')</span></div>'
-    })
-    list.innerHTML = html
-    list.querySelectorAll('.wf-jump-item').forEach((el) => {
-      (el as HTMLElement).onclick = () => {
-        const sn = el.getAttribute('data-stage')
-        const tk = localStorage.getItem('teamix_token')
-        if (!sn || !tk) return
-        fetch('/teamix/workflow/setstage?token=' + encodeURIComponent(tk), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: sn }) })
-          .then(r => {
-            if (r.ok) { d.remove(); loadWorkflow() }
-          })
-      }
-    })
-  }).catch(() => { list.innerHTML = '<div style="color:#f44336;padding:4px 0">加载失败</div>' })
-}
-
-function showStageApproval(reason: string) {
-  const extra = stageCompleteExtra ? '\n\n' + stageCompleteExtra : ''
-  const msg = (reason ? 'AI认为当前阶段已完成：' + reason : 'AI认为当前阶段已完成') + extra
-  const d = el('div', 'approval')
-  d.style.borderLeft = '3px solid var(--accent)'
-  d.style.marginBottom = '8px'
-  d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="approval__title">阶段完成</span></div><div class="approval__subject">' + msg + '</div><div class="approval__actions"><button class="approval__btn approval__btn--allow" id="sa-confirm"><span class="approval__key">Y</span> 确认进入下一阶段</button><button class="approval__btn approval__btn--deny" id="sa-cancel"><span class="approval__key">N</span> 继续当前阶段</button><button class="approval__btn" id="sa-jump" style="border:1px solid var(--border);color:var(--fg-2);font-size:11px"><span class="approval__key">J</span> 跳转到...</button></div><div id="sa-jump-list" style="display:none;border-top:1px solid var(--border);padding:8px 12px;font-size:12px"></div>'
-  document.getElementById('log')?.appendChild(d)
-  scrollDown(true)
-  document.getElementById('sa-confirm')!.onclick = () => {
-    stageCompletePending = false; stageCompleteReason = ''; stageCompleteExtra = ''
-    d.remove()
-    const t = localStorage.getItem('teamix_token')
-    if (!t) return
-    fetch('/teamix/workflow/advance?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-      .then(() => { loadWorkflow(); fetch('/submit?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: '请继续' }) }) })
-      .catch(() => { loadWorkflow(); fetch('/submit?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: '请继续' }) }) })
-  }
-  document.getElementById('sa-cancel')!.onclick = () => {
-    stageCompletePending = false; stageCompleteReason = ''; stageCompleteExtra = ''
-    d.remove()
-  }
-  document.getElementById('sa-jump')!.onclick = () => {
-    const list = document.getElementById('sa-jump-list')!
-    if (list.style.display !== 'none') { list.style.display = 'none'; return }
-    list.innerHTML = '<div style="color:var(--muted-2);padding:4px 0">加载中...</div>'
-    list.style.display = 'block'
-    const t = localStorage.getItem('teamix_token')
-    if (!t) return
-    fetch('/teamix/workflow?token=' + encodeURIComponent(t)).then(r => r.json()).then(data => {
-      if (!data || !data.stages || data.stages.length === 0) { list.innerHTML = '<div style="color:var(--muted-2);padding:4px 0">无可用阶段</div>'; return }
-      let html = ''
-      data.stages.forEach((s: any) => {
-        const active = s.status === 'in_progress' ? ' style="background:var(--accent-soft);color:var(--accent);font-weight:500"' : ''
-        html += '<div class="wf-jump-item" data-stage="' + s.stage + '"' + active + ' style="padding:5px 8px;cursor:pointer;border-radius:4px;margin:2px 0">' + (s.label || s.stage) + ' <span style="color:var(--muted-2);font-size:10px">(' + s.status + ')</span></div>'
-      })
-      list.innerHTML = html
-      list.querySelectorAll('.wf-jump-item').forEach((el) => {
-        (el as HTMLElement).onclick = () => {
-          const sn = el.getAttribute('data-stage')
-          const tk = localStorage.getItem('teamix_token')
-          if (!sn || !tk) return
-          fetch('/teamix/workflow/setstage?token=' + encodeURIComponent(tk), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: sn }) })
-            .then(r => { if (r.ok) { stageCompletePending = false; d.remove(); loadWorkflow(); fetch('/submit?token=' + encodeURIComponent(tk), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: '请继续' }) }) } })
-        }
-      })
-    }).catch(() => { list.innerHTML = '<div style="color:#f44336;padding:4px 0">加载失败</div>' })
-  }
-}
-
-function showWfConfirm(msg: string, callback: (ok: boolean) => void) {
-  const d = el('div', 'approval')
-  d.style.borderLeft = '3px solid var(--accent)'
-  d.style.marginBottom = '8px'
-  d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="approval__title">工作流确认</span></div><div class="approval__subject">' + msg + '</div><div class="approval__actions"><button class="approval__btn approval__btn--allow" id="wfc-yes"><span class="approval__key">Y</span> 确认</button><button class="approval__btn approval__btn--deny" id="wfc-no"><span class="approval__key">N</span> 取消</button></div>'
-  document.getElementById('log')?.appendChild(d)
-  scrollDown(true)
-  const cleanup = () => { d.remove() }
-  document.getElementById('wfc-yes')!.onclick = () => { cleanup(); callback(true) }
-  document.getElementById('wfc-no')!.onclick = () => { cleanup(); callback(false) }
-}
+// ── 工作流确认卡片见 lib/cards.ts（cards.*）──
 
 // ── Set running / conn state helpers ──
 function setRunning(on: boolean) {
@@ -1469,64 +1005,37 @@ function removePastedBlock(block: { label: string; text: string }) {
   openPastedLabels.value = openPastedLabels.value.filter(l => l !== block.label)
   inputText.value = inputText.value.replace(block.label, '')
 }const previewRef = ref<HTMLElement | null>(null)
-let previewResizing = false
-let previewStartY = 0
-let previewStartH = 0
+const previewDrag = useVerticalDragResize({
+  getStartH: () => previewHeight.value,
+  min: () => 60,
+  max: 400,
+  apply: (h) => { previewHeight.value = h },
+})
 
-function startPreviewResize(e: MouseEvent) {
-  previewResizing = true
-  previewStartY = e.clientY
-  previewStartH = previewHeight.value
-  document.addEventListener('mousemove', onPreviewResize)
-  document.addEventListener('mouseup', stopPreviewResize)
-  e.preventDefault()
-}
-function onPreviewResize(e: MouseEvent) {
-  if (!previewResizing) return
-  const delta = previewStartY - e.clientY
-  previewHeight.value = Math.max(60, Math.min(400, previewStartH + delta))
-}
-function stopPreviewResize() {
-  previewResizing = false
-  document.removeEventListener('mousemove', onPreviewResize)
-  document.removeEventListener('mouseup', stopPreviewResize)
-}
-
-
-const composerResizeState = { active: false, startY: 0, startH: 0 }
-function startComposerResize(e: MouseEvent) {
-  const composer = document.getElementById('composer')
-  if (!composer) return
-  // Fix height immediately to prevent layout shift
-  const h = composer.offsetHeight
-  if (!composerDefaultHeight) composerDefaultHeight = h
-  composer.style.height = h + 'px'
-  // Directly add class to input-row for instant layout
-  const row = composer.querySelector('.composer__input-row')
-  composer.classList.add('composer--resized')
-
-  if (row) row.classList.add('composer__input-row--resized')
-  composerResizeState.active = true
-  composerResizeState.startY = e.clientY
-  composerResizeState.startH = h
-  document.addEventListener('mousemove', onComposerResize)
-  document.addEventListener('mouseup', stopComposerResize)
-  e.preventDefault()
-}
-function onComposerResize(e: MouseEvent) {
-  if (!composerResizeState.active) return
-  const delta = composerResizeState.startY - e.clientY
-  // 下限 = 首次记录的默认高度（允许缩回初始大小），上限 400
-  const minH = composerDefaultHeight || 40
-  const newH = Math.max(minH, Math.min(400, composerResizeState.startH + delta))
-  const composer = document.getElementById('composer')
-  if (composer) composer.style.height = newH + 'px'
-}
-function stopComposerResize() {
-  composerResizeState.active = false
-  document.removeEventListener('mousemove', onComposerResize)
-  document.removeEventListener('mouseup', stopComposerResize)
-}
+const composerDrag = useVerticalDragResize({
+  getStartH: () => {
+    const composer = document.getElementById('composer')
+    return composer ? composer.offsetHeight : 0
+  },
+  min: () => composerDefaultHeight || 40,
+  max: 400,
+  apply: (h) => {
+    const composer = document.getElementById('composer')
+    if (composer) composer.style.height = h + 'px'
+  },
+  onStart: () => {
+    const composer = document.getElementById('composer')
+    if (!composer) return
+    // Fix height immediately to prevent layout shift
+    const h = composer.offsetHeight
+    if (!composerDefaultHeight) composerDefaultHeight = h
+    composer.style.height = h + 'px'
+    // Directly add class to input-row for instant layout
+    const row = composer.querySelector('.composer__input-row')
+    composer.classList.add('composer--resized')
+    if (row) row.classList.add('composer__input-row--resized')
+  },
+})
 
 defineExpose({ loadSessions, fetchStatus, fetchNotifications })
 </script>
@@ -1534,7 +1043,7 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
 <template>
   <section class="transcript" id="log">
     <!-- Welcome -->
-    <div class="welcome" id="welcome">
+    <div class="welcome" id="welcome" v-show="welcomeVisible">
       <div class="welcome__brand"><svg width="240" height="56" viewBox="0 0 240 56"><text x="20" y="40" font-size="32" font-weight="700" fill="var(--fg)">Teamix</text><text x="140" y="40" font-size="20" fill="var(--accent)" font-weight="600">Cloud</text></svg></div>
       <div class="welcome__tag">AI 协作开发平台</div>
       <div class="welcome__meta">
@@ -1555,23 +1064,9 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
       </div>
     </div>
 
-    <!-- Rendered messages -->
-    <div v-for="(m, i) in messages" :key="i">
-      <div v-if="m.role === 'user'" class="msg msg--user">
-        <div class="msg__body">
-          <div class="msg__text" v-text="m.content"></div>
-        </div>
-      </div>
-      <div v-else-if="m.role === 'assistant'" class="msg msg--assistant">
-        <div v-if="m.reasoning" class="reasoning">
-          <button class="reasoning__toggle" @click="m._showReasoning = !m._showReasoning">
-            <span class="reasoning__chevron" :class="{ 'reasoning__chevron--open': m._showReasoning }">▶</span> 思考过程
-          </button>
-          <div class="reasoning__body" v-show="m._showReasoning" v-text="m.reasoning"></div>
-        </div>
-        <span class="msg__text" v-text="m.content"></span>
-      </div>
-    </div>
+    <!-- Rendered messages（历史 + 流式统一由 MessageItem 渲染，顺序 = 到达顺序） -->
+    <MessageItem v-for="(m, i) in messages" :key="i" :m="m" />
+    <MessageItem v-if="streamingMsg" :m="streamingMsg" />
 
     <!-- Todo Panel -->
     <div class="todos" :class="{ 'todos--visible': showTodoPanel }" id="todo-panel">
@@ -1642,7 +1137,7 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
     </div>
 <template v-for="block in pastedBlocks.filter(b => openPastedLabels.includes(b.label) && inputText.includes(b.label))">
       <div style="padding:4px 28px;margin-bottom:2px;position:relative">
-        <div class="preview-resize-handle" @mousedown="startPreviewResize($event)" style="height:10px;cursor:row-resize;position:relative;margin-bottom:-1px;display:flex;align-items:center;justify-content:center">
+        <div class="preview-resize-handle" @mousedown="previewDrag.start($event)" style="height:10px;cursor:row-resize;position:relative;margin-bottom:-1px;display:flex;align-items:center;justify-content:center">
           <div style="height:2px;background:var(--border);border-radius:2px;flex:1;margin:0 20px;transition:all .15s"></div>
         </div>
         <div ref="previewRef" :style="{padding:'6px 10px',border:'1px solid var(--border)',borderRadius:'6px',background:'var(--bg)',fontSize:'11px',fontFamily:'var(--mono)',height:previewHeight+'px',overflowY:'auto',whiteSpace:'pre-wrap',wordBreak:'break-word'}">{{ block.text }}</div>
@@ -1689,7 +1184,7 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
           @dragover.prevent
           @paste="handlePaste" @drop="handleFileDrop"></textarea>
       </div>
-      <div class="composer-resize-handle" @mousedown="startComposerResize($event)" style="height:12px;cursor:row-resize;position:absolute;top:-6px;left:0;right:0;z-index:5;display:flex;align-items:center;justify-content:center">
+      <div class="composer-resize-handle" @mousedown="composerDrag.start($event)" style="height:12px;cursor:row-resize;position:absolute;top:-6px;left:0;right:0;z-index:5;display:flex;align-items:center;justify-content:center">
         <div style="height:2px;background:var(--border);border-radius:2px;margin:0 28px;flex:1;transition:all .15s"></div>
       </div>
       <button class="composer__btn composer__btn--send" id="btn-send" title="发送 (Enter)" v-show="!running" @click="send">
