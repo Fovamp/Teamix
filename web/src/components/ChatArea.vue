@@ -302,7 +302,7 @@ async function loadHistory() {
   try {
     const s = await api.status()
     running.value = s.running
-    (window as any)._cumulativeStats = { cost: cumulativeCost, tokens: cumulativeCost > 0 ? cumulativeCost * 1000 : 0, cacheHit: cumulativeCacheHit, cacheMiss: cumulativeCacheMiss }
+    ;(window as any)._cumulativeStats = { cost: cumulativeCost, tokens: cumulativeCost > 0 ? cumulativeCost * 1000 : 0, cacheHit: cumulativeCacheHit, cacheMiss: cumulativeCacheMiss }
     planMode.value = !!s.plan
   } catch (e) { console.error("loadStatus", e) }
 }
@@ -1044,7 +1044,7 @@ function fetchStatus() {
     if (s.window && s.used !== undefined) {
       window.dispatchEvent(new CustomEvent('status-update', { detail: s }))
     }
-    (window as any)._cumulativeStats = { cost: cumulativeCost, tokens: cumulativeCost > 0 ? cumulativeCost * 1000 : 0, cacheHit: cumulativeCacheHit, cacheMiss: cumulativeCacheMiss }
+    ;(window as any)._cumulativeStats = { cost: cumulativeCost, tokens: cumulativeCost > 0 ? cumulativeCost * 1000 : 0, cacheHit: cumulativeCacheHit, cacheMiss: cumulativeCacheMiss }
     planMode.value = !!s.plan
     const tam = s.toolApprovalMode || ((s.autoApproveTools ?? s.bypass) ? 'yolo' : 'ask')
     bypassMode.value = tam === 'yolo'
