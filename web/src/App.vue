@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { ref, watch, nextTick, onUnmounted } from "vue"
+import { ref, onMounted, onUnmounted } from "vue"
 import { api } from "./api"
 import LoginOverlay from "./components/LoginOverlay.vue"
 import SideBar from "./components/SideBar.vue"
@@ -18,79 +18,57 @@ const showModels = ref(false)
 const showWorkflows = ref(false)
 const showSettings = ref(false)
 
-// Resizable dividers — 登录成功（v-else 渲染 .app）后再初始化，
-// 避免首次进入时 .sidebar/.right-panel 不存在导致拖拽条永不创建。
-let dividersReady = false
-let dragging: any = null, startX = 0, startW = 0
-// 引用提升到组件作用域，便于 onUnmounted 按名移除
-let dragMoveFn: ((e: MouseEvent) => void) | null = null
-let dragUpFn: (() => void) | null = null
+// 左右两侧拖拽竖线（resize-divider）：
+// 直接在模板中渲染，随 .app 一起挂载，无登录时序问题；
+// 用 CSS 变量 calc() 定位到两列交界，不受面板 overflow 裁剪。
+let dragging: 'left' | 'right' | null = null
+let startX = 0, startW = 0
 
-function initDividers() {
-  if (dividersReady) return
-  const sidebar = document.querySelector('.sidebar') as HTMLElement
-  const rightPanel = document.querySelector('.right-panel') as HTMLElement
-  if (!sidebar || !rightPanel) return
-
-  function onStart(e: MouseEvent, panel: HTMLElement, cssVar: string) {
-    dragging = { panel, cssVar }
-    startX = e.clientX
-    startW = panel.offsetWidth
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-    e.preventDefault()
-  }
-
-  // Sidebar resize handle
-  const sd = document.createElement('div')
-  sd.className = 'resize-divider'
-  sd.style.cssText = 'position:absolute;right:-2px;top:0;bottom:0;width:4px;cursor:col-resize;z-index:10'
-  sidebar.style.position = 'relative'
-  sidebar.appendChild(sd)
-  sd.addEventListener('mousedown', (e) => onStart(e, sidebar, '--sidebar-w'))
-
-  // Right panel resize handle
-  const rd = document.createElement('div')
-  rd.className = 'resize-divider'
-  rd.style.cssText = 'position:absolute;left:-2px;top:0;bottom:0;width:4px;cursor:col-resize;z-index:10'
-  rightPanel.style.position = 'relative'
-  rightPanel.appendChild(rd)
-  rd.addEventListener('mousedown', (e) => onStart(e, rightPanel, '--right-w'))
-
-  const onMove = (e: MouseEvent) => {
-    if (!dragging) return
-    const dx = e.clientX - startX
-    const delta = dragging.cssVar === '--sidebar-w' ? dx : -dx
-    const newW = Math.max(180, Math.min(800, startW + delta))
-    document.documentElement.style.setProperty(dragging.cssVar, newW + 'px')
-  }
-  const onUp = () => {
-    if (!dragging) return
-    document.body.style.cursor = ''
-    document.body.style.userSelect = ''
-    dragging = null
-  }
-  dragMoveFn = onMove
-  dragUpFn = onUp
-  document.addEventListener('mousemove', onMove)
-  document.addEventListener('mouseup', onUp)
-  dividersReady = true
+function onDividerDown(e: MouseEvent, side: 'left' | 'right') {
+  dragging = side
+  startX = e.clientX
+  const panel = document.querySelector(side === 'left' ? '.sidebar' : '.right-panel') as HTMLElement
+  startW = panel ? panel.offsetWidth : (side === 'left' ? 200 : 220)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  const dv = document.getElementById(side === 'left' ? 'app-divider-left' : 'app-divider-right')
+  if (dv) dv.classList.add('resize-divider--active')
+  e.preventDefault()
 }
 
-// 已登录则立即初始化；否则等登录弹窗关闭后（v-else 渲染 .app）再初始化
-watch(showLogin, (v) => {
-  if (!v) nextTick(initDividers)
-}, { immediate: true })
+const onMove = (e: MouseEvent) => {
+  if (!dragging) return
+  const dx = e.clientX - startX
+  const cssVar = dragging === 'left' ? '--sidebar-w' : '--right-w'
+  const newW = Math.max(180, Math.min(800, dragging === 'left' ? startW + dx : startW - dx))
+  document.documentElement.style.setProperty(cssVar, newW + 'px')
+}
+
+const onUp = () => {
+  if (!dragging) return
+  const dv = document.getElementById(dragging === 'left' ? 'app-divider-left' : 'app-divider-right')
+  if (dv) dv.classList.remove('resize-divider--active')
+  dragging = null
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+}
+
+onMounted(() => {
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+})
 
 onUnmounted(() => {
-  if (dragMoveFn) document.removeEventListener('mousemove', dragMoveFn)
-  if (dragUpFn) document.removeEventListener('mouseup', dragUpFn)
+  document.removeEventListener('mousemove', onMove)
+  document.removeEventListener('mouseup', onUp)
 })
 </script>
 
 <template>
   <LoginOverlay v-if="showLogin" @login="showLogin = false" />
   <div v-else class="app">
+    <div class="resize-divider app-divider" id="app-divider-left" @mousedown="onDividerDown($event, 'left')"></div>
+    <div class="resize-divider app-divider" id="app-divider-right" @mousedown="onDividerDown($event, 'right')"></div>
 
     <SideBar @stats="showStats = true" @branches="showBranches = true" @models="showModels = true" @workflows="showWorkflows = true" @settings="showSettings = true" />
     <ChatArea />
@@ -104,7 +82,10 @@ onUnmounted(() => {
 </template>
 
 <style>
-.app { display: grid; grid-template-columns: var(--sidebar-w, 200px) 1fr var(--right-w, 220px); grid-template-rows: auto 1fr auto; height: 100vh; }
+.app { position: relative; display: grid; grid-template-columns: var(--sidebar-w, 200px) 1fr var(--right-w, 220px); grid-template-rows: auto 1fr auto; height: 100vh; }
+.app-divider { z-index: 30; }
+#app-divider-left { left: calc(var(--sidebar-w, 200px) - 2px); }
+#app-divider-right { left: calc(100% - var(--right-w, 220px) - 2px); }
 .sidebar { grid-column: 1; grid-row: 1 / 4; }
 .transcript { grid-column: 2; grid-row: 2; }
 .footer { grid-column: 2; grid-row: 3; }
