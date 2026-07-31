@@ -1620,14 +1620,15 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
         <span class="status__dot" id="status-dot-footer" :class="{ 'status__dot--busy': running }"></span>
         <span id="status-text">{{ statusText }}</span>
       </div>
-      <template v-if="pastedBlocks.filter(b => inputText.includes(b.label)).length > 0">
-        <div v-for="block in pastedBlocks.filter(b => inputText.includes(b.label))" :key="block.label" class="pasted-chip">
-          <span class="pasted-chip__label">{{ block.label }}</span>
-          <button class="pasted-expand-btn" @click.stop="togglePastedBlock(block.label)">{{ openPastedLabels.includes(block.label) ? '收起' : '展开' }}</button>
-          <button class="pasted-del-btn" @click.stop="removePastedBlock(block)" title="删除">&times;</button>
-        </div>
-      </template>
-      <div class="toolbar__spacer"></div>
+      <div class="toolbar__chips">
+        <template v-if="pastedBlocks.filter(b => inputText.includes(b.label)).length > 0">
+          <div v-for="block in pastedBlocks.filter(b => inputText.includes(b.label))" :key="block.label" class="pasted-chip">
+            <span class="pasted-chip__label">{{ block.label }}</span>
+            <button class="pasted-expand-btn" @click.stop="togglePastedBlock(block.label)">{{ openPastedLabels.includes(block.label) ? '收起' : '展开' }}</button>
+            <button class="pasted-del-btn" @click.stop="removePastedBlock(block)" title="删除">&times;</button>
+          </div>
+        </template>
+      </div>
       <div class="wf-bar" id="wf-bar" v-if="wfVisible">
         <div v-for="(s, i) in wfStages" :key="s.stage || i" class="wf-step" @click="setStage(s.stage)" title="切换到此阶段">
           <span class="wf-dot" :class="{ 'wf-dot--active': i === activeStageIdx, 'wf-dot--done': i < activeStageIdx }"></span>
@@ -1744,19 +1745,27 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
 
 <style scoped>
 .msg__text { white-space: pre-wrap; word-break: break-word; line-height: 1.65; }
+.toolbar__chips {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+}
 .pasted-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   height: 26px;
-  padding: 0 9px;
+  padding: 0 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-2);
   font-size: 11.5px;
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-width: 0;
   white-space: nowrap;
-  max-width: 320px;
 }
 .pasted-chip__label {
   color: var(--muted-2);
@@ -1764,6 +1773,8 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
   font-family: var(--mono);
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 .pasted-expand-btn {
   border: none;
