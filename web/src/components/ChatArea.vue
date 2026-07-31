@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from "vue"
+import { ref, onMounted, onUnmounted, nextTick } from "vue"
 import { api } from "../api"
 
 // ── helpers ──
@@ -78,10 +78,7 @@ function toolArgsSummary(args: any) {
 // ── state ──
 const messages = ref<any[]>([])
 const inputText = ref("")
-const pastedBlocks = ref<{ label: string; text: string; pos: number }[]>([])
-const sortedPastedBlocks = computed(() => [...pastedBlocks.value].sort((a, b) => a.pos - b.pos))
-let dragChipLabel = ''
-const dropIndicator = ref<{ x: number; y: number; h: number } | null>(null)
+const pastedBlocks = ref<{ label: string; text: string }[]>([])
 const openPastedLabels = ref<string[]>([])
 const previewHeight = ref(120)
 const composerResized = ref(false)
@@ -907,8 +904,6 @@ function toggleGoalMode() {
   }
   if (goalMode.value) { goalMode.value = false } else { goalMode.value = true }
   inputText.value = ''
-  pastedBlocks.value = []
-  openPastedLabels.value = []
   nextTick(() => document.getElementById('in')?.focus())
 }
 
@@ -930,11 +925,10 @@ async function syncModeBeforeSubmit() {
 
 function expandPastedText(text: string): string {
   let result = text
-  const blocks = [...pastedBlocks.value].sort((a, b) => a.pos - b.pos)
-  for (let i = blocks.length - 1; i >= 0; i--) {
-    const b = blocks[i]
-    const p = Math.min(b.pos, result.length)
-    result = result.slice(0, p) + '\n\n--- Begin ' + b.label + ' ---\n' + b.text + '\n--- End ' + b.label + ' ---' + result.slice(p)
+  for (const block of pastedBlocks.value) {
+    if (result.includes(block.label)) {
+      result = result.split(block.label).join(block.label + '\n\n--- Begin ' + block.label + ' ---\n' + block.text + '\n--- End ' + block.label + ' ---')
+    }
   }
   return result
 }
@@ -953,8 +947,6 @@ async function send() {
     if (chatHistory.length > 50) chatHistory.shift()
     chatHistoryIndex = chatHistory.length
     inputText.value = ''
-    pastedBlocks.value = []
-    openPastedLabels.value = []
     const reasonText = stageCompleteReason ? '（' + stageCompleteReason + '）' : ''
     showWfConfirm('阶段已完成' + reasonText + '，是否进入下一阶段？', (ok: boolean) => {
       if (!ok) { stageCompletePending = false; stageCompleteReason = ''; stageCompleteExtra = ''; return }
@@ -983,8 +975,6 @@ async function send() {
   if (chatHistory.length > 50) chatHistory.shift()
   chatHistoryIndex = chatHistory.length
   inputText.value = ''
-  pastedBlocks.value = []
-  openPastedLabels.value = []
   running.value = true
   statusText.value = "思考中..."
   // Post and forget - SSE handles the response
@@ -1321,7 +1311,7 @@ function onInputKeydown(e: KeyboardEvent) {
   if (e.key === 'ArrowDown' && chatHistory.length > 0) { e.preventDefault(); chatHistoryIndex = Math.min(chatHistory.length, chatHistoryIndex + 1); inputText.value = chatHistoryIndex < chatHistory.length ? chatHistory[chatHistoryIndex] : ''; return }
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); return }
   if (e.key === 'Escape') {
-    if (goalMode.value && !running.value) { goalMode.value = false; inputText.value = ''; pastedBlocks.value = []; openPastedLabels.value = []; closeSlashMenu(); return }
+    if (goalMode.value && !running.value) { goalMode.value = false; inputText.value = ''; closeSlashMenu(); return }
     if (running.value) { doStop(); return }
     if (inputText.value === '') {
       if (escTimer) { clearTimeout(escTimer); escTimer = null; openRewindPicker() }
@@ -1350,8 +1340,12 @@ function handlePaste(e: ClipboardEvent) {
     e.preventDefault()
     const id = pasteIdCounter++
     const label = '[\u5df2\u7c98\u8d34\u6587\u672c #' + id + ' - ' + lines + ' \u884c]'
-    const caretPos = (e.target as HTMLTextAreaElement).selectionStart ?? inputText.value.length
-    pastedBlocks.value = [...pastedBlocks.value, { label, text: pasted, pos: caretPos }]
+    const selStart = (e.target as HTMLTextAreaElement).selectionStart
+    const selEnd = (e.target as HTMLTextAreaElement).selectionEnd
+    const before = inputText.value.slice(0, selStart)
+    const after = inputText.value.slice(selEnd)
+    inputText.value = before + label + after
+    pastedBlocks.value = [...pastedBlocks.value, { label, text: pasted }]
     return
   }
 }
@@ -1359,7 +1353,6 @@ function handlePaste(e: ClipboardEvent) {
 
 function handleFileDrop(e: DragEvent) {
   e.preventDefault()
-  if (dragChipLabel) { handleChipDrop(e); return }
   const inp = document.getElementById('in') as HTMLTextAreaElement
   if (!inp) return
   const items = e.dataTransfer?.items
@@ -1475,61 +1468,7 @@ function togglePastedBlock(label: string) {
 function removePastedBlock(block: { label: string; text: string }) {
   pastedBlocks.value = pastedBlocks.value.filter(b => b.label !== block.label)
   openPastedLabels.value = openPastedLabels.value.filter(l => l !== block.label)
-}
-
-// ── Chip 拖拽定位 ──
-function onChipDragStart(block: any, e: DragEvent) {
-  dragChipLabel = block.label
-  e.dataTransfer.setData('text/plain', block.label)
-  try { e.dataTransfer.effectAllowed = 'move' } catch {}
-}
-function onChipDragEnd() {
-  dragChipLabel = ''
-  dropIndicator.value = null
-}
-function caretOffsetAt(x: number, y: number): number {
-  const inp = document.getElementById('in') as HTMLTextAreaElement
-  if (!inp) return -1
-  const doc = document as any
-  if (doc.caretRangeFromPoint) {
-    const range = doc.caretRangeFromPoint(x, y)
-    if (range && inp.contains(range.startContainer)) return range.startOffset
-  } else if (doc.caretPositionFromPoint) {
-    const pos = doc.caretPositionFromPoint(x, y)
-    if (pos && inp.contains(pos.offsetNode)) return pos.offset
-  }
-  return -1
-}
-function onInputDragOver(e: DragEvent) {
-  if (!dragChipLabel) return
-  e.preventDefault()
-  const wrap = document.getElementById('composer-input-wrap')
-  if (!wrap) return
-  const doc = document as any
-  let range: any = null
-  if (doc.caretRangeFromPoint) {
-    range = doc.caretRangeFromPoint(e.clientX, e.clientY)
-  } else if (doc.caretPositionFromPoint) {
-    const p = doc.caretPositionFromPoint(e.clientX, e.clientY)
-    if (p) { range = document.createRange(); range.setStart(p.offsetNode, p.offset); range.collapse(true) }
-  }
-  if (!range) return
-  const rect = range.getBoundingClientRect ? range.getBoundingClientRect() : null
-  const wr = wrap.getBoundingClientRect()
-  dropIndicator.value = rect ? { x: rect.left - wr.left, y: rect.top - wr.top, h: Math.max(rect.height, 16) } : null
-}
-function handleChipDrop(e: DragEvent) {
-  const inp = document.getElementById('in') as HTMLTextAreaElement
-  const offset = caretOffsetAt(e.clientX, e.clientY)
-  if (dragChipLabel && offset >= 0) {
-    pastedBlocks.value = pastedBlocks.value.map(b => b.label === dragChipLabel ? { ...b, pos: offset } : b)
-    if (inp) {
-      inp.focus()
-      try { inp.setSelectionRange(offset, offset) } catch {}
-    }
-  }
-  dragChipLabel = ''
-  dropIndicator.value = null
+  inputText.value = inputText.value.replace(block.label, '')
 }const previewRef = ref<HTMLElement | null>(null)
 let previewResizing = false
 let previewStartY = 0
@@ -1694,7 +1633,7 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
       </div>
       <div class="status" id="turn-info"></div>
     </div>
-<template v-for="block in pastedBlocks.filter(b => openPastedLabels.includes(b.label))">
+<template v-for="block in pastedBlocks.filter(b => openPastedLabels.includes(b.label) && inputText.includes(b.label))">
       <div style="padding:4px 28px;margin-bottom:2px;position:relative">
         <div class="preview-resize-handle" @mousedown="startPreviewResize($event)" style="height:10px;cursor:row-resize;position:relative;margin-bottom:-1px;display:flex;align-items:center;justify-content:center">
           <div style="height:2px;background:var(--border);border-radius:2px;flex:1;margin:0 20px;transition:all .15s"></div>
@@ -1735,23 +1674,20 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
 
       <div class="composer__input-row" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
         <span class="composer__caret">›</span>
-        <template v-if="pastedBlocks.length > 0">
-          <div v-for="block in sortedPastedBlocks" :key="block.label" class="pasted-chip" draggable="true" @dragstart="onChipDragStart(block, $event)" @dragend="onChipDragEnd">
+        <template v-if="pastedBlocks.filter(b => inputText.includes(b.label)).length > 0">
+          <div v-for="block in pastedBlocks.filter(b => inputText.includes(b.label))" :key="block.label" class="pasted-chip">
             <span class="pasted-chip__label">{{ block.label }}</span>
             <button class="pasted-expand-btn" @click.stop="togglePastedBlock(block.label)">{{ openPastedLabels.includes(block.label) ? '收起' : '展开' }}</button>
             <button class="pasted-del-btn" @click.stop="removePastedBlock(block)" title="删除">&times;</button>
           </div>
         </template>
-        <div class="composer__input-wrap" id="composer-input-wrap" style="position:relative;flex:1;min-width:0;display:flex">
         <textarea v-model="inputText" class="composer__input" id="in"
           :placeholder="goalMode ? '描述你的目标...' : '给 Reasonix 发消息...  / 查看命令'"
           rows="1"
           @keydown="onInputKeydown"
           @input="onInput"
-          @dragover.prevent="onInputDragOver"
+          @dragover.prevent
           @paste="handlePaste" @drop="handleFileDrop"></textarea>
-        <div v-if="dropIndicator" class="chip-drop-indicator" :style="{ left: dropIndicator.x + 'px', top: dropIndicator.y + 'px', height: dropIndicator.h + 'px' }"></div>
-        </div>
       </div>
       <div class="composer-resize-handle" @mousedown="startComposerResize($event)" style="height:12px;cursor:row-resize;position:absolute;top:-6px;left:0;right:0;z-index:5;display:flex;align-items:center;justify-content:center">
         <div style="height:2px;background:var(--border);border-radius:2px;margin:0 28px;flex:1;transition:all .15s"></div>
@@ -1822,17 +1758,6 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
   font-size: 12.5px;
   flex-shrink: 0;
   white-space: nowrap;
-  cursor: grab;
-  user-select: none;
-}
-.pasted-chip:active { cursor: grabbing; }
-.chip-drop-indicator {
-  position: absolute;
-  width: 2px;
-  background: var(--accent);
-  border-radius: 1px;
-  pointer-events: none;
-  z-index: 6;
 }
 .pasted-chip__label {
   color: var(--muted-2);
