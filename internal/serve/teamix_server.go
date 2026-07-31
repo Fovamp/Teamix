@@ -57,8 +57,6 @@ type TeamixServer struct {
 	// Project-level capability overrides.
 	capCfg  *capabilities.AllConfigs
 
-	// Embedded frontend assets.
-	logo []byte
 
 	mux http.Handler
 }
@@ -73,7 +71,6 @@ func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *Tea
 		serveCfg:  serveCfg,
 		modelRef:  modelRef,
 		profile:   profile,
-		logo: logoWordmarkSVG,
 	}
 	ts.teamixCfg = ts.loadTeamixConfig()
 	ts.keyPool = keypool.NewPool("DEEPSEEK_API_KEY")
@@ -241,7 +238,6 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 
 	// Public routes (no auth required)
 	mux.HandleFunc("GET /", ts.handleIndex)
-	mux.HandleFunc("GET /assets/logo-wordmark.svg", ts.handleLogo)
 	mux.HandleFunc("POST /teamix/login", ts.handleLogin)
 
 	// Authenticated routes — each delegates to a per-user handler.
@@ -345,12 +341,6 @@ func (ts *TeamixServer) handleV3Assets(w http.ResponseWriter, r *http.Request) {
 func (ts *TeamixServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(v3IndexHTML)
-}
-
-func (ts *TeamixServer) handleLogo(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
-	w.Header().Set("Cache-Control", "public, max-age=3600")
-	_, _ = w.Write(ts.logo)
 }
 
 

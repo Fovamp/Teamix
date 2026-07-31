@@ -4,7 +4,6 @@
 package serve
 
 import (
-	_ "embed"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -14,9 +13,6 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/provider"
 )
-
-//go:embed logo-wordmark.svg
-var logoWordmarkSVG []byte
 
 type historyToolCall struct {
 	ID        string `json:"id"`
