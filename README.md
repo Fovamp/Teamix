@@ -12,11 +12,20 @@
 ## 快速开始
 
 ```bash
+# 1. 构建前端（产物输出到 internal/serve/webdist-v3，供 go:embed 打包）
+cd web && npm run build
+cd ..
+
+# 2. 编译后端（前端自动嵌入 exe）
 go build -o teamix.exe ./cmd/reasonix/
+
+# 3. 启动
 teamix.exe serve --teamix --addr :8787
 ```
 
 浏览器打开 <http://localhost:8787>，输入昵称即可使用。
+
+> 构建产物（`web/dist-v3/`、`internal/serve/webdist-v3/`）不纳入 git 追踪，clone 后需先执行 `npm run build` 再 `go build`。
 
 ## 技术栈
 
