@@ -1623,15 +1623,6 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
         <span class="status__dot" id="status-dot-footer" :class="{ 'status__dot--busy': running }"></span>
         <span id="status-text">{{ statusText }}</span>
       </div>
-      <template v-if="pastedBlocks.filter(b => inputText.includes(b.label)).length > 0">
-        <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;max-width:500px">
-          <div v-for="block in pastedBlocks.filter(b => inputText.includes(b.label))" :key="block.label" style="display:flex;align-items:center;gap:3px;padding:1px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);font-size:10px;flex:1">
-            <span style="color:var(--muted-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70px">{{ block.label }}</span>
-            <button class="pasted-expand-btn" @click.stop="togglePastedBlock(block.label)" style="border:none;background:transparent;color:var(--accent);cursor:pointer;font-size:9px;padding:1px 3px;border-radius:2px">{{ openPastedLabels.includes(block.label) ? '收起' : '展开' }}</button>
-            <button class="pasted-del-btn" @click.stop="removePastedBlock(block)" style="border:none;background:transparent;color:var(--danger);cursor:pointer;font-size:11px;width:14px;height:14px;border-radius:2px;display:flex;align-items:center;justify-content:center">×</button>
-          </div>
-        </div>
-      </template>
       <div class="toolbar__spacer"></div>
       <div class="wf-bar" id="wf-bar" v-if="wfVisible">
         <div v-for="(s, i) in wfStages" :key="s.stage || i" class="wf-step" @click="setStage(s.stage)" title="切换到此阶段">
@@ -1681,8 +1672,15 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
         </div>
       </div>
 
-      <div class="composer__input-row" style="display:flex;align-items:center;gap:7px;flex:1;min-width:0">
+      <div class="composer__input-row" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
         <span class="composer__caret">›</span>
+        <template v-if="pastedBlocks.filter(b => inputText.includes(b.label)).length > 0">
+          <div v-for="block in pastedBlocks.filter(b => inputText.includes(b.label))" :key="block.label" class="pasted-chip">
+            <span class="pasted-chip__label">{{ block.label }}</span>
+            <button class="pasted-expand-btn" @click.stop="togglePastedBlock(block.label)">{{ openPastedLabels.includes(block.label) ? '收起' : '展开' }}</button>
+            <button class="pasted-del-btn" @click.stop="removePastedBlock(block)" title="删除">&times;</button>
+          </div>
+        </template>
         <textarea v-model="inputText" class="composer__input" id="in"
           :placeholder="goalMode ? '描述你的目标...' : '给 Reasonix 发消息...  / 查看命令'"
           rows="1"
@@ -1749,6 +1747,47 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
 
 <style scoped>
 .msg__text { white-space: pre-wrap; word-break: break-word; line-height: 1.65; }
+.pasted-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-2);
+  font-size: 12.5px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.pasted-chip__label {
+  color: var(--muted-2);
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+.pasted-expand-btn {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11.5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.pasted-del-btn {
+  border: none;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 13px;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
 .pasted-expand-btn:hover { background: var(--accent-soft) !important; }
 .pasted-del-btn:hover { background: var(--danger-soft) !important; }
 .preview-resize-handle:hover div, .composer-resize-handle:hover div { background: var(--accent) !important; height: 3px !important; margin: 0 10px !important; }
