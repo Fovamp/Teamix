@@ -195,7 +195,8 @@ input,textarea{font:inherit;color:inherit}
 /* composer */
 .composer{display:flex;gap:7px;align-items:flex-start;background:var(--card);border:1px solid var(--border-strong);border-radius:14px;padding:4px 4px 4px 12px;box-shadow:var(--shadow-md);transition:border-color .18s ease,box-shadow .18s ease;overflow:hidden}
 .composer:focus-within{border-color:var(--accent);box-shadow:var(--shadow-md),0 0 0 3px var(--accent-soft)}
-.composer__caret{color:var(--accent);font-family:var(--mono);font-weight:600;font-size:16px;flex-shrink:0;display:flex;align-items:center;line-height:1}
+.composer__caret{color:var(--accent);font-family:var(--mono);font-weight:600;font-size:16px;flex-shrink:0;display:flex;align-items:center;line-height:1;margin-top:11px}
+.composer__input-row .pasted-chip{margin-top:8px}
 .composer__input{flex:1;border:none;background:none;color:var(--fg);font-size:14px;line-height:1.5;padding:9px 0;outline:none;resize:none;min-height:22px;max-height:140px;field-sizing:content}
 .composer__input::placeholder{color:var(--muted-2)}
 .composer__btn{display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;flex-shrink:0;transition:background .18s ease,transform .15s ease}

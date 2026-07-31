@@ -1459,11 +1459,8 @@ function readAndUploadFolder(entry: any, path: string, callback: (uploaded: stri
 
 // ── Expose ──
 function togglePastedBlock(label: string) {
-  if (openPastedLabels.value.includes(label)) {
-    openPastedLabels.value = openPastedLabels.value.filter(l => l !== label)
-  } else {
-    openPastedLabels.value = [...openPastedLabels.value, label]
-  }
+  // 单选：同时只展开一个，打开另一个时替换内容
+  openPastedLabels.value = openPastedLabels.value.includes(label) ? [] : [label]
 }
 function removePastedBlock(block: { label: string; text: string }) {
   pastedBlocks.value = pastedBlocks.value.filter(b => b.label !== block.label)
@@ -1672,7 +1669,7 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
         </div>
       </div>
 
-      <div class="composer__input-row" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+      <div class="composer__input-row" style="display:flex;align-items:flex-start;gap:8px;flex:1;min-width:0">
         <span class="composer__caret">›</span>
         <template v-if="pastedBlocks.filter(b => inputText.includes(b.label)).length > 0">
           <div v-for="block in pastedBlocks.filter(b => inputText.includes(b.label))" :key="block.label" class="pasted-chip">
