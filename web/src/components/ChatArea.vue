@@ -1500,6 +1500,7 @@ function startComposerResize(e: MouseEvent) {
   if (!composer) return
   // Fix height immediately to prevent layout shift
   const h = composer.offsetHeight
+  if (!composerDefaultHeight) composerDefaultHeight = h
   composer.style.height = h + 'px'
   // Directly add class to input-row for instant layout
   const row = composer.querySelector('.composer__input-row')
@@ -1516,7 +1517,9 @@ function startComposerResize(e: MouseEvent) {
 function onComposerResize(e: MouseEvent) {
   if (!composerResizeState.active) return
   const delta = composerResizeState.startY - e.clientY
-  const newH = Math.max(composerResizeState.startH, Math.min(400, composerResizeState.startH + delta))
+  // 下限 = 首次记录的默认高度（允许缩回初始大小），上限 400
+  const minH = composerDefaultHeight || 40
+  const newH = Math.max(minH, Math.min(400, composerResizeState.startH + delta))
   const composer = document.getElementById('composer')
   if (composer) composer.style.height = newH + 'px'
 }
