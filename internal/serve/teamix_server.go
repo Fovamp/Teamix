@@ -58,8 +58,7 @@ type TeamixServer struct {
 	capCfg  *capabilities.AllConfigs
 
 	// Embedded frontend assets.
-	indexHTML []byte
-	logo      []byte
+	logo []byte
 
 	mux http.Handler
 }
@@ -74,8 +73,7 @@ func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *Tea
 		serveCfg:  serveCfg,
 		modelRef:  modelRef,
 		profile:   profile,
-		indexHTML: indexHTML,
-		logo:      logoWordmarkSVG,
+		logo: logoWordmarkSVG,
 	}
 	ts.teamixCfg = ts.loadTeamixConfig()
 	ts.keyPool = keypool.NewPool("DEEPSEEK_API_KEY")

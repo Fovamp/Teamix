@@ -20,7 +20,7 @@ cd ..
 go build -o teamix.exe ./cmd/reasonix/
 
 # 3. 启动
-teamix.exe serve --teamix --project C:/path/to/project --addr :8787
+teamix.exe serve --project C:/path/to/project --addr :8787
 ```
 
 浏览器打开 <http://localhost:8787>，输入昵称即可使用。

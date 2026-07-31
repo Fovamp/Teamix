@@ -655,16 +655,8 @@ func runServe(args []string) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	model := fs.String("model", "", "provider name (default: config default_model)")
 	profileFlag := fs.String("profile", "balanced", "runtime profile: economy | balanced | delivery")
-	maxSteps := fs.Int("max-steps", 0, "max tool-call rounds (0 = use config/default)")
 	addr := fs.String("addr", "127.0.0.1:8787", "listen address")
 	projectDir := fs.String("project", "", "project workspace directory (default: cwd)")
-	resume := fs.String("resume", "", "resume a saved session file")
-	auth := fs.String("auth", "", "auth mode: none, token, or password (default: none)")
-	token := fs.String("token", "", "pre-shared token for auth=token (auto-generated if empty)")
-	password := fs.String("password", "", "password for auth=password (use --hash-password to store a hash instead)")
-	hashPassword := fs.Bool("hash-password", false, "print a bcrypt hash of --password and exit")
-	behindProxy := fs.Bool("behind-proxy", false, "trust X-Forwarded-For / X-Forwarded-Proto headers from a reverse proxy")
-	teamixMode := fs.Bool("teamix", false, "enable Teamix multi-user mode (experimental)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -674,158 +666,29 @@ func runServe(args []string) int {
 		return 2
 	}
 
-	// --hash-password: generate a bcrypt hash and exit.
-	if *hashPassword {
-		if *password == "" {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "--hash-password requires --password")
-			return 1
-		}
-		h, err := serve.HashPassword(*password)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-		fmt.Println(h)
-		return 0
-	}
-
-	ctx := context.Background()
-	bc := serve.NewBroadcaster()
 	cfg, _ := config.Load()
 
-	// Build serve config, merging CLI flags over config file.
+	// Build serve config.
 	serveCfg := cfg.Serve
-	if *auth != "" {
-		serveCfg.AuthMode = *auth
-	}
-	if *token != "" {
-		serveCfg.Token = *token
-	}
-	if *behindProxy {
-		serveCfg.BehindProxy = true
-	}
-	mode, err := serve.NormalizeAuthMode(serveCfg.AuthMode)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-		return 1
-	}
-	serveCfg.AuthMode = mode
-	if *password != "" && serveCfg.AuthMode == "password" {
-		// Hash the password at startup so the config never stores plaintext.
-		// If a PasswordHash is already set in config, the CLI password overrides it.
-		h, err := serve.HashPassword(*password)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "failed to hash password:", err)
-			return 1
-		}
-		serveCfg.PasswordHash = h
-	}
-	if serveCfg.AuthMode == "password" && strings.TrimSpace(serveCfg.PasswordHash) == "" {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "auth mode password requires --password or serve.password_hash")
-		return 1
-	}
 
 	// Teamix multi-user mode: each user gets an isolated Controller.
 	// Controllers are created on-demand when users log in.
-	if *teamixMode {
-		modelRef := *model
-		if modelRef == "" {
-			if uc := config.UserConfigPath(); uc != "" {
-				if userCfg := config.LoadForEdit(uc); userCfg != nil && userCfg.DefaultModel != "" {
-					modelRef = userCfg.DefaultModel
-				}
-			}
-		}
-  wr := *projectDir
-  if wr == "" { wr, _ = os.Getwd() }
-  srv := serve.NewTeamixServer(serveCfg, modelRef, profile)
-  srv.SetWorkspaceRoot(wr)
-		fmt.Printf("teamix serve \u2014 multi-user mode on http://%s\n", *addr)
-		fmt.Println("  users log in via POST /teamix/login with {\"name\":\"...\"}")
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		if err := srv.RunGraceful(ctx, *addr); err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-		return 0
-	}
-
-
-	// Own the active session file for the server's lifetime; the serve
-	// handlers that rebind sessions (/resume, /new, /fork) move the lease
-	// through the same keeper. Released after the controller closes.
-	leases := control.NewSessionLeaseKeeper()
-	defer leases.Release()
-	var resumeSession *agent.Session
-	if *resume != "" {
-		if err := leases.Rebind(*resume); err != nil {
-			if errors.Is(err, agent.ErrSessionLeaseHeld) {
-				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, control.SessionInUseMessage(err)+"; "+control.SessionLeaseCloseHint)
-			} else {
-				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			}
-			return 1
-		}
-		var err error
-		resumeSession, err = loadResumableSession(*resume)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-	}
-	*model = modelForResumePath(*model, *resume, cfg)
-	// Serve always uses the user's global default_model, ignoring any
-	// project-level override, so the model choice stays consistent across
-	// projects and matches the user's account-level preference.
-	if *model == "" {
+	modelRef := *model
+	if modelRef == "" {
 		if uc := config.UserConfigPath(); uc != "" {
 			if userCfg := config.LoadForEdit(uc); userCfg != nil && userCfg.DefaultModel != "" {
-				*model = userCfg.DefaultModel
+				modelRef = userCfg.DefaultModel
 			}
 		}
 	}
-	ctrl, err := setupProfile(ctx, *model, *maxSteps, true, bc, profile, "")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-		return 1
+	wr := *projectDir
+	if wr == "" {
+		wr, _ = os.Getwd()
 	}
-	defer ctrl.Close()
-
-	// Auto-save target: reuse the resumed file, else a fresh one — same as chat.
-	if *resume != "" {
-		ctrl.Resume(resumeSession, *resume)
-	}
-	ctrl.EnsureSessionPath()
-	// Fresh sessions take the lease too (defensive: the path is brand new); a
-	// resumed path is already held, making this a no-op.
-	if err := leases.Rebind(ctrl.SessionPath()); err != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, control.SessionInUseMessage(err)+"; "+control.SessionLeaseCloseHint)
-		return 1
-	}
-
-	srv := serve.New(ctrl, bc, serveCfg)
-	srv.SetSessionLeases(leases)
-	fmt.Printf("reasonix serve — %s on http://%s\n", ctrl.Label(), *addr)
-	if srv.AuthMode() == "token" {
-		fmt.Printf("  auth: token\n")
-		fmt.Printf("  share: http://%s/?token=%s\n", *addr, srv.AuthToken())
-	} else if srv.AuthMode() == "password" {
-		fmt.Printf("  auth: password (login at http://%s/login)\n", *addr)
-	}
-	if warning := serve.PlainHTTPAuthWarning(serveCfg, *addr); warning != "" {
-		fmt.Fprintf(os.Stderr, "  %s\n", warning)
-	}
-	// Diagnostic: check whether balance endpoint is reachable
-	if b, err := ctrl.Balance(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "  balance: error — %v\n", err)
-	} else if b == nil {
-		fmt.Fprintf(os.Stderr, "  balance: not configured (no balance_url for this provider)\n")
-	} else {
-		fmt.Printf("  balance: %s\n", b.Display())
-	}
-
-	// Use graceful shutdown so SIGINT/SIGTERM drain active connections.
+	srv := serve.NewTeamixServer(serveCfg, modelRef, profile)
+	srv.SetWorkspaceRoot(wr)
+	fmt.Printf("teamix serve \u2014 multi-user mode on http://%s\n", *addr)
+	fmt.Println("  users log in via POST /teamix/login with {\"name\":\"...\"}")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := srv.RunGraceful(ctx, *addr); err != nil {
