@@ -1,5 +1,7 @@
 # Build artifacts
 /bin/
+/internal/serve/webdist-v3/
+/internal/serve/webdist/
 /dist/
 /stage/
 /reasonix
