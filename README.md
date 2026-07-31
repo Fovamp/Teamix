@@ -12,8 +12,8 @@
 ## 快速开始
 
 ```bash
-# 1. 构建前端
-cd web && npm run build
+# 1. 构建前端（包管理器为 pnpm，首次需 pnpm install）
+cd web && pnpm build
 cd ..
 
 # 2. 编译后端
