@@ -1,4 +1,4 @@
-package serve
+﻿package serve
 
 import (
 	"io"
@@ -17,11 +17,7 @@ type treeEntry struct {
 	Children []*treeEntry `json:"children,omitempty"`
 }
 
-
-// File, tree, and module browsing handlers.
-
 func (ts *TeamixServer) handleUpload(w http.ResponseWriter, r *http.Request, u *userSession) {
-	// Limit upload size to 50MB
 	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
 		http.Error(w, "upload too large or bad form", http.StatusBadRequest)
@@ -38,21 +34,18 @@ func (ts *TeamixServer) handleUpload(w http.ResponseWriter, r *http.Request, u *
 	if relPath == "" {
 		relPath = header.Filename
 	}
-	// Sanitize: prevent path traversal
 	relPath = filepath.Clean(relPath)
 	if strings.Contains(relPath, "..") || filepath.IsAbs(relPath) {
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	fullPath := filepath.Join(ts.workspaceRoot, filepath.FromSlash(relPath))
-	// Ensure within workspace
-	absRoot, _ := filepath.Abs(ts.workspaceRoot)
+	fullPath := filepath.Join(u.userRoot, filepath.FromSlash(relPath))
+	absRoot, _ := filepath.Abs(u.userRoot)
 	absPath, _ := filepath.Abs(fullPath)
 	if !strings.HasPrefix(absPath, absRoot) {
 		http.Error(w, "path outside workspace", http.StatusForbidden)
 		return
 	}
-	// Create parent dirs
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 		http.Error(w, "cannot create directory", http.StatusInternalServerError)
 		return
@@ -71,15 +64,14 @@ func (ts *TeamixServer) handleUpload(w http.ResponseWriter, r *http.Request, u *
 	writeJSON(w, map[string]any{"ok": true, "path": filepath.ToSlash(relPath)})
 }
 
-
-func (ts *TeamixServer) handleFile(w http.ResponseWriter, r *http.Request) {
+func (ts *TeamixServer) handleFile(w http.ResponseWriter, r *http.Request, u *userSession) {
 	path := r.URL.Query().Get("path")
 	if path == "" || strings.Contains(path, "..") {
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	fullPath := filepath.Join(ts.workspaceRoot, filepath.FromSlash(path))
-	absRoot, _ := filepath.Abs(ts.workspaceRoot)
+	fullPath := filepath.Join(u.userRoot, filepath.FromSlash(path))
+	absRoot, _ := filepath.Abs(u.userRoot)
 	absPath, _ := filepath.Abs(fullPath)
 	if !strings.HasPrefix(absPath, absRoot) {
 		http.Error(w, "path outside workspace", http.StatusForbidden)
@@ -95,24 +87,33 @@ func (ts *TeamixServer) handleFile(w http.ResponseWriter, r *http.Request) {
 		data = data[:100000]
 	}
 	writeJSON(w, map[string]any{
-		"path":       path,
-		"body":       string(data),
-		"size":       len(data),
-		"truncated":  truncated,
+		"path":      path,
+		"body":      string(data),
+		"size":      len(data),
+		"truncated": truncated,
 	})
 }
 
-
-func (ts *TeamixServer) handleTree(w http.ResponseWriter, r *http.Request) {
-	root := ts.workspaceRoot
+func (ts *TeamixServer) handleTree(w http.ResponseWriter, r *http.Request, u *userSession) {
+	root := u.userRoot
+	if u.selectedProject != "" {
+		root = filepath.Join(u.userRoot, u.selectedProject)
+	}
 	if root == "" {
-		writeJSON(w, []*treeEntry{})
+		writeJSON(w, map[string]any{"empty": true, "reason": "noProject"})
 		return
 	}
 	tree := buildTree(root, "", 0, 15)
+	if len(tree) == 0 {
+		if u.selectedProject == "" {
+			writeJSON(w, map[string]any{"empty": true, "reason": "noProject"})
+		} else {
+			writeJSON(w, map[string]any{"empty": true, "reason": "emptyProject"})
+		}
+		return
+	}
 	writeJSON(w, tree)
 }
-
 
 func buildTree(base, relPath string, depth, maxDepth int) []*treeEntry {
 	if depth > maxDepth {
@@ -152,14 +153,17 @@ func buildTree(base, relPath string, depth, maxDepth int) []*treeEntry {
 	return out
 }
 
-
 func (ts *TeamixServer) handleModules(w http.ResponseWriter, r *http.Request) {
 	type modJSON struct {
 		Name        string `json:"name"`
 		Path        string `json:"path"`
 		Description string `json:"description,omitempty"`
 	}
-	cfg := ts.teamixCfg
+	if ts.globalCfg == nil {
+		writeJSON(w, []modJSON{})
+		return
+	}
+	cfg := ts.globalCfg.Config
 	if cfg == nil {
 		writeJSON(w, []modJSON{})
 		return
@@ -170,4 +174,3 @@ func (ts *TeamixServer) handleModules(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, out)
 }
-

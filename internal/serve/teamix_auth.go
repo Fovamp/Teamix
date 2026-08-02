@@ -1,4 +1,4 @@
-package serve
+﻿package serve
 
 import (
 	"encoding/json"
@@ -6,51 +6,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"reasonix/internal/teamixconfig"
 	"reasonix/internal/control"
 )
 
-// Auth, role, and session management handlers.
-
-func (ts *TeamixServer) handleProject(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]any{
-		"workspaceRoot": ts.workspaceRoot,
-		"projectName":   filepath.Base(ts.workspaceRoot),
-	})
-}
-
-
 func (ts *TeamixServer) handleUserRole(w http.ResponseWriter, r *http.Request, u *userSession) {
 	role := "developer"
-	architects := ts.getArchitects()
-	for _, a := range architects {
-		if a == u.name {
-			role = "architect"
-			break
-		}
+	if ts.globalCfg != nil && ts.globalCfg.IsArchitect(u.name) {
+		role = "architect"
 	}
 	writeJSON(w, map[string]any{"role": role, "user": u.name})
 }
-
-
-func (ts *TeamixServer) getArchitects() []string {
-	cfg, err := teamixconfig.Load(ts.workspaceRoot)
-	if err != nil || cfg == nil {
-		return nil
-	}
-	return cfg.Workflow.Architects
-}
-
-
-func contains(slice []string, s string) bool {
-	for _, v := range slice {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
 
 func (ts *TeamixServer) handleDeleteSession(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
@@ -61,7 +26,7 @@ func (ts *TeamixServer) handleDeleteSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	name := strings.TrimSpace(body.Name)
-	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `//\\`) {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "//\\") {
 		http.Error(w, "invalid session name", http.StatusBadRequest)
 		return
 	}
@@ -88,17 +53,15 @@ func (ts *TeamixServer) handleDeleteSession(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-
 func sessionTitle(ctrl control.SessionAPI, name, firstMsg string) string {
 	if firstMsg != "" {
 		if len(firstMsg) > 60 {
-			return firstMsg[:60] + "…"
+			return firstMsg[:60] + "\u2026"
 		}
 		return firstMsg
 	}
 	return strings.TrimSuffix(name, ".jsonl")
 }
-
 
 func teamixCurrentModelRef(c control.SessionAPI) string {
 	ref := strings.TrimSpace(c.ModelRef())
@@ -108,13 +71,25 @@ func teamixCurrentModelRef(c control.SessionAPI) string {
 	return strings.TrimSpace(c.Label())
 }
 
-
 func (ts *TeamixServer) isArchitect(u *userSession) bool {
-	for _, a := range ts.getArchitects() {
-		if a == u.name {
+	if ts.globalCfg != nil {
+		return ts.globalCfg.IsArchitect(u.name)
+	}
+	return false
+}
+
+func (ts *TeamixServer) getArchitects() []string {
+	if ts.globalCfg != nil {
+		return ts.globalCfg.ArchitectNames()
+	}
+	return nil
+}
+
+func contains(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
 			return true
 		}
 	}
 	return false
 }
-

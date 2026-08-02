@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, watch } from "vue"
 import { api } from "../api"
 const props = defineProps<{ visible: boolean }>()
@@ -63,17 +63,14 @@ async function renderKeys() {
 
 async function renderMCP() {
   const q = tokenQuery()
+  contentHtml.value = '<div class="section"><h3>🔧 MCP 服务器</h3><p class="desc">管理 MCP 服务器，扩展 Agent 的工具能力。</p><div style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">加载中...</div>'
   let h = '<div class="section"><h3>\ud83d\udd27 MCP \u670d\u52a1\u5668</h3><p class="desc">\u7ba1\u7406 MCP \u670d\u52a1\u5668\uff0c\u6269\u5c55 Agent \u7684\u5de5\u5177\u80fd\u529b\u3002</p></div><div id="mcp-render">'
   try {
     let servers: any[] = []
-    for (let retry = 0; retry < 5; retry++) {
-      try {
-        const resp = await fetch("/teamix/mcp/servers" + q)
-        servers = await resp.json()
-        if (servers.length > 0) break
-      } catch (e) { }
-      if (retry < 4) await new Promise(r => setTimeout(r, 1000))
-    }
+    try {
+      const resp = await fetch("/teamix/mcp/servers" + q)
+      servers = await resp.json()
+    } catch (e) { }
     if (servers.length === 0) {
       h += '<div style="color:var(--muted-2);text-align:center;padding:20px;font-size:13px">\u5c1a\u65e0 MCP \u670d\u52a1\u5668</div>'
     }

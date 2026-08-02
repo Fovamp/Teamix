@@ -202,20 +202,43 @@ func (ts *TeamixServer) handleTemplateDelete(w http.ResponseWriter, r *http.Requ
 
 
 func (ts *TeamixServer) handleWorkflowTemplates(w http.ResponseWriter, r *http.Request) {
-	tmplDir := filepath.Join(".", ".teamix", "workflows")
-	tmpls, err := workflow.LoadTemplates(tmplDir)
-	if err != nil {
-		writeJSON(w, []map[string]any{})
-		return
-	}
 	type tJSON struct {
 		Name        string `json:"name"`
 		Label       string `json:"label"`
 		Description string `json:"description,omitempty"`
+		Source      string `json:"source"` // "global" | "project"
 	}
-	out := make([]tJSON, 0, len(tmpls))
-	for _, t := range tmpls {
-		out = append(out, tJSON{Name: t.Name, Label: t.Label, Description: t.Description})
+
+	var out []tJSON
+
+	// Global templates
+	globalDir := filepath.Join(".", ".teamix", "workflows")
+	if tmpls, err := workflow.LoadTemplates(globalDir); err == nil {
+		for _, t := range tmpls {
+			out = append(out, tJSON{Name: t.Name, Label: t.Label, Description: t.Description, Source: "global"})
+		}
+	}
+
+	// Project-local templates (if a project is specified via query param)
+	project := r.URL.Query().Get("project")
+	if project != "" {
+		projDir := filepath.Join(".", ".teamix", "workflows")
+		if tmpls, err := workflow.LoadTemplates(projDir); err == nil {
+			seen := make(map[string]bool)
+			for _, t := range out {
+				seen[t.Name] = true
+			}
+			for _, t := range tmpls {
+				if seen[t.Name] {
+					continue
+				}
+				out = append(out, tJSON{Name: t.Name, Label: t.Label, Description: t.Description, Source: "project"})
+			}
+		}
+	}
+
+	if out == nil {
+		out = []tJSON{}
 	}
 	writeJSON(w, out)
 }

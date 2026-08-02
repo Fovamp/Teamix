@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted } from "vue"
 import { api } from "../api"
 
@@ -87,8 +87,16 @@ function markRead(n: any) {
 function loadFileTree() {
   const el = document.getElementById('rp-tree')
   if (!el || !treeData.value) return
+  if (treeData.value.empty !== undefined) {
+    if (treeData.value.reason === "noProject") {
+      el.innerHTML = '<div style="padding:12px;color:var(--muted-2);font-size:12px;text-align:center">请先选择项目</div>'
+    } else {
+      el.innerHTML = '<div style="padding:12px;color:var(--muted-2);font-size:12px;text-align:center">项目目录为空</div>'
+    }
+    return
+  }
   if (treeData.value.length === 0) {
-    el.innerHTML = '<div style="padding:8px;color:var(--muted-2);font-size:11px">未指定项目</div>'
+    el.innerHTML = '<div style="padding:12px;color:var(--muted-2);font-size:12px;text-align:center">目录为空</div>'
     return
   }
   el.innerHTML = ''

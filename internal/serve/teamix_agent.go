@@ -465,6 +465,7 @@ func (ts *TeamixServer) handleStatus(w http.ResponseWriter, r *http.Request, u *
 		"cacheHit":         hit,
 		"cacheMiss":        miss,
 		"user":             u.name,
+		"selectedProject": u.selectedProject,
 		"balance":          bal,
 		"lastUsage":        lastUsage,
 	})

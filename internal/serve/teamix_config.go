@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reasonix/internal/config"
 	"reasonix/internal/capabilities"
 	"reasonix/internal/keypool"
@@ -167,6 +169,7 @@ func (ts *TeamixServer) handleMCPServers(w http.ResponseWriter, r *http.Request,
 		ToolList  []toolInfo `json:"toolList"`
 		Status    string     `json:"status"`
 		Error     string     `json:"error"`
+		Source    string     `json:"source"` // "global" | "user"
 	}
 	var out []serverView
 	host := u.ctrl.Host()
@@ -177,7 +180,7 @@ func (ts *TeamixServer) handleMCPServers(w http.ResponseWriter, r *http.Request,
 				tools = append(tools, toolInfo{Name: t.Name, Description: t.Description})
 			}
 			out = append(out, serverView{
-				Name: s.Name, Transport: s.Transport, Tools: s.Tools, ToolList: tools, Status: "connected",
+				Name: s.Name, Transport: s.Transport, Tools: s.Tools, ToolList: tools, Status: "connected", Source: "global",
 			})
 		}
 		for _, f := range host.Failures() {
@@ -195,15 +198,16 @@ func (ts *TeamixServer) handleMCPServers(w http.ResponseWriter, r *http.Request,
 
 func (ts *TeamixServer) handleSkillsList(w http.ResponseWriter, r *http.Request, u *userSession) {
 	type skillView struct {
-		Name    string `json:"name"`
-		Enabled bool   `json:"enabled"`
+		Name        string `json:"name"`
+		Enabled     bool   `json:"enabled"`
 		Scope       string `json:"scope"`
 		Description string `json:"description"`
+		Source      string `json:"source"` // "global" | "user"
 	}
 	var out []skillView
 	for _, s := range u.ctrl.AllSkills() {
 		out = append(out, skillView{
-			Name: s.Name, Enabled: u.ctrl.SkillEnabled(s.Name), Scope: string(s.Scope), Description: s.Description,
+			Name: s.Name, Enabled: u.ctrl.SkillEnabled(s.Name), Scope: string(s.Scope), Description: s.Description, Source: string(s.Scope),
 		})
 	}
 	if out == nil {
@@ -214,31 +218,45 @@ func (ts *TeamixServer) handleSkillsList(w http.ResponseWriter, r *http.Request,
 
 
 func (ts *TeamixServer) handleMCPAdd(w http.ResponseWriter, r *http.Request, u *userSession) {
-	if !ts.isArchitect(u) {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
 	var body struct {
-		Name      string `json:"name"`
-		Command   string `json:"command"`
+		Name      string   `json:"name"`
+		Command   string   `json:"command"`
 		Args      []string `json:"args"`
-		Transport string `json:"transport"`
+		Transport string   `json:"transport"`
+		Scope     string   `json:"scope"` // "private" (default) | "global"
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	if body.Scope == "global" {
+		if !ts.isArchitect(u) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if err := ts.saveGlobalMCP(body.Name, body.Command, body.Args, body.Transport); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Broadcast to all online users
+		ts.broadcastMCP(config.PluginEntry{
+			Name: body.Name, Type: body.Transport, Command: body.Command, Args: body.Args,
+		})
+		writeJSON(w, map[string]any{"ok": true, "scope": "global"})
+		return
+	}
+	// Private scope (default)
+	if body.Scope != "global" && body.Scope != "" && !ts.isArchitect(u) {
+		// non-architect can only add private
+	}
 	_, err := u.ctrl.AddMCPServer(config.PluginEntry{
-		Name: body.Name,
-		Type: body.Transport,
-		Command: body.Command,
-		Args: body.Args,
+		Name: body.Name, Type: body.Transport, Command: body.Command, Args: body.Args,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]bool{"ok": true})
+	writeJSON(w, map[string]any{"ok": true, "scope": "private"})
 }
 
 
@@ -282,3 +300,99 @@ func (ts *TeamixServer) handleSkillToggle(w http.ResponseWriter, r *http.Request
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+
+
+// globalMCPPath returns the path to global/.reasonix/mcp.json
+func (ts *TeamixServer) globalMCPPath() string {
+	return filepath.Join(ts.workspaceRoot, ".reasonix", "mcp.json")
+}
+
+// saveGlobalMCP adds an MCP server entry to the global mcp.json file.
+func (ts *TeamixServer) saveGlobalMCP(name, command string, args []string, transport string) error {
+	path := ts.globalMCPPath()
+	os.MkdirAll(filepath.Dir(path), 0o755)
+
+	// Read existing
+	doc := struct {
+		MCPServers map[string]struct {
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+			Type    string   `json:"type"`
+		} `json:"mcpServers"`
+	}{MCPServers: make(map[string]struct {
+		Command string   `json:"command"`
+		Args    []string `json:"args"`
+		Type    string   `json:"type"`
+	})}
+
+	if f, err := os.Open(path); err == nil {
+		defer f.Close()
+		json.NewDecoder(f).Decode(&doc)
+	}
+
+	doc.MCPServers[name] = struct {
+		Command string   `json:"command"`
+		Args    []string `json:"args"`
+		Type    string   `json:"type"`
+	}{Command: command, Args: args, Type: transport}
+
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create global mcp.json: %w", err)
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	return enc.Encode(doc)
+}
+
+// removeGlobalMCP removes an MCP server entry from the global mcp.json file.
+func (ts *TeamixServer) removeGlobalMCP(name string) error {
+	path := ts.globalMCPPath()
+	doc := struct {
+		MCPServers map[string]struct {
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+			Type    string   `json:"type"`
+		} `json:"mcpServers"`
+	}{MCPServers: make(map[string]struct {
+		Command string   `json:"command"`
+		Args    []string `json:"args"`
+		Type    string   `json:"type"`
+	})}
+
+	if f, err := os.Open(path); err == nil {
+		defer f.Close()
+		json.NewDecoder(f).Decode(&doc)
+	}
+	delete(doc.MCPServers, name)
+
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create global mcp.json: %w", err)
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	return enc.Encode(doc)
+}
+
+// broadcastMCP sends ConnectMCPServer to all online users.
+func (ts *TeamixServer) broadcastMCP(entry config.PluginEntry) {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+	for _, sess := range ts.sessions {
+		if _, err := sess.ctrl.ConnectMCPServer(entry); err != nil {
+			slog.Warn("teamix: broadcast MCP failed", "user", sess.name, "name", entry.Name, "err", err)
+		}
+	}
+}
+
+// broadcastMCPRemove disconnects an MCP server from all online users.
+func (ts *TeamixServer) broadcastMCPRemove(name string) {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+	for _, sess := range ts.sessions {
+		sess.ctrl.DisconnectMCPServer(name)
+	}
+}

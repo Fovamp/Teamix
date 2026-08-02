@@ -1,19 +1,15 @@
-modules:
-- description: HTTP server with Teamix multi-user support
-  name: serve
-  path: internal/serve/
-- description: .teamix/config.yaml 配置加载
-  name: teamixconfig
-  path: internal/teamixconfig/
-- description: CLI entry point (serve/chat/run)
-  name: cli
-  path: internal/cli/
+﻿# Teamix Cloud 框架配置
+teamix:
+  name: "Teamix Cloud"
+  default_model: "deepseek-v3"
+
+# 以下为可选字段，不写则使用默认文件名
+# projects_file: "projects.yaml"
+# users_file: "users.yaml"
+# mcp_file: "mcp.yaml"
+
+# ---- 以下为 legacy 字段 (向后兼容) ----
 project:
-  description: 云端 AI 协作开发平台
-  name: Teamix Cloud
+  name: "Teamix Cloud"
 workflow:
-  approval_required: []
-  architects:
-  - chisato
-  - admin
   auto_advance: true

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, watch, onMounted } from "vue"
 import { api } from "../api"
 const props = defineProps<{ visible: boolean }>()
@@ -269,7 +269,7 @@ function cleanupDrag() {
         <div v-else-if="templates.length === 0" style="color:var(--muted-2);text-align:center;padding:20px;font-size:13px">暂无工作流模板</div>
         <div v-for="t in templates" :key="t.name" class="model-item" @click="selectWf(t.name)" style="cursor:pointer">
           <div style="min-width:0">
-            <div class="model-item__title" :style="t.name === 'none' ? { color: 'var(--muted)' } : {}">{{ t.name === 'none' ? '自由对话' : (t.label || t.name) }}</div>
+            <div class="model-item__title" :style="t.name === 'none' ? { color: 'var(--muted)' } : {}">{{ t.name === 'none' ? '自由对话' : (t.label || t.name) }}<span v-if="t.source" class="wf-source-tag" :class="'wf-source--' + t.source">{{ t.source === 'global' ? '全局' : t.source === 'project' ? '项目' : t.source }}</span></div>
             <div class="model-item__meta" :title="t.name === 'none' ? '灵活模式，自由对话' : (t.description || '')">{{ t.name === 'none' ? '灵活模式，自由对话' : (t.description || '') }}</div>
             <button v-if="isArchitect && t.name && t.name !== 'none'" class="branch-item__btn" style="color:var(--danger);margin-top:6px;width:80%" @click.stop="showDeleteConfirm(t.name)">删除工作流</button>
           </div>
@@ -365,6 +365,7 @@ function cleanupDrag() {
 .stage-row.drag-before { border-top: 2px solid var(--accent) !important; border-radius: 0 !important; }
 .stage-row.dragging { opacity: .4; }
 .we-stage-drag-handle:hover { color: var(--accent) !important; }
+.wf-source-tag { display:inline-block; margin-left:6px; padding:1px 6px; border-radius:99px; font-size:10px; font-weight:500; vertical-align:middle; } .wf-source--global { background:var(--accent-soft); color:var(--accent); } .wf-source--project { background:#e8f5e9; color:#2e7d32; }
 .wf-new-btn:hover {
   border-color: var(--accent) !important;
   background: var(--accent-soft) !important;

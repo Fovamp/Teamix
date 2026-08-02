@@ -1,7 +1,4 @@
-﻿// Package teamixconfig loads and manages the .teamix/config.yaml project blueprint.
-// It defines project modules, workflow settings, and provides auto-discovery
-// of modules by scanning the workspace directory structure.
-package teamixconfig
+﻿package teamixconfig
 
 import (
 	"fmt"
@@ -13,46 +10,47 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents the .teamix/config.yaml file.
-type Config struct {
-	Project  ProjectConfig  `yaml:"project"`
-	Modules  []ModuleConfig `yaml:"modules"`
-	Workflow WorkflowConfig `yaml:"workflow"`
+type TeamixConfig struct {
+	Name         string `yaml:"name"`
+	DefaultModel string `yaml:"default_model"`
+	ProjectsFile string `yaml:"projects_file,omitempty"`
+	UsersFile    string `yaml:"users_file,omitempty"`
+	MCPFile      string `yaml:"mcp_file,omitempty"`
 }
 
-// ProjectConfig holds project-level metadata.
+type Config struct {
+	Teamix   TeamixConfig   `yaml:"teamix"`
+	Project  ProjectConfig  `yaml:"project,omitempty"`
+	Modules  []ModuleConfig `yaml:"modules,omitempty"`
+	Workflow WorkflowConfig `yaml:"workflow,omitempty"`
+}
+
 type ProjectConfig struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
 }
 
-// ModuleConfig defines a single project module.
 type ModuleConfig struct {
 	Name        string `yaml:"name"`
 	Path        string `yaml:"path"`
 	Description string `yaml:"description"`
 }
 
-// WorkflowConfig defines workflow-level settings.
 type WorkflowConfig struct {
 	AutoAdvance      bool     `yaml:"auto_advance"`
 	ApprovalRequired []string `yaml:"approval_required"`
 	Architects       []string `yaml:"architects"`
 }
 
-// DefaultConfig returns a minimal default config.
 func DefaultConfig() *Config {
 	return &Config{
+		Teamix:  TeamixConfig{},
 		Project: ProjectConfig{},
 		Modules: []ModuleConfig{},
-		Workflow: WorkflowConfig{
-			AutoAdvance: true,
-		},
+		Workflow: WorkflowConfig{AutoAdvance: true},
 	}
 }
 
-// Load reads .teamix/config.yaml from the given workspace root.
-// If the file does not exist, it returns a default with auto-discovered modules.
 func Load(workspaceRoot string) (*Config, error) {
 	path := filepath.Join(workspaceRoot, ".teamix", "config.yaml")
 	f, err := os.Open(path)
@@ -82,7 +80,21 @@ func Load(workspaceRoot string) (*Config, error) {
 	return &cfg, nil
 }
 
-// discoverModules scans workspace subdirectories for code files.
+func resolveFile(globalRoot, fileRef, defaultName string) string {
+	if fileRef != "" {
+		return filepath.Join(globalRoot, ".teamix", fileRef)
+	}
+	return filepath.Join(globalRoot, ".teamix", defaultName)
+}
+
+func (c *Config) ProjectsFilePath(globalRoot string) string {
+	return resolveFile(globalRoot, c.Teamix.ProjectsFile, "projects.yaml")
+}
+
+func (c *Config) UsersFilePath(globalRoot string) string {
+	return resolveFile(globalRoot, c.Teamix.UsersFile, "users.yaml")
+}
+
 func (cfg *Config) discoverModules(workspaceRoot string) {
 	skipDirs := map[string]bool{
 		".git": true, ".teamix": true, ".reasonix": true,
@@ -127,4 +139,3 @@ func (cfg *Config) discoverModules(workspaceRoot string) {
 	}
 	sort.Slice(cfg.Modules, func(i, j int) bool { return cfg.Modules[i].Name < cfg.Modules[j].Name })
 }
-
