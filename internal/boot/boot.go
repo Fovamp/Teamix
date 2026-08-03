@@ -109,6 +109,10 @@ type Options struct {
 	// (for example ACP session/new). They are connected eagerly for this
 	// controller but are not persisted to reasonix.toml.
 	ExtraPlugins []plugin.Spec
+	// ExcludedPluginNames are configured plugin names to skip entirely for this
+	// controller (Teamix multi-tenant: machine-level [[plugins]] must not leak
+	// into per-user sessions; MCPs come from the workspace config instead).
+	ExcludedPluginNames []string
 	// TokenMode selects the session's runtime profile. Empty/full/balanced preserves
 	// the normal capability surface. "economy" keeps the core coding tools visible
 	// and moves optional sources behind connect_tool_source. "delivery" keeps the
@@ -408,6 +412,19 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		PlanModeAllowedTools: cfg.Agent.PlanModeAllowedTools,
 	}
 	autoStartEntries := cfg.AutoStartPlugins()
+	if len(opts.ExcludedPluginNames) > 0 {
+		excl := make(map[string]bool, len(opts.ExcludedPluginNames))
+		for _, n := range opts.ExcludedPluginNames {
+			excl[n] = true
+		}
+		filtered := autoStartEntries[:0]
+		for _, e := range autoStartEntries {
+			if !excl[e.Name] {
+				filtered = append(filtered, e)
+			}
+		}
+		autoStartEntries = filtered
+	}
 	eagerEntries, bgEntries := partitionByTier(autoStartEntries)
 	extraSpecs := applyDefaultMCPCallTimeout(
 		applyPlanModeAllowedMCPToolTrust(applyKnownPluginOverrides(opts.ExtraPlugins, root), cfg.Agent.PlanModeAllowedTools),

@@ -622,10 +622,11 @@ func (ts *TeamixServer) switchModel(u *userSession, ref string) error {
 
 	bc := NewBroadcaster()
 	newCtrl, err := boot.Build(context.Background(), boot.Options{
-		Model:      ref,
-		RequireKey: true,
-		Sink:       bc,
-		Stderr:     os.Stderr,
+		Model:               ref,
+		RequireKey:          true,
+		Sink:                bc,
+		Stderr:              os.Stderr,
+		ExcludedPluginNames: ts.excludedMachineMCPNames(),
 	})
 	if err != nil {
 		return fmt.Errorf("switch model: %w", err)

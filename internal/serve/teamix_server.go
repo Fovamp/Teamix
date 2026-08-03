@@ -140,6 +140,29 @@ func (ts *TeamixServer) InitUserWorkspace(name string) (string, error) {
 	return root, nil
 }
 
+// excludedMachineMCPNames 返回需要排除的机器级 MCP 名称（Reasonix home config.toml
+// 中的 [[plugins]]，减去架构师在工作区 mcp.json 显式管理的同名项）。
+// Teamix 多租户只使用工作区内配置的 MCP，机器级 plugins（开发机/服务器私货）
+// 不进入任何用户会话。
+func (ts *TeamixServer) excludedMachineMCPNames() []string {
+	mc, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	teamixGlobal := ts.loadGlobalMCPServers()
+	var out []string
+	for _, p := range mc.Plugins {
+		if p.Name == "" {
+			continue
+		}
+		if _, managed := teamixGlobal[p.Name]; managed {
+			continue
+		}
+		out = append(out, p.Name)
+	}
+	return out
+}
+
 func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -168,14 +191,15 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		model = ts.globalCfg.Config.Teamix.DefaultModel
 	}
 	ctrl, err := boot.Build(context.Background(), boot.Options{
-		Model:         model,
-		RequireKey:    true,
-		Sink:          bc,
-		Stderr:        os.Stderr,
-		TokenMode:     ts.profile,
-		WorkspaceRoot: userRoot,
-		SessionDir:    filepath.Join(userRoot, ".teamix", "sessions"),
-		SharedHost:    ts.sharedHost,
+		Model:               model,
+		RequireKey:          true,
+		Sink:                bc,
+		Stderr:              os.Stderr,
+		TokenMode:           ts.profile,
+		WorkspaceRoot:       userRoot,
+		SessionDir:          filepath.Join(userRoot, ".teamix", "sessions"),
+		SharedHost:          ts.sharedHost,
+		ExcludedPluginNames: ts.excludedMachineMCPNames(),
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("build controller for %q: %w", name, err)
