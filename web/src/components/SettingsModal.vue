@@ -17,7 +17,8 @@ onMounted(async () => {
     isArch.value = r.role === "architect"
   } catch {}
   visibleTabs.value = isArch.value ? allTabs : ["mcp", "skills", "memory"]
-  if (!isArch.value && tab.value === "keys") tab.value = "mcp"
+  // 打开设置默认显示第一个可见页面（架构师=用户，普通用户=MCP）
+  tab.value = visibleTabs.value[0] || "keys"
 })
 
 // Content state
