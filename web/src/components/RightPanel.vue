@@ -7,6 +7,9 @@ const emit = defineEmits<{ (e: "open-projects"): void }>()
 const showRp = ref(true)
 const treeData = ref<any>(null)
 const notifications = ref<any[]>([])
+const allNoti = ref<any[]>([])
+const projNoti = ref<any[]>([])
+const notiFilter = ref<"all" | "project">("all")
 const notiCollapsed = ref(true)
 const projectName = ref("项目文件")
 const currentProject = ref("")
@@ -27,6 +30,7 @@ onMounted(async () => {
   window.addEventListener("teamix-project-selected", reloadTree as any)
   const saved = localStorage.getItem("rp_noti_collapsed")
   if (saved !== null) notiCollapsed.value = saved === "true"
+  loadNotis()
 
   // rp-resize-h drag for tree/noti split
   const resize = document.getElementById('rp-resize-h')
@@ -79,11 +83,37 @@ async function reloadTree() {
       currentProject.value = st.selectedProject
       projectName.value = st.selectedProject
     }
+    loadNotis()
   } catch {}
 }
 
 function onNotiUpdate(e: CustomEvent) {
-  if (Array.isArray(e.detail)) notifications.value = e.detail
+  if (Array.isArray(e.detail)) {
+    // ChatArea 派发的单份数据（可能个人或项目），用它整体重拉以保证两个视图一致
+    loadNotis()
+  }
+}
+
+// 拉取个人通知 + 当前项目通知，按筛选展示。
+async function loadNotis() {
+  try {
+    const [all, proj] = await Promise.all([
+      api.notifications().catch(() => []),
+      currentProject.value ? api.notifications(currentProject.value).catch(() => []) : Promise.resolve([]),
+    ])
+    allNoti.value = all
+    projNoti.value = proj
+    applyFilter()
+  } catch {}
+}
+
+function applyFilter() {
+  notifications.value = notiFilter.value === "project" ? projNoti.value : allNoti.value
+}
+
+function setNotiFilter(f: "all" | "project") {
+  notiFilter.value = f
+  applyFilter()
 }
 
 function updateProjectName() {
@@ -256,6 +286,10 @@ function openFilePreview(path: string) {
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         通知
         <span :class="notiBadgeClass()" id="rp-noti-badge">{{ notifications.filter((n: any) => !n.read).length || '0' }}</span>
+        <span class="rp-noti__filters" @click.stop>
+          <span class="rp-noti__filter" :class="{ 'rp-noti__filter--on': notiFilter === 'all' }" @click="setNotiFilter('all')">全部</span>
+          <span v-if="currentProject" class="rp-noti__filter" :class="{ 'rp-noti__filter--on': notiFilter === 'project' }" @click="setNotiFilter('project')">当前项目</span>
+        </span>
       </div>
       <div class="rp-noti__list" id="rp-noti-list" :class="{ 'rp-noti__list--open': !notiCollapsed }">
         <div v-if="notifications.length === 0" class="rp-noti__empty">暂无通知</div>
@@ -281,4 +315,7 @@ function openFilePreview(path: string) {
 .rp-item--dir { cursor: pointer; }
 .rp-a { width: 14px; flex-shrink: 0; cursor: pointer; font-size: 10px; color: var(--muted-2); }
 .rp-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-noti__filters { margin-left: auto; display: inline-flex; gap: 4px; padding-right: 4px; }
+.rp-noti__filter { font-size: 10px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted-2); cursor: pointer; }
+.rp-noti__filter--on { background: var(--accent); border-color: var(--accent); color: #000; font-weight: 600; }
 </style>

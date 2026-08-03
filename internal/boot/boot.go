@@ -113,6 +113,9 @@ type Options struct {
 	// controller (Teamix multi-tenant: machine-level [[plugins]] must not leak
 	// into per-user sessions; MCPs come from the workspace config instead).
 	ExcludedPluginNames []string
+	// MemoryUserDir overrides where private memory lands (Teamix: per-user
+	// workspace dir). Empty falls back to the machine-level Reasonix home.
+	MemoryUserDir string
 	// TokenMode selects the session's runtime profile. Empty/full/balanced preserves
 	// the normal capability surface. "economy" keeps the core coding tools visible
 	// and moves optional sources behind connect_tool_source. "delivery" keeps the
@@ -339,7 +342,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// durable, cache-stable prefix every turn reuses, so memory costs nothing per
 	// turn. Mid-session changes never touch this prefix — they ride the
 	// controller's transient turn-injection and fold in on the next session.
-	mem := memory.Load(memory.Options{CWD: root, UserDir: config.MemoryUserDir()})
+	// MemoryUserDir 为空时回落到机器级默认；Teamix 传入用户工作区目录，
+	// 使私有记忆落在 users/<name>/.teamix 下而非机器级 home。
+	memoryUserDir := opts.MemoryUserDir
+	if memoryUserDir == "" {
+		memoryUserDir = config.MemoryUserDir()
+	}
+	mem := memory.Load(memory.Options{CWD: root, UserDir: memoryUserDir})
 	projectChecks := instruction.ExtractHostChecks(mem.Docs)
 	sysPrompt = memory.Compose(sysPrompt, mem)
 

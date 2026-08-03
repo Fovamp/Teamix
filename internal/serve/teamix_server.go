@@ -200,6 +200,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		SessionDir:          filepath.Join(userRoot, ".teamix", "sessions"),
 		SharedHost:          ts.sharedHost,
 		ExcludedPluginNames: ts.excludedMachineMCPNames(),
+		MemoryUserDir:       filepath.Join(userRoot, ".teamix"),
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("build controller for %q: %w", name, err)
@@ -418,6 +419,13 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("POST /teamix/workflows/template/save", ts.withUser(ts.handleTemplateSave))
 	mux.HandleFunc("POST /teamix/workflows/template/delete", ts.withUser(ts.handleTemplateDelete))
 	mux.HandleFunc("GET /teamix/user/role", ts.withUser(ts.handleUserRole))
+	mux.HandleFunc("GET /teamix/users", ts.withUser(ts.handleUsersList))
+	mux.HandleFunc("POST /teamix/users/add", ts.withUser(ts.handleUserAdd))
+	mux.HandleFunc("POST /teamix/users/remove", ts.withUser(ts.handleUserRemove))
+	mux.HandleFunc("POST /teamix/users/role", ts.withUser(ts.handleUserRoleUpdate))
+	mux.HandleFunc("POST /teamix/projects/add", ts.withUser(ts.handleProjectAdd))
+	mux.HandleFunc("POST /teamix/projects/remove", ts.withUser(ts.handleProjectRemove))
+	mux.HandleFunc("POST /teamix/projects/update", ts.withUser(ts.handleProjectUpdate))
 	mux.HandleFunc("POST /teamix/workflows/select", ts.withUser(ts.handleWorkflowSelect))
 	mux.HandleFunc("GET /teamix/file", ts.withUser(ts.handleFile))
 	mux.HandleFunc("GET /teamix/project", ts.handleProjectLegacy)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -24,6 +25,14 @@ func (u UserEntry) RoleOr() string {
 	default:
 		return "developer"
 	}
+}
+
+// NormalizeRole 把任意角色字符串规范化为 architect|developer。
+func NormalizeRole(role string) string {
+	if strings.ToLower(strings.TrimSpace(role)) == "architect" {
+		return "architect"
+	}
+	return "developer"
 }
 
 func (u UserEntry) IsArchitect() bool { return u.RoleOr() == "architect" }
@@ -67,4 +76,17 @@ func LoadUsers(globalRoot string) (*UsersConfig, error) {
 		return nil, fmt.Errorf("parse users.yaml: %w", err)
 	}
 	return &uc, nil
+}
+
+// SaveUsers 把白名单写回 .teamix/users.yaml。
+func (uc *UsersConfig) SaveUsers(globalRoot string) error {
+	path := filepath.Join(globalRoot, ".teamix", "users.yaml")
+	data, err := yaml.Marshal(uc)
+	if err != nil {
+		return fmt.Errorf("marshal users.yaml: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write users.yaml: %w", err)
+	}
+	return nil
 }

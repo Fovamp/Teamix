@@ -627,6 +627,7 @@ func (ts *TeamixServer) switchModel(u *userSession, ref string) error {
 		Sink:                bc,
 		Stderr:              os.Stderr,
 		ExcludedPluginNames: ts.excludedMachineMCPNames(),
+		MemoryUserDir:       filepath.Join(u.userRoot, ".teamix"),
 	})
 	if err != nil {
 		return fmt.Errorf("switch model: %w", err)

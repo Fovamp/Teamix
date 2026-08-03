@@ -5,11 +5,11 @@ const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: "close"): void }>()
 const isArch = ref(false)
 const tab = ref("keys")
-const allTabs = ["keys", "mcp", "soul", "skills", "memory"]
-// 普通用户只可见自己私有相关的配置（MCP/Skills/记忆），密钥池与 AI 人格为架构师专属
+const allTabs = ["users", "projects", "keys", "mcp", "soul", "skills", "memory"]
+// 普通用户只可见自己私有相关的配置（MCP/Skills/记忆），用户/项目/密钥池/AI 人格为架构师专属
 const visibleTabs = ref<string[]>(allTabs)
-const tabLbl: Record<string, string> = { keys: "\u5bc6\u94a5\u6c60", mcp: "MCP", soul: "AI \u4eba\u683c", skills: "Skills", memory: "\u8bb0\u5fc6" }
-const tabIcon: Record<string, string> = { keys: "\ud83d\udd11", mcp: "\ud83d\udd27", soul: "\ud83e\udde0", skills: "\ud83d\udcdc", memory: "\ud83e\udde0" }
+const tabLbl: Record<string, string> = { users: "\u7528\u6237", projects: "\u9879\u76ee", keys: "\u5bc6\u94a5\u6c60", mcp: "MCP", soul: "AI \u4eba\u683c", skills: "Skills", memory: "\u8bb0\u5fc6" }
+const tabIcon: Record<string, string> = { users: "\ud83d\udc65", projects: "\ud83d\udce6", keys: "\ud83d\udd11", mcp: "\ud83d\udd27", soul: "\ud83e\udde0", skills: "\ud83d\udcdc", memory: "\ud83e\udde0" }
 
 onMounted(async () => {
   try {
@@ -34,7 +34,9 @@ async function switchTab(t: string) {
   loading.value = true
   contentHtml.value = "\u52a0\u8f7d\u4e2d..."
   try {
-    if (t === "keys") { await renderKeys() }
+    if (t === "users") { await renderUsers() }
+    else if (t === "projects") { await renderProjects() }
+    else if (t === "keys") { await renderKeys() }
     else if (t === "mcp") { await renderMCP() }
     else if (t === "skills") { await renderSkills() }
     else if (t === "memory") { await renderMemory() }
@@ -43,6 +45,62 @@ async function switchTab(t: string) {
     contentHtml.value = `<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25: ${e.message}</div>`
   }
   loading.value = false
+}
+
+async function renderUsers() {
+  const q = tokenQuery()
+  let h = '<div class="section"><h3>\ud83d\udc65 \u7528\u6237\u7ba1\u7406</h3><p class="desc">\u767d\u540d\u5355\u4e0e\u89d2\u8272\u7ba1\u7406\uff08\u4ec5\u67b6\u6784\u5e08\uff09\u3002\u5220\u9664/\u964d\u7ea7\u6700\u540e\u4e00\u4e2a\u67b6\u6784\u5e08\u5c06\u88ab\u62d2\u7edd\u3002</p></div><div id="users-render">'
+  try {
+    const resp = await fetch("/teamix/users" + q)
+    const data = await resp.json()
+    const users = data.users || []
+    h += '<div class="section"><div class="section-title">\u7528\u6237\u5217\u8868 (' + users.length + ')</div>'
+    if (users.length === 0) h += '<div style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">\u6682\u65e0\u7528\u6237</div>'
+    users.forEach((u: any) => {
+      const cur = u.isCurrent ? ' <span style="font-size:10px;padding:1px 6px;border-radius:99px;background:var(--accent-soft);color:var(--accent)">\u5f53\u524d</span>' : ''
+      h += '<div class="card" style="flex-direction:row;align-items:center;justify-content:space-between;padding:8px 12px">'
+      h += '<div class="card-info"><div class="card-title"><code>' + escH(u.name) + '</code>' + cur + '</div></div>'
+      h += '<div style="display:flex;gap:6px;align-items:center">'
+      h += '<select data-user-role="' + escAttr(u.name) + '" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="developer"' + (u.role === 'developer' ? ' selected' : '') + '>developer</option><option value="architect"' + (u.role === 'architect' ? ' selected' : '') + '>architect</option></select>'
+      h += '<button class="btn danger sm" data-user-del="' + escAttr(u.name) + '" style="padding:4px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>'
+      h += '</div></div>'
+    })
+    h += '<div class="section"><div class="section-title">\u6dfb\u52a0\u7528\u6237</div>'
+    h += '<div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px">'
+    h += '<div style="flex:1"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u6635\u79f0</label><input id="user-name" type="text" placeholder="\u5982 alice" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+    h += '<div style="flex:1"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u89d2\u8272</label><select id="user-role" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="developer">developer</option><option value="architect">architect</option></select></div>'
+    h += '<button class="btn primary" onclick="addUser()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0</button></div></div>'
+  } catch (e) {
+    h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
+  }
+  h += '</div>'
+  contentHtml.value = h
+}
+
+async function renderProjects() {
+  const q = tokenQuery()
+  let h = '<div class="section"><h3>\ud83d\udce6 \u9879\u76ee\u7ba1\u7406</h3><p class="desc">\u9879\u76ee\u6e05\u5355\u7ba1\u7406\uff08\u4ec5\u67b6\u6784\u5e08\uff09\u3002\u6dfb\u52a0\u65f6\u4f1a\u6821\u9a8c git \u94fe\u63a5\u53ef\u8bbf\u95ee\uff0c\u5f00\u53d1\u8005\u9009\u62e9\u9879\u76ee\u65f6\u5404\u81ea clone\u3002</p></div><div id="projects-render">'
+  try {
+    const resp = await fetch("/teamix/projects" + q)
+    const projects = await resp.json()
+    h += '<div class="section"><div class="section-title">\u9879\u76ee\u5217\u8868 (' + projects.length + ')</div>'
+    if (projects.length === 0) h += '<div style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">\u6682\u65e0\u9879\u76ee</div>'
+    projects.forEach((p: any) => {
+      h += '<div class="card" style="flex-direction:row;align-items:center;justify-content:space-between;padding:8px 12px">'
+      h += '<div class="card-info"><div class="card-title">' + escH(p.name) + ' <span style="font-size:10px;color:var(--muted-2)">' + (p.serviceCount || 0) + ' \u4e2a\u670d\u52a1</span></div><div class="card-sub" style="font-size:11px;color:var(--muted-2)">' + escH(p.git) + (p.description ? ' \u00b7 ' + escH(p.description) : '') + '</div></div>'
+      h += '<button class="btn danger sm" data-proj-del="' + escAttr(p.name) + '" style="padding:4px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>'
+      h += '</div>'
+    })
+    h += '<div class="section"><div class="section-title">\u6dfb\u52a0\u9879\u76ee</div>'
+    h += '<div id="proj-err" style="color:var(--danger);font-size:12px;margin-bottom:6px"></div>'
+    h += '<div style="display:flex;gap:8px;margin-bottom:8px"><div style="flex:1"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u540d\u79f0</label><input id="proj-name" type="text" placeholder="mall-system" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div><div style="flex:2"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">Git \u94fe\u63a5</label><input id="proj-git" type="text" placeholder="git@github.com:team/mall-system.git" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div></div>'
+    h += '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u63cf\u8ff0</label><input id="proj-desc" type="text" placeholder="\u7535\u5546\u7cfb\u7edf" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+    h += '<button class="btn primary" onclick="addProject()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0\u9879\u76ee</button></div>'
+  } catch (e) {
+    h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
+  }
+  h += '</div>'
+  contentHtml.value = h
 }
 
 async function renderKeys() {
@@ -398,6 +456,28 @@ document.addEventListener("click", (ev) => {
     if (name) {
       postJSON("/teamix/memory/delete", { name, scope: "global" }).then(() => { refreshTab("memory") })
     }
+    return
+  }
+  const userBtn = target.closest("[data-user-del]") as HTMLElement | null
+  if (userBtn) {
+    ev.preventDefault()
+    const name = userBtn.getAttribute("data-user-del")
+    if (name) removeUser(name)
+    return
+  }
+  const projBtn = target.closest("[data-proj-del]") as HTMLElement | null
+  if (projBtn) {
+    ev.preventDefault()
+    const name = projBtn.getAttribute("data-proj-del")
+    if (name) removeProject(name)
+  }
+})
+// 角色切换下拉 change 事件委托
+document.addEventListener("change", (ev) => {
+  const sel = (ev.target as HTMLElement).closest("[data-user-role]") as HTMLSelectElement | null
+  if (sel) {
+    const name = sel.getAttribute("data-user-role")
+    if (name) changeUserRole(name, sel.value)
   }
 })
 w.toggleSkill = async function(name: string, checked: boolean) {
@@ -425,6 +505,69 @@ w.addMemory = async function() {
   })
   tab.value = "memory"
   await refreshTab("memory")
+}
+w.addUser = async function() {
+  const name = (document.getElementById("user-name") as HTMLInputElement)?.value.trim()
+  const role = (document.getElementById("user-role") as HTMLSelectElement)?.value || "developer"
+  if (!name) return
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  await fetch("/teamix/users/add?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, role })
+  })
+  await refreshTab("users")
+}
+function changeUserRole(name: string, role: string) {
+  if (!name) return
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  fetch("/teamix/users/role?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, role })
+  }).then(() => { refreshTab("users") })
+}
+function removeUser(name: string) {
+  if (!name) return
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  fetch("/teamix/users/remove?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name })
+  }).then(() => { refreshTab("users") })
+}
+w.addProject = async function() {
+  const name = (document.getElementById("proj-name") as HTMLInputElement)?.value.trim()
+  const git = (document.getElementById("proj-git") as HTMLInputElement)?.value.trim()
+  const desc = (document.getElementById("proj-desc") as HTMLInputElement)?.value.trim()
+  const errEl = document.getElementById("proj-err")
+  if (!name || !git) { if (errEl) errEl.textContent = "请填写项目名与 git 链接"; return }
+  if (errEl) errEl.textContent = "校验 git 链接中..."
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  try {
+    const resp = await fetch("/teamix/projects/add?token=" + encodeURIComponent(t), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, git, description: desc })
+    })
+    const data = await resp.json()
+    if (data && data.ok === false) {
+      if (errEl) errEl.textContent = data.error || "添加失败"
+      return
+    }
+    await refreshTab("projects")
+  } catch (e: any) {
+    if (errEl) errEl.textContent = "添加失败: " + String(e)
+  }
+}
+function removeProject(name: string) {
+  if (!name) return
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  fetch("/teamix/projects/remove?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name })
+  }).then(() => { refreshTab("projects") })
 }
 w.addSkill = async function() {
   const name = (document.getElementById("skill-name") as HTMLInputElement)?.value.trim()

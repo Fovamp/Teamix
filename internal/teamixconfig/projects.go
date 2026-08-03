@@ -67,3 +67,16 @@ func LoadProjects(globalRoot string) (*ProjectsConfig, error) {
 	}
 	return &pc, nil
 }
+
+// SaveProjects 把项目清单写回 .teamix/projects.yaml。
+func (pc *ProjectsConfig) SaveProjects(globalRoot string) error {
+	path := filepath.Join(globalRoot, ".teamix", "projects.yaml")
+	data, err := yaml.Marshal(pc)
+	if err != nil {
+		return fmt.Errorf("marshal projects.yaml: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write projects.yaml: %w", err)
+	}
+	return nil
+}
