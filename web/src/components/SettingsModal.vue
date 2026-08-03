@@ -1,12 +1,24 @@
 ﻿<script setup lang="ts">
-import { ref, watch } from "vue"
+import { ref, watch, onMounted } from "vue"
 import { api } from "../api"
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: "close"): void }>()
+const isArch = ref(false)
 const tab = ref("keys")
-const tabs = ["keys", "mcp", "soul", "skills", "memory"]
+const allTabs = ["keys", "mcp", "soul", "skills", "memory"]
+// 普通用户只可见自己私有相关的配置（MCP/Skills/记忆），密钥池与 AI 人格为架构师专属
+const visibleTabs = ref<string[]>(allTabs)
 const tabLbl: Record<string, string> = { keys: "\u5bc6\u94a5\u6c60", mcp: "MCP", soul: "AI \u4eba\u683c", skills: "Skills", memory: "\u8bb0\u5fc6" }
 const tabIcon: Record<string, string> = { keys: "\ud83d\udd11", mcp: "\ud83d\udd27", soul: "\ud83e\udde0", skills: "\ud83d\udcdc", memory: "\ud83e\udde0" }
+
+onMounted(async () => {
+  try {
+    const r = await api.userRole()
+    isArch.value = r.role === "architect"
+  } catch {}
+  visibleTabs.value = isArch.value ? allTabs : ["mcp", "skills", "memory"]
+  if (!isArch.value && tab.value === "keys") tab.value = "mcp"
+})
 
 // Content state
 const contentHtml = ref("\u52a0\u8f7d\u4e2d...")
@@ -439,7 +451,7 @@ w.switchSettingsTab = function(t: string) { tab.value = t }
       </div>
       <div style="display:flex;flex:1;min-height:0;overflow:hidden">
         <div style="width:140px;flex-shrink:0;border-right:1px solid var(--border);padding:8px">
-          <div v-for="t in tabs" :key="t"
+          <div v-for="t in visibleTabs" :key="t"
             class="settings-tab" :class="{ active: tab === t }"
             @click="tab = t"
             style="padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px;margin-bottom:2px;display:flex;align-items:center;gap:6px">
