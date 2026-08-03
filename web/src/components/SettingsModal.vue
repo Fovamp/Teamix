@@ -119,22 +119,41 @@ async function renderSkills() {
   const q = tokenQuery()
   let h = '<div class="section"><h3>\ud83d\udcdc Skills</h3><p class="desc">\u7ba1\u7406 Agent \u53ef\u7528\u7684\u6280\u80fd\u3002</p></div><div id="skills-render">'
   try {
+    let role = ""
+    try {
+      const rr = await fetch("/teamix/user/role" + q)
+      role = ((await rr.json()).role || "") as string
+    } catch (e) { }
+    const isArch = role === "architect"
     const resp = await fetch("/teamix/skills" + q)
     const skills = await resp.json()
     h += '<div class="section"><div class="section-title">\u6280\u80fd\u5217\u8868 (' + skills.length + ')</div>'
     if (skills.length === 0) h += '<div style="color:var(--muted-2);text-align:center;padding:20px;font-size:13px">\u5c1a\u65e0 Skills</div>'
     skills.forEach((s: any) => {
       const hasDesc = s.description && s.description.length > 0
+      const isGlobalScope = s.scope === "global" || s.scope === "custom"
+      const scopeBadge = isGlobalScope
+        ? '<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(76,175,80,.15);color:#4caf50">\u5168\u5c40</span>'
+        : '<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(150,150,150,.15);color:var(--muted-2)">' + (s.scope === "builtin" ? "\u5185\u7f6e" : "\u79c1\u6709") + '</span>'
       h += '<div class="card" style="flex-direction:column;align-items:stretch" data-open="false">'
       h += '<div class="card-head" onclick="const c=this.closest(\'.card\');const b=c.querySelector(\'.card-body\');const o=c.dataset.open===\'true\';c.dataset.open=o?\'false\':\'true\';b.style.display=o?\'none\':\'\'">'
       h += '<span class="chev" style="color:var(--muted-2);transition:transform .15s;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>'
-      h += '<div class="card-main"><div class="card-title"><span class="name">' + escH(s.name) + '</span></div>'
+      h += '<div class="card-main"><div class="card-title"><span class="name">' + escH(s.name) + '</span>' + scopeBadge + '</div>'
       h += '<span class="subject">' + (s.scope || "project") + '</span></div>'
-      h += '<label class="switch" style="position:relative;display:inline-block;width:32px;height:18px"><input type="checkbox" ' + (s.enabled ? "checked" : "") + ' onchange="toggleSkill(\'' + s.name.replace(/'/g, "\\'") + '\', this.checked)" style="opacity:0;width:0;height:0"><span class="slider" style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:' + (s.enabled ? 'var(--accent)' : 'var(--panel-2)') + ';border-radius:99px;transition:.3s"></span></label>'
+      h += '<button class="btn danger sm" data-skill-del="' + escAttr(s.name) + '" data-skill-scope="' + (isGlobalScope ? "global" : "private") + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>'
       h += '</div>'
       h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2)">' + (hasDesc ? escH(s.description) : '<span style="color:var(--muted-2)">\u6682\u65e0\u63cf\u8ff0</span>') + '</div>'
       h += '</div>'
     })
+    // 添加 Skill
+    h += '<div class="section"><div class="section-title">\u6dfb\u52a0 Skill</div>'
+    h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u540d\u79f0</label><input id="skill-name" type="text" placeholder="my-skill" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+    h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u63cf\u8ff0</label><input id="skill-desc" type="text" placeholder="\u4e00\u884c\u63cf\u8ff0" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+    if (isArch) {
+      h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u8303\u56f4</label><select id="skill-scope" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="private">\u79c1\u6709\uff08\u4ec5\u81ea\u5df1\u53ef\u7528\uff09</option><option value="global">\u5168\u5c40\uff08\u5168\u5458\u7ee7\u627f\uff09</option></select></div>'
+    }
+    h += '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u5185\u5bb9</label><textarea id="skill-body" style="min-height:100px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)" placeholder="\u64cd\u4f5c\u6307\u5357 markdown..."></textarea></div>'
+    h += '<button class="btn primary" onclick="addSkill()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58 Skill</button></div>'
   } catch (e) {
     h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
   }
@@ -146,10 +165,43 @@ async function renderMemory() {
   const q = tokenQuery()
   let h = '<div class="section"><h3>\ud83e\udde0 \u8bb0\u5fc6</h3><p class="desc">\u67e5\u770b\u548c\u7ba1\u7406 Agent \u8bb0\u4f4f\u7684\u4e8b\u5b9e\u3002</p></div><div id="mem-render">'
   try {
+    let role = ""
+    try {
+      const rr = await fetch("/teamix/user/role" + q)
+      role = ((await rr.json()).role || "") as string
+    } catch (e) { }
+    const isArch = role === "architect"
+
+    // 全局记忆（架构师维护，全员只读继承）
+    let globalMem: any[] = []
+    try {
+      const g = await (await fetch("/teamix/memory?scope=global" + q)).json()
+      globalMem = g.memories || []
+    } catch (e) { }
+    h += '<div class="section"><div class="section-title">\u5168\u5c40\u8bb0\u5fc6 (' + globalMem.length + ') <span style="font-size:11px;color:var(--muted-2)">\u56e2\u961f\u5171\u4eab\uff0c\u67b6\u6784\u5e08\u7ef4\u62a4</span></div>'
+    if (globalMem.length === 0) h += '<div style="color:var(--muted-2);text-align:center;padding:12px;font-size:13px">\u5c1a\u65e0\u5168\u5c40\u8bb0\u5fc6</div>'
+    globalMem.forEach((m: any) => {
+      const bodyPreview = m.body ? m.body.slice(0, 80).replace(/</g, "&lt;") : ""
+      const hasMore = m.body && m.body.length > 80
+      h += '<div class="card" style="flex-direction:column;align-items:stretch;border-color:rgba(76,175,80,.4)" data-open="false">'
+      h += '<div class="card-head" onclick="const c=this.closest(\'.card\');const b=c.querySelector(\'.card-body\');const o=c.dataset.open===\'true\';c.dataset.open=o?\'false\':\'true\';b.style.display=o?\'none\':\'\'">'
+      h += '<span class="chev" style="color:var(--muted-2);transition:transform .15s;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>'
+      h += '<div class="card-main"><div class="card-title"><span class="name">' + escH(m.title || m.name) + '</span>'
+      h += '<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(76,175,80,.15);color:#4caf50">\u5168\u5c40</span></div>'
+      if (m.description) h += '<span class="subject">' + escH(m.description) + '</span>'
+      else if (bodyPreview) h += '<span class="subject">' + bodyPreview + (hasMore ? "..." : "") + '</span>'
+      h += '</div>'
+      if (isArch) h += '<button class="btn danger sm" data-mem-del-global="' + escAttr(m.name) + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>'
+      h += '</div>'
+      h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2);white-space:pre-wrap">' + (m.body ? escH(m.body) : '<span style="color:var(--muted-2)">\u65e0\u5185\u5bb9</span>') + '</div>'
+      h += '</div>'
+    })
+
+    // 私有记忆（本人）
     const resp = await fetch("/teamix/memory" + q)
     const data = await resp.json()
     const memories = data.memories || []
-    h += '<div class="section"><div class="section-title">\u5df2\u4fdd\u5b58\u7684\u8bb0\u5fc6 (' + memories.length + ')</div>'
+    h += '<div class="section"><div class="section-title">\u6211\u7684\u8bb0\u5fc6 (' + memories.length + ')</div>'
     if (memories.length === 0) h += '<div style="color:var(--muted-2);text-align:center;padding:20px;font-size:13px">\u5c1a\u65e0\u8bb0\u5fc6</div>'
     memories.forEach((m: any) => {
       const typeLabel = m.type || "user"
@@ -163,7 +215,7 @@ async function renderMemory() {
       if (m.description) h += '<span class="subject">' + escH(m.description) + '</span>'
       else if (bodyPreview) h += '<span class="subject">' + bodyPreview + (hasMore ? "..." : "") + '</span>'
       h += '</div>'
-      h += '<button class="btn danger sm" onclick="deleteMemory(\'' + (m.name || '').replace(/'/g, "\\'") + '\')" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>'
+      h += '<button class="btn danger sm" data-mem-del="' + escAttr(m.name) + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>'
       h += '</div>'
       h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2);white-space:pre-wrap">' + (m.body ? escH(m.body) : '<span style="color:var(--muted-2)">\u65e0\u5185\u5bb9</span>') + '</div>'
       h += '</div>'
@@ -173,6 +225,9 @@ async function renderMemory() {
     h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u6807\u9898</label><input id="mem-title" type="text" placeholder="\u4eba\u53ef\u8bfb\u7684\u6807\u9898" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
     h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u63cf\u8ff0</label><input id="mem-desc" type="text" placeholder="\u4e00\u884c\u6982\u8ff0" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
     h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u7c7b\u578b</label><select id="mem-type" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="user">user</option><option value="feedback">feedback</option><option value="project">project</option><option value="reference">reference</option></select></div>'
+    if (isArch) {
+      h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u8303\u56f4</label><select id="mem-scope" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="private">\u79c1\u6709\uff08\u4ec5\u81ea\u5df1\u53ef\u89c1\uff09</option><option value="global">\u5168\u5c40\uff08\u56e2\u961f\u5171\u4eab\uff09</option></select></div>'
+    }
     h += '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u5185\u5bb9</label><textarea id="mem-body" style="min-height:100px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)" placeholder="Markdown \u683c\u5f0f..."></textarea></div>'
     h += '<button class="btn primary" onclick="addMemory()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58\u8bb0\u5fc6</button></div>'
   } catch (e) {
@@ -268,7 +323,15 @@ function removeMCPServer(name: string) {
     body: JSON.stringify({ name })
   }).then(() => { tab.value = "mcp" })
 }
-// MCP 移除/密钥删除按钮事件委托（避免内联 onclick 拼接名字导致的注入）
+// 删除类按钮事件委托（避免内联 onclick 拼接名字导致的注入）
+function postJSON(path: string, body: any) {
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return Promise.resolve()
+  return fetch(path + "?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  }).catch(() => {})
+}
 document.addEventListener("click", (ev) => {
   const target = ev.target as HTMLElement
   const mcpBtn = target.closest("[data-mcp-remove]") as HTMLElement | null
@@ -283,6 +346,34 @@ document.addEventListener("click", (ev) => {
     ev.preventDefault()
     const env = keyBtn.getAttribute("data-key-del")
     if (env) deleteKey(env)
+    return
+  }
+  const skillBtn = target.closest("[data-skill-del]") as HTMLElement | null
+  if (skillBtn) {
+    ev.preventDefault()
+    const name = skillBtn.getAttribute("data-skill-del")
+    const scope = skillBtn.getAttribute("data-skill-scope") || "private"
+    if (name) {
+      postJSON("/teamix/skills/delete", { name, scope }).then(() => { tab.value = "skills" })
+    }
+    return
+  }
+  const memBtn = target.closest("[data-mem-del]") as HTMLElement | null
+  if (memBtn) {
+    ev.preventDefault()
+    const name = memBtn.getAttribute("data-mem-del")
+    if (name) {
+      postJSON("/teamix/memory/delete", { name, scope: "private" }).then(() => { tab.value = "memory" })
+    }
+    return
+  }
+  const memGBtn = target.closest("[data-mem-del-global]") as HTMLElement | null
+  if (memGBtn) {
+    ev.preventDefault()
+    const name = memGBtn.getAttribute("data-mem-del-global")
+    if (name) {
+      postJSON("/teamix/memory/delete", { name, scope: "global" }).then(() => { tab.value = "memory" })
+    }
   }
 })
 w.toggleSkill = async function(name: string, checked: boolean) {
@@ -293,30 +384,37 @@ w.toggleSkill = async function(name: string, checked: boolean) {
     body: JSON.stringify({ name, enabled: checked })
   })
 }
-w.deleteMemory = async function(name: string) {
-  if (!name) return
-  const t = localStorage.getItem("teamix_token")
-  if (!t) return
-  await fetch("/forget?token=" + encodeURIComponent(t), {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name })
-  })
-  tab.value = "memory"
-}
 w.addMemory = async function() {
   const name = (document.getElementById("mem-name") as HTMLInputElement)?.value.trim()
   const title = (document.getElementById("mem-title") as HTMLInputElement)?.value.trim()
   const desc = (document.getElementById("mem-desc") as HTMLInputElement)?.value.trim()
   const mtype = (document.getElementById("mem-type") as HTMLSelectElement)?.value
+  const scopeSel = document.getElementById("mem-scope") as HTMLSelectElement
+  const scope = scopeSel ? scopeSel.value : "private"
   const body = (document.getElementById("mem-body") as HTMLTextAreaElement)?.value
   if (!name) return
   const t = localStorage.getItem("teamix_token")
   if (!t) return
   await fetch("/teamix/memory/save?token=" + encodeURIComponent(t), {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, title, description: desc, type: mtype || "user", body: body || "" })
+    body: JSON.stringify({ name, title, description: desc, type: mtype || "user", body: body || "", scope })
   })
   tab.value = "memory"
+}
+w.addSkill = async function() {
+  const name = (document.getElementById("skill-name") as HTMLInputElement)?.value.trim()
+  const desc = (document.getElementById("skill-desc") as HTMLInputElement)?.value.trim()
+  const scopeSel = document.getElementById("skill-scope") as HTMLSelectElement
+  const scope = scopeSel ? scopeSel.value : "private"
+  const body = (document.getElementById("skill-body") as HTMLTextAreaElement)?.value
+  if (!name) return
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  await fetch("/teamix/skills/save?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, description: desc, body: body || "", scope })
+  })
+  tab.value = "skills"
 }
 w.saveCapability = async function(kind: string) {
   const el = document.getElementById(kind + "-raw") as HTMLTextAreaElement

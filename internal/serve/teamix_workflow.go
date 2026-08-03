@@ -109,7 +109,7 @@ func (ts *TeamixServer) handleTemplateGet(w http.ResponseWriter, r *http.Request
 		http.Error(w, "missing name", http.StatusBadRequest)
 		return
 	}
-	tmplDir := filepath.Join(".", ".teamix", "workflows")
+	tmplDir := filepath.Join(ts.workspaceRoot, ".teamix", "workflows")
 	path := filepath.Join(tmplDir, name+".yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -164,7 +164,7 @@ func (ts *TeamixServer) handleTemplateSave(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "marshal error", http.StatusInternalServerError)
 		return
 	}
-	tmplDir := filepath.Join(".", ".teamix", "workflows")
+	tmplDir := filepath.Join(ts.workspaceRoot, ".teamix", "workflows")
 	outPath := filepath.Join(tmplDir, body.Name+".yaml")
 	if err := os.WriteFile(outPath, data, 0644); err != nil {
 		http.Error(w, "write error", http.StatusInternalServerError)
@@ -187,7 +187,7 @@ func (ts *TeamixServer) handleTemplateDelete(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	tmplDir := filepath.Join(".", ".teamix", "workflows")
+	tmplDir := filepath.Join(ts.workspaceRoot, ".teamix", "workflows")
 	target := filepath.Join(tmplDir, body.Name+".yaml")
 	if err := os.Remove(target); err != nil {
 		if os.IsNotExist(err) {
@@ -212,7 +212,7 @@ func (ts *TeamixServer) handleWorkflowTemplates(w http.ResponseWriter, r *http.R
 	var out []tJSON
 
 	// Global templates
-	globalDir := filepath.Join(".", ".teamix", "workflows")
+	globalDir := filepath.Join(ts.workspaceRoot, ".teamix", "workflows")
 	if tmpls, err := workflow.LoadTemplates(globalDir); err == nil {
 		for _, t := range tmpls {
 			out = append(out, tJSON{Name: t.Name, Label: t.Label, Description: t.Description, Source: "global"})
@@ -222,7 +222,7 @@ func (ts *TeamixServer) handleWorkflowTemplates(w http.ResponseWriter, r *http.R
 	// Project-local templates (if a project is specified via query param)
 	project := r.URL.Query().Get("project")
 	if project != "" {
-		projDir := filepath.Join(".", ".teamix", "workflows")
+		projDir := filepath.Join(ts.workspaceRoot, ".teamix", "workflows")
 		if tmpls, err := workflow.LoadTemplates(projDir); err == nil {
 			seen := make(map[string]bool)
 			for _, t := range out {
@@ -253,7 +253,7 @@ func (ts *TeamixServer) handleWorkflowSelect(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	// Load template and apply stages to user's workflow
-	tmplDir := filepath.Join(".", ".teamix", "workflows")
+	tmplDir := filepath.Join(ts.workspaceRoot, ".teamix", "workflows")
 	tmplFile := filepath.Join(tmplDir, body.Template+".yaml")
 	data, err := os.ReadFile(tmplFile)
 	if err != nil {
