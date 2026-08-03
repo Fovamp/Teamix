@@ -116,6 +116,9 @@ type Options struct {
 	// MemoryUserDir overrides where private memory lands (Teamix: per-user
 	// workspace dir). Empty falls back to the machine-level Reasonix home.
 	MemoryUserDir string
+	// ExcludeHomeSkills 跳过机器级 home 下的 Skills（Teamix 与 Reasonix home
+	// 隔离，Skills 只来自工作区全局 + 用户私有）。
+	ExcludeHomeSkills bool
 	// TokenMode selects the session's runtime profile. Empty/full/balanced preserves
 	// the normal capability surface. "economy" keeps the core coding tools visible
 	// and moves optional sources behind connect_tool_source. "delivery" keeps the
@@ -357,20 +360,21 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// only; bodies load on demand via run_skill or "/<name>". Bodies never enter
 	// the prefix, so the index costs a fixed, small amount per turn.
 	skillStore := skill.New(skill.Options{
-		ProjectRoot:   root,
-		CustomPaths:   cfg.SkillCustomPaths(),
-		PluginPaths:   cfg.PluginPackageSkillOwners(),
-		ExcludedPaths: cfg.SkillExcludedPaths(),
-		DisabledNames: cfg.DisabledSkillNames(),
-		MaxDepth:      cfg.SkillMaxDepth(),
-		Stderr:        opts.Stderr,
+		ProjectRoot:       root,
+		CustomPaths:       cfg.SkillCustomPaths(),
+		PluginPaths:       cfg.PluginPackageSkillOwners(),
+		ExcludedPaths:     cfg.SkillExcludedPaths(),
+		DisabledNames:     cfg.DisabledSkillNames(),
+		MaxDepth:          cfg.SkillMaxDepth(),
+		ExcludeHomeSkills: opts.ExcludeHomeSkills,
+		Stderr:            opts.Stderr,
 	})
 	// Install the static profile filter before building the prompt index and
 	// dedicated skill tools. The dependency checker is attached once the live
 	// registry/plugin host has been assembled below.
 	skillStore.ConfigureInvocationPolicy(string(runtimeProfile), nil)
 	skills := skillStore.List()
-	allSkillStore := skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard})
+	allSkillStore := skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), ExcludeHomeSkills: opts.ExcludeHomeSkills, Stderr: io.Discard})
 	allSkills := allSkillStore.List()
 	if !tokenEconomy {
 		sysPrompt = skill.ApplyIndex(sysPrompt, skills)

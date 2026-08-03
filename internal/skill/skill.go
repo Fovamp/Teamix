@@ -129,6 +129,9 @@ type Options struct {
 	DisabledNames   []string
 	MaxDepth        int
 	DisableBuiltins bool // suppress shipped built-ins (test-only knob)
+	// ExcludeHomeSkills 跳过机器级 home（ReasonixHomeDir / HomeDir）下的 Skills，
+	// 只使用项目与 [skills].paths 中的（Teamix 多租户隔离机器级私货）。
+	ExcludeHomeSkills bool
 	// Stderr is the writer for diagnostic warnings. When nil, defaults to
 	// os.Stderr. Set to io.Discard to suppress output (e.g. during model
 	// switch inside a bubbletea session).
@@ -137,18 +140,19 @@ type Options struct {
 
 // Store resolves skills across the configured roots.
 type Store struct {
-	homeDir         string
-	reasonixHomeDir string
-	projectRoot     string
-	customPaths     []string
-	pluginPaths     map[string][]string
-	excludedPaths   map[string]bool
-	disabled        map[string]bool
-	maxDepth        int
-	disableBuiltins bool
-	stderr          io.Writer
-	runtimeProfile  string
-	requiresReady   func([]string) []string
+	homeDir           string
+	reasonixHomeDir   string
+	projectRoot       string
+	customPaths       []string
+	pluginPaths       map[string][]string
+	excludedPaths     map[string]bool
+	disabled          map[string]bool
+	maxDepth          int
+	disableBuiltins   bool
+	excludeHomeSkills bool
+	stderr            io.Writer
+	runtimeProfile    string
+	requiresReady     func([]string) []string
 }
 
 // New builds a Store. Relative custom paths and a relative project root are made
@@ -191,16 +195,17 @@ func New(opts Options) *Store {
 		stderr = os.Stderr
 	}
 	return &Store{
-		homeDir:         home,
-		reasonixHomeDir: reasonixHome,
-		projectRoot:     root,
-		customPaths:     custom,
-		pluginPaths:     pluginPaths,
-		excludedPaths:   excluded,
-		disabled:        disabledNameSet(opts.DisabledNames),
-		maxDepth:        normalizeMaxDepth(opts.MaxDepth),
-		disableBuiltins: opts.DisableBuiltins,
-		stderr:          stderr,
+		homeDir:           home,
+		reasonixHomeDir:   reasonixHome,
+		projectRoot:       root,
+		customPaths:       custom,
+		pluginPaths:       pluginPaths,
+		excludedPaths:     excluded,
+		disabled:          disabledNameSet(opts.DisabledNames),
+		maxDepth:          normalizeMaxDepth(opts.MaxDepth),
+		disableBuiltins:   opts.DisableBuiltins,
+		excludeHomeSkills: opts.ExcludeHomeSkills,
+		stderr:            stderr,
 	}
 }
 
@@ -322,10 +327,10 @@ func (s *Store) roots() []discoveryRoot {
 	for _, d := range s.customPaths {
 		dirs = append(dirs, de{d, ScopeCustom, false})
 	}
-	if s.reasonixHomeDir != "" {
+	if s.reasonixHomeDir != "" && !s.excludeHomeSkills {
 		dirs = append(dirs, de{filepath.Join(s.reasonixHomeDir, SkillsDirname), ScopeGlobal, false})
 	}
-	if config.IsolatedHomeDir() == "" {
+	if config.IsolatedHomeDir() == "" && !s.excludeHomeSkills {
 		for _, c := range config.ConventionDirs {
 			dir := filepath.Join(s.homeDir, c, SkillsDirname)
 			if s.reasonixHomeDir != "" && config.CanonicalSkillPath(filepath.Dir(dir)) == config.CanonicalSkillPath(s.reasonixHomeDir) {

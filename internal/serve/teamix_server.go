@@ -201,6 +201,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		SharedHost:          ts.sharedHost,
 		ExcludedPluginNames: ts.excludedMachineMCPNames(),
 		MemoryUserDir:       filepath.Join(userRoot, ".teamix"),
+		ExcludeHomeSkills:   true,
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("build controller for %q: %w", name, err)
