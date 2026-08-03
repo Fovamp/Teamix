@@ -11,6 +11,17 @@ const loading = ref(false)
 const err = ref("")
 const working = ref(false)
 
+// 醒目临时提示（toast）：选择项目失败时在 modal 顶部显示，几秒后消失
+const toastMsg = ref("")
+const toastVisible = ref(false)
+let toastTimer: any = null
+function showToast(msg: string) {
+  toastMsg.value = msg
+  toastVisible.value = true
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toastVisible.value = false }, 4000)
+}
+
 // 模块选择（假选择，为资源池预留）：按项目多选，点项目卡片才真正选择项目。
 const selectedByProject = ref<Record<string, string[]>>({})
 const showModule = ref(false)
@@ -86,9 +97,13 @@ async function doSelect(project: string) {
       emit("close")
       return
     }
-    err.value = (r && r.error) || "选择项目失败"
+    const failMsg = (r && r.error) || "选择项目失败"
+    err.value = failMsg
+    showToast(failMsg)
   } catch (e: any) {
-    err.value = e.message || "选择项目失败"
+    const msg = e.message || "选择项目失败"
+    err.value = msg
+    showToast(msg)
   } finally {
     working.value = false
   }
@@ -168,6 +183,11 @@ function projectSelected(name: string) {
         <span>选择项目</span>
         <span class="modal__close" @click="close">&times;</span>
       </div>
+
+      <!-- 醒目临时提示 -->
+      <transition name="proj-toast-fade">
+        <div v-if="toastVisible" class="proj-toast">{{ toastMsg }}</div>
+      </transition>
 
       <div style="flex:1;min-height:0;overflow-y:auto;padding:12px">
         <div v-if="loading" style="color:var(--muted-2);text-align:center;padding:24px;font-size:13px">加载项目列表...</div>
@@ -267,6 +287,10 @@ function projectSelected(name: string) {
 </template>
 
 <style scoped>
+/* 醒目错误提示：modal 顶部居中横幅，遮罩下也清晰可见 */
+.proj-toast { position: absolute; top: 46px; left: 50%; transform: translateX(-50%); z-index: 320; max-width: 90%; background: #3a1a1a; color: #ff8a80; border: 1px solid #f44336; border-radius: 8px; padding: 10px 18px; font-size: 13px; box-shadow: var(--shadow-lg); }
+.proj-toast-fade-enter-active, .proj-toast-fade-leave-active { transition: opacity .2s, transform .2s; }
+.proj-toast-fade-enter-from, .proj-toast-fade-leave-to { opacity: 0; transform: translateX(-50%) translateY(-6px); }
 .btn { padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg-2); font-size: 12px; cursor: pointer; transition: all .12s; }
 .btn:hover { background: var(--bg-2); color: var(--fg); }
 .btn.primary { border: none; background: var(--accent); color: #000; font-weight: 600; }
