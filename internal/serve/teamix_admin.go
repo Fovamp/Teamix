@@ -60,15 +60,17 @@ func (ts *TeamixServer) handleUsersList(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, map[string]any{"users": out})
 }
 
-// POST /teamix/users/add {name, role}
+// POST /teamix/users/add {name, role, httpsUsername?, httpsPassword?}
 func (ts *TeamixServer) handleUserAdd(w http.ResponseWriter, r *http.Request, u *userSession) {
 	if !ts.isArchitect(u) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	var body struct {
-		Name string `json:"name"`
-		Role string `json:"role"`
+		Name          string `json:"name"`
+		Role          string `json:"role"`
+		HTTPSUsername string `json:"httpsUsername"` // 可选：该用户的 git 凭证
+		HTTPSPassword string `json:"httpsPassword"` // 密码或访问令牌
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -88,6 +90,27 @@ func (ts *TeamixServer) handleUserAdd(w http.ResponseWriter, r *http.Request, u 
 	if err := uc.SaveUsers(ts.workspaceRoot); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// 可选：写入该用户的 git HTTPS 凭证（账号 或 令牌），登录后即可直接克隆
+	if body.HTTPSUsername != "" {
+		// 用户可能尚未登录过：先初始化工作区（创建目录与默认配置）
+		if _, err := ts.InitUserWorkspace(body.Name); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		userRoot := ts.UserRoot(body.Name)
+		puc, err := teamixconfig.LoadUserConfig(userRoot)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		puc.Git.HTTPSUsername = body.HTTPSUsername
+		puc.Git.HTTPSPassword = body.HTTPSPassword
+		puc.Git.SSHKeyPath = ""
+		if err := puc.SaveUserConfig(userRoot); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	ts.reloadConfigs()
 	writeJSON(w, map[string]bool{"ok": true})

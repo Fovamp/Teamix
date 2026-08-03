@@ -11,6 +11,7 @@ import ModelsModal from "./components/ModelsModal.vue"
 import WorkflowsModal from "./components/WorkflowsModal.vue"
 import SettingsModal from "./components/SettingsModal.vue"
 import ProjectModal from "./components/ProjectModal.vue"
+import ToastContainer from "./components/ToastContainer.vue"
 
 const showLogin = ref(!api.isLoggedIn())
 const showStats = ref(false)
@@ -86,6 +87,7 @@ onUnmounted(() => {
     <WorkflowsModal :visible="showWorkflows" @close="showWorkflows = false" />
     <SettingsModal :visible="showSettings" @close="showSettings = false" />
     <ProjectModal :visible="showProject" @close="showProject = false" @selected="onProjectSelected" />
+    <ToastContainer />
   </div>
 </template>
 

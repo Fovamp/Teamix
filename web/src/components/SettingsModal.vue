@@ -70,7 +70,12 @@ async function renderUsers() {
     h += '<div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px">'
     h += '<div style="flex:1"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u6635\u79f0</label><input id="user-name" type="text" placeholder="\u5982 alice" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
     h += '<div style="flex:1"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u89d2\u8272</label><select id="user-role" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="developer">developer</option><option value="architect">architect</option></select></div>'
-    h += '<button class="btn primary" onclick="addUser()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0</button></div></div>'
+    h += '<button class="btn primary" onclick="addUser()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0</button></div>'
+    h += '<div style="font-size:11px;color:var(--muted-2);margin-bottom:4px">Git HTTPS \u51ed\u8bc1\uff08\u53ef\u9009\uff09\uff1a\u586b\u5199\u540e\u8be5\u7528\u6237\u767b\u5f55\u5373\u53ef\u76f4\u63a5\u62c9\u53d6\u4ee3\u7801</div>'
+    h += '<div style="display:flex;gap:8px;margin-bottom:8px">'
+    h += '<div style="flex:1"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u8d26\u53f7 / \u4ee4\u724c\u7528\u6237\u540d</label><input id="user-https-user" type="text" placeholder="\u5e73\u53f0\u8d26\u53f7 \u6216 oauth2" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+    h += '<div style="flex:1"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u5bc6\u7801 / \u8bbf\u95ee\u4ee4\u724c</label><input id="user-https-pass" type="password" placeholder="\u5bc6\u7801\u6216\u9879\u76ee\u8bbf\u95ee\u4ee4\u724c" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+    h += '</div></div>'
   } catch (e) {
     h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
   }
@@ -557,12 +562,14 @@ w.addMemory = async function() {
 w.addUser = async function() {
   const name = (document.getElementById("user-name") as HTMLInputElement)?.value.trim()
   const role = (document.getElementById("user-role") as HTMLSelectElement)?.value || "developer"
+  const httpsUser = (document.getElementById("user-https-user") as HTMLInputElement)?.value.trim() || ""
+  const httpsPass = (document.getElementById("user-https-pass") as HTMLInputElement)?.value || ""
   if (!name) return
   const t = localStorage.getItem("teamix_token")
   if (!t) return
   await fetch("/teamix/users/add?token=" + encodeURIComponent(t), {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, role })
+    body: JSON.stringify({ name, role, httpsUsername: httpsUser, httpsPassword: httpsPass })
   })
   await refreshTab("users")
 }
