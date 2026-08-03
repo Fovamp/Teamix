@@ -176,17 +176,12 @@ func (ts *TeamixServer) handleSubmit(w http.ResponseWriter, r *http.Request, u *
 							Read:        false,
 							Time:        time.Now(),
 						}
-						appendNoti := func(list []notification) []notification {
-							if len(list) > 100 {
-								list = list[len(list)-100:]
-							}
-							return append(list, noti)
+						// 统一写入个人通知文件（project 仅作展示）
+						notis := ts.loadNotifications(user)
+						if len(notis) > 100 {
+							notis = notis[len(notis)-100:]
 						}
-						if u.selectedProject != "" {
-							ts.saveNotificationsProject(user, u.selectedProject, appendNoti(ts.loadNotificationsProject(user, u.selectedProject)))
-						} else {
-							ts.saveNotifications(user, appendNoti(ts.loadNotifications(user)))
-						}
+						ts.saveNotifications(user, append(notis, noti))
 					}
 				}
 			}

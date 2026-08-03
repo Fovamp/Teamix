@@ -7,9 +7,6 @@ const emit = defineEmits<{ (e: "open-projects"): void }>()
 const showRp = ref(true)
 const treeData = ref<any>(null)
 const notifications = ref<any[]>([])
-const allNoti = ref<any[]>([])
-const projNoti = ref<any[]>([])
-const notiFilter = ref<"all" | "project">("all")
 const notiCollapsed = ref(true)
 const projectName = ref("项目文件")
 const currentProject = ref("")
@@ -88,32 +85,14 @@ async function reloadTree() {
 }
 
 function onNotiUpdate(e: CustomEvent) {
-  if (Array.isArray(e.detail)) {
-    // ChatArea 派发的单份数据（可能个人或项目），用它整体重拉以保证两个视图一致
-    loadNotis()
-  }
+  if (Array.isArray(e.detail)) notifications.value = e.detail
 }
 
-// 拉取个人通知 + 当前项目通知，按筛选展示。
+// 拉取个人通知（通知统一存 <user>.json）。
 async function loadNotis() {
   try {
-    const [all, proj] = await Promise.all([
-      api.notifications().catch(() => []),
-      currentProject.value ? api.notifications(currentProject.value).catch(() => []) : Promise.resolve([]),
-    ])
-    allNoti.value = all
-    projNoti.value = proj
-    applyFilter()
+    notifications.value = await api.notifications()
   } catch {}
-}
-
-function applyFilter() {
-  notifications.value = notiFilter.value === "project" ? projNoti.value : allNoti.value
-}
-
-function setNotiFilter(f: "all" | "project") {
-  notiFilter.value = f
-  applyFilter()
 }
 
 function updateProjectName() {
@@ -274,7 +253,7 @@ function openFilePreview(path: string) {
   <aside class="right-panel" v-if="showRp" id="right-panel">
     <div class="right-panel__title" id="rp-project-name" style="cursor:pointer" title="点击选择项目" @click="emit('open-projects')">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:6px"><path d="M3 7v10l7 4V11z"/><path d="M3 7l7-4 7 4-7 4z"/><path d="M17 7v10"/><path d="M10 11v10"/><path d="M17 11h4v6h-4"/></svg>
-      {{ currentProject || "选择项目" }} <span style="color:var(--muted-2);font-size:10px;margin-left:4px">切换</span>
+      {{ currentProject || "选择项目" }}
     </div>
     <div class="right-panel__tree" id="rp-tree" style="flex:3;min-height:80px;padding:4px 0;overflow-y:auto;font-size:12px">
       <div v-if="!treeData" style="padding:16px;font-size:12px;color:var(--muted-2)">加载文件树...</div>
@@ -286,10 +265,6 @@ function openFilePreview(path: string) {
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         通知
         <span :class="notiBadgeClass()" id="rp-noti-badge">{{ notifications.filter((n: any) => !n.read).length || '0' }}</span>
-        <span class="rp-noti__filters" @click.stop>
-          <span class="rp-noti__filter" :class="{ 'rp-noti__filter--on': notiFilter === 'all' }" @click="setNotiFilter('all')">全部</span>
-          <span v-if="currentProject" class="rp-noti__filter" :class="{ 'rp-noti__filter--on': notiFilter === 'project' }" @click="setNotiFilter('project')">当前项目</span>
-        </span>
       </div>
       <div class="rp-noti__list" id="rp-noti-list" :class="{ 'rp-noti__list--open': !notiCollapsed }">
         <div v-if="notifications.length === 0" class="rp-noti__empty">暂无通知</div>
@@ -301,7 +276,9 @@ function openFilePreview(path: string) {
             {{ n.fromUser || '系统' }}
             <span class="rp-noti__time">{{ new Date(n.time || n.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }}</span>
           </div>
-          <div class="rp-noti__msg">{{ n.message }}</div>
+          <div class="rp-noti__msg">{{ n.message }}
+            <span v-if="n.project" class="rp-noti__proj">{{ n.project }}</span>
+          </div>
           <span v-if="n.fileChanged" class="rp-noti__file">{{ n.fileChanged }}</span>
         </div>
       </div>
@@ -315,7 +292,5 @@ function openFilePreview(path: string) {
 .rp-item--dir { cursor: pointer; }
 .rp-a { width: 14px; flex-shrink: 0; cursor: pointer; font-size: 10px; color: var(--muted-2); }
 .rp-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rp-noti__filters { margin-left: auto; display: inline-flex; gap: 4px; padding-right: 4px; }
-.rp-noti__filter { font-size: 10px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted-2); cursor: pointer; }
-.rp-noti__filter--on { background: var(--accent); border-color: var(--accent); color: #000; font-weight: 600; }
+.rp-noti__proj { margin-left: 6px; font-size: 10px; padding: 1px 6px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); vertical-align: middle; }
 </style>

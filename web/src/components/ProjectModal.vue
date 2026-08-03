@@ -7,9 +7,14 @@ const emit = defineEmits<{ (e: "close"): void; (e: "selected"): void }>()
 
 const projects = ref<any[]>([])
 const currentProject = ref("")
+const currentService = ref("")
 const loading = ref(false)
 const err = ref("")
 const working = ref(false)
+
+// 模块选择（为资源池预留，仅记录，不影响任何行为）
+const expandedProj = ref("")
+const projServices = ref<any[]>([])
 
 // 凭证步骤
 const credStep = ref(false)
@@ -32,6 +37,7 @@ async function load() {
     ])
     projects.value = ps || []
     currentProject.value = (st && st.selectedProject) || ""
+    currentService.value = localStorage.getItem("teamix_selected_service") || ""
     if (creds) {
       configured.value = !!creds.configured
       sshKeyPath.value = creds.sshKeyPath || ""
@@ -108,6 +114,28 @@ function close() {
   if (working.value) return
   emit("close")
 }
+
+// 展开项目查看模块列表（仅记录选择，不影响任何行为，为资源池预留）。
+async function toggleExpand(project: string) {
+  if (expandedProj.value === project) {
+    expandedProj.value = ""
+    projServices.value = []
+    return
+  }
+  expandedProj.value = project
+  try {
+    projServices.value = await api.projectServices(project).catch(() => [])
+  } catch {
+    projServices.value = []
+  }
+}
+
+function chooseService(name: string) {
+  currentService.value = name
+  localStorage.setItem("teamix_selected_service", name)
+  emit("selected")
+  emit("close")
+}
 </script>
 
 <template>
@@ -129,9 +157,8 @@ function close() {
             暂无可用项目（请架构师在 .teamix/projects.yaml 中配置）
           </div>
           <div v-for="p in projects" :key="p.name" class="proj-card"
-            :class="{ 'proj-card--active': p.name === currentProject, 'proj-card--working': working }"
-            @click="working ? null : doSelect(p.name)">
-            <div class="proj-card__main">
+            :class="{ 'proj-card--active': p.name === currentProject, 'proj-card--working': working }">
+            <div class="proj-card__main" @click="working ? null : doSelect(p.name)">
               <div class="proj-card__name">{{ p.name }}
                 <span v-if="p.name === currentProject" class="proj-card__cur">当前</span>
               </div>
@@ -140,6 +167,18 @@ function close() {
             <div class="proj-card__meta">
               <span>{{ p.serviceCount }} 个服务</span>
               <span v-if="p.git" class="proj-card__git">{{ p.git }}</span>
+              <button class="proj-card__expand" @click.stop="toggleExpand(p.name)">
+                {{ expandedProj === p.name ? "收起模块" : "选模块" }}
+              </button>
+            </div>
+            <div v-if="expandedProj === p.name" class="proj-card__services" @click.stop>
+              <div v-if="projServices.length === 0" class="proj-card__svc-empty">该项目未配置模块</div>
+              <div v-for="s in projServices" :key="s.name" class="proj-card__svc" @click="chooseService(s.name)">
+                <span class="proj-card__svc-name">{{ s.name }}</span>
+                <span class="proj-card__svc-type">{{ s.type }}</span>
+                <span v-if="s.port" class="proj-card__svc-port">:{{ s.port }}</span>
+                <span v-if="currentService === s.name && currentProject === p.name" class="proj-card__cur" style="font-size:10px">已选</span>
+              </div>
             </div>
           </div>
         </template>
@@ -206,4 +245,13 @@ function close() {
 .cred-box__row input { width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); font-size: 12px; }
 .cred-box__err { color: var(--danger); font-size: 12px; margin: 6px 0; }
 .cred-box__actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+.proj-card__expand { margin-top: 4px; font-size: 11px; padding: 2px 10px; border: 1px solid var(--border); border-radius: 99px; background: var(--bg-2); color: var(--muted); cursor: pointer; }
+.proj-card__expand:hover { border-color: var(--accent); color: var(--accent); }
+.proj-card__services { grid-column: 1 / -1; margin-top: 6px; padding: 8px; border: 1px dashed var(--border); border-radius: 6px; background: var(--bg-2); display: flex; flex-direction: column; gap: 4px; }
+.proj-card__svc-empty { font-size: 12px; color: var(--muted-2); padding: 4px; }
+.proj-card__svc { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.proj-card__svc:hover { background: var(--card-hover); }
+.proj-card__svc-name { font-weight: 600; }
+.proj-card__svc-type { font-size: 10px; padding: 0 6px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+.proj-card__svc-port { font-size: 11px; color: var(--muted-2); font-family: var(--mono); }
 </style>

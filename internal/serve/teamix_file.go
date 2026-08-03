@@ -131,10 +131,17 @@ func buildTree(base, relPath string, depth, maxDepth int) []*treeEntry {
 		".idea": true, ".vscode": true, ".mvn": true, "target": true,
 		"dist": true, ".gradle": true, "build": true, "out": true,
 	}
+	// 配置文件（非点开头）也不在树中展示：树只用于浏览代码。
+	skipFiles := map[string]bool{
+		"reasonix.toml": true, ".gitignore": true, ".gitattributes": true,
+		"config.toml": true, "README.md": true, "LICENSE": true,
+		"package-lock.json": true, "pnpm-lock.yaml": true, "yarn.lock": true,
+		"go.sum": true,
+	}
 	var out []*treeEntry
 	for _, e := range entries {
 		name := e.Name()
-		if skipDirs[name] || strings.HasPrefix(name, ".") {
+		if skipDirs[name] || skipFiles[name] || strings.HasPrefix(name, ".") {
 			continue
 		}
 		childRel := filepath.Join(relPath, name)

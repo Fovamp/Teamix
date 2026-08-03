@@ -156,16 +156,10 @@ func (ts *TeamixServer) handleNotificationRead(w http.ResponseWriter, r *http.Re
 		}
 		return changed
 	}
-	if body.Project != "" {
-		notis := ts.loadNotificationsProject(u.name, body.Project)
-		if markRead(notis) {
-			ts.saveNotificationsProject(u.name, body.Project, notis)
-		}
-	} else {
-		notis := ts.loadNotifications(u.name)
-		if markRead(notis) {
-			ts.saveNotifications(u.name, notis)
-		}
+	// 通知统一存个人文件（<user>.json），project 仅作为通知内容展示字段。
+	notis := ts.loadNotifications(u.name)
+	if markRead(notis) {
+		ts.saveNotifications(u.name, notis)
 	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
@@ -202,11 +196,8 @@ func (ts *TeamixServer) handleNotificationCreate(w http.ResponseWriter, r *http.
 		}
 		return append(list, noti)
 	}
-	if body.Project != "" {
-		ts.saveNotificationsProject(body.ToUser, body.Project, appendNoti(ts.loadNotificationsProject(body.ToUser, body.Project)))
-	} else {
-		ts.saveNotifications(body.ToUser, appendNoti(ts.loadNotifications(body.ToUser)))
-	}
+	// 统一写入个人通知文件（<user>.json），project 作为通知内容展示字段。
+	ts.saveNotifications(body.ToUser, appendNoti(ts.loadNotifications(body.ToUser)))
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
