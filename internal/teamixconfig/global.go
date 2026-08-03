@@ -45,9 +45,11 @@ func (g *GlobalConfig) IsArchitect(name string) bool {
 	return false
 }
 
+// UserExists 严格白名单：未配置任何用户（users.yaml 为空）时拒绝所有登录，
+// 必须由架构师先在 users.yaml 配置白名单后才能登录。
 func (g *GlobalConfig) UserExists(name string) bool {
 	if len(g.Users.Users) == 0 {
-		return true
+		return false
 	}
 	return g.Users.FindUser(name) != nil
 }

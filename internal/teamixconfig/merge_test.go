@@ -4,19 +4,20 @@ import "testing"
 
 func TestMergeScalars(t *testing.T) {
 	global := &Config{Teamix: TeamixConfig{Name: "Teamix", DefaultModel: "deepseek-v3"}}
-	user := &UserConfig{Preferences: Preferences{Language: "en", Model: "qwen-max"}}
+	user := &UserConfig{Preferences: Preferences{Language: "en"}}
 	m := Merge(global, user, nil)
-	if m.DefaultModel != "qwen-max" {
-		t.Errorf("user model should override global, got %q", m.DefaultModel)
+	// 模型仅公共可配：私有配置不再能覆盖（公司统一 token）
+	if m.DefaultModel != "deepseek-v3" {
+		t.Errorf("model should come from global only, got %q", m.DefaultModel)
 	}
 	if m.Language != "en" {
 		t.Errorf("language should be user's, got %q", m.Language)
 	}
 
-	// 私有为空 → 回落到公共
-	m2 := Merge(global, &UserConfig{Preferences: Preferences{Language: "en"}}, nil)
-	if m2.DefaultModel != "deepseek-v3" {
-		t.Errorf("empty user model should fall back to global, got %q", m2.DefaultModel)
+	// 公共未配置 → 回落为空（由启动参数兜底）
+	m2 := Merge(nil, &UserConfig{Preferences: Preferences{Language: "en"}}, nil)
+	if m2.DefaultModel != "" {
+		t.Errorf("empty global model should stay empty, got %q", m2.DefaultModel)
 	}
 	if m2.Language != "en" {
 		t.Errorf("language mismatch, got %q", m2.Language)

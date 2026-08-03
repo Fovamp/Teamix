@@ -3,9 +3,11 @@ package teamixconfig
 // MergedConfig 是公共配置与用户私有配置合并后的有效配置。
 //
 // 合并规则（私有 > 公共）：
-//   - 标量字段（default_model / language）：私有非空时覆盖公共值；
+//   - 标量字段（language）：私有非空时覆盖公共值；
+//   - 模型（default_model）仅公共可配（公司统一 token，不允许私人覆盖）；
 //   - 列表字段（MCP）：公共在前、私有追加；同名条目以私有为准（覆盖公共）。
 type MergedConfig struct {
+	// DefaultModel 仅来自公共 teamix.default_model（模型不允许私人配置）。
 	DefaultModel string
 	Language     string
 	// MCP 是合并后的有效 MCP 列表（公共 + 私有，同名私有覆盖公共）。
@@ -28,9 +30,6 @@ func Merge(global *Config, user *UserConfig, globalMCP []PluginRef) *MergedConfi
 		m.DefaultModel = global.Teamix.DefaultModel
 	}
 	if user != nil {
-		if user.Preferences.Model != "" {
-			m.DefaultModel = user.Preferences.Model
-		}
 		if user.Preferences.Language != "" {
 			m.Language = user.Preferences.Language
 		}

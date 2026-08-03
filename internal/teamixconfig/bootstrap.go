@@ -18,7 +18,8 @@ teamix:
   default_model: ""
 `
 
-	globalUsersTemplate = `# 用户白名单。空列表 = 开放模式（任何昵称都能登录）。
+	globalUsersTemplate = `# 用户白名单（严格模式）：不在列表中的用户无法登录。
+# 首次部署请先配置架构师账号，再启动服务。
 # role: architect（配置管理/全局 MCP/部署）| developer
 # users:
 #   - name: chisato

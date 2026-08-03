@@ -159,14 +159,10 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 	token := teamixGenerateToken()
 	ts.keyPool.Acquire()
 	bc := NewBroadcaster()
-	// 两层配置合并：私有 preferences.model > 公共 teamix.default_model > 启动参数 modelRef
+	// 模型仅公共可配（公司统一 token）：公共 teamix.default_model 非空则覆盖启动参数，否则回落启动参数。
 	model := ts.modelRef
-	if uc, ucErr := teamixconfig.LoadUserConfig(userRoot); ucErr == nil {
-		if uc.Preferences.Model != "" {
-			model = uc.Preferences.Model
-		} else if ts.globalCfg != nil && ts.globalCfg.Config != nil && ts.globalCfg.Config.Teamix.DefaultModel != "" {
-			model = ts.globalCfg.Config.Teamix.DefaultModel
-		}
+	if ts.globalCfg != nil && ts.globalCfg.Config != nil && ts.globalCfg.Config.Teamix.DefaultModel != "" {
+		model = ts.globalCfg.Config.Teamix.DefaultModel
 	}
 	ctrl, err := boot.Build(context.Background(), boot.Options{
 		Model:         model,
