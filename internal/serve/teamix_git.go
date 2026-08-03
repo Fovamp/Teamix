@@ -3,6 +3,7 @@
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -128,6 +129,9 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 	// Switch user session to this project
 	u.selectedProject = body.Project
 
+	// 项目内 Teamix 配置不入 git：.teamix/ 与 .reasonix/ 全部忽略（幂等追加）。
+	ensureProjectGitignore(projPath)
+
 	// Switch controller session directory to the project's .teamix/sessions,
 	// so new sessions and session listings are project-scoped.
 	sessionDir := filepath.Join(projPath, ".teamix", "sessions")
@@ -145,8 +149,7 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig.UserConfig) error {
-	cmd := exec.Command("git", "clone", gitURL, targetPath)
+func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig.UserConfig) error {	cmd := exec.Command("git", "clone", gitURL, targetPath)
 
 	// Set up git credentials via environment
 	if uc.Git.SSHKeyPath != "" {
@@ -174,3 +177,32 @@ type gitError struct {
 }
 
 func (e *gitError) Error() string { return e.msg }
+
+// ensureProjectGitignore 确保项目根 .gitignore 忽略 Teamix 运行时目录
+// （.teamix/ 会话/配置、.reasonix/ 本地配置），幂等追加，避免会话与本地配置被提交。
+func ensureProjectGitignore(projPath string) {
+	path := filepath.Join(projPath, ".gitignore")
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	need := []string{".teamix/", ".reasonix/"}
+	added := []string{}
+	for _, line := range need {
+		if !strings.Contains(content, line) {
+			added = append(added, line)
+		}
+	}
+	if len(added) == 0 {
+		return
+	}
+	var sb strings.Builder
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		sb.WriteString("\n")
+	}
+	sb.WriteString("# Teamix workspace data (auto-generated)\n")
+	for _, line := range added {
+		sb.WriteString(line + "\n")
+	}
+	if err := os.WriteFile(path, []byte(sb.String()), 0o644); err != nil {
+		slog.Warn("teamix: failed to write project .gitignore", "path", path, "err", err)
+	}
+}

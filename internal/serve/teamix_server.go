@@ -336,17 +336,42 @@ func (ts *TeamixServer) loadGlobalMCPServers() map[string]mcpServerSpec {
 	return out
 }
 
-// loadUserMCPServers 读取用户私有 config.yaml 的 MCP 列表。
+// userMCPPath 返回用户私有 MCP 配置文件路径。
+// 统一放 .reasonix/（与 Skills 一致，与全局 mcp.json 对称），不再用 .teamix/config.yaml。
+func userMCPPath(userRoot string) string {
+	return filepath.Join(userRoot, ".reasonix", "mcp-private.json")
+}
+
+// loadUserMCPServers 读取用户私有 .reasonix/mcp-private.json 的 MCP 列表。
 func loadUserMCPServers(userRoot string) map[string]mcpServerSpec {
 	out := make(map[string]mcpServerSpec)
-	uc, err := teamixconfig.LoadUserConfig(userRoot)
+	data, err := os.ReadFile(userMCPPath(userRoot))
 	if err != nil {
 		return out
 	}
-	for _, m := range uc.MCP {
-		out[m.Name] = mcpServerSpec{Command: m.Command, Args: m.Args, Type: m.Type}
+	var doc struct {
+		MCPServers map[string]mcpServerSpec `json:"mcpServers"`
+	}
+	if json.Unmarshal(data, &doc) != nil {
+		return out
+	}
+	for name, srv := range doc.MCPServers {
+		out[name] = srv
 	}
 	return out
+}
+
+// writeMCPFile 把 MCP map 以 mcpServers 结构写入 JSON 文件。
+func writeMCPFile(path string, specs map[string]mcpServerSpec) error {
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	doc := struct {
+		MCPServers map[string]mcpServerSpec `json:"mcpServers"`
+	}{MCPServers: specs}
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }
 
 // mcpPluginsTOML 生成用户 reasonix.toml 的 [[plugins]] 段。

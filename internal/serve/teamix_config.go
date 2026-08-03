@@ -12,7 +12,6 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/capabilities"
 	"reasonix/internal/keypool"
-	"reasonix/internal/teamixconfig"
 )
 
 // Configuration, MCP, Skills, and Secrets management handlers.
@@ -310,36 +309,21 @@ func parseMCPArgs(raw json.RawMessage) []string {
 }
 
 
-// saveUserMCP upserts a private MCP entry into users/<name>/.teamix/config.yaml.
+// saveUserMCP upserts a private MCP entry into users/<name>/.reasonix/mcp-private.json.
 func (ts *TeamixServer) saveUserMCP(u *userSession, name, command string, args []string, transport string) error {
-	uc, err := teamixconfig.LoadUserConfig(u.userRoot)
-	if err != nil {
-		return fmt.Errorf("failed to load user config: %w", err)
-	}
-	ref := teamixconfig.PluginRef{Name: name, Command: command, Args: args, Type: transport}
-	for i := range uc.MCP {
-		if uc.MCP[i].Name == name {
-			uc.MCP[i] = ref
-			return uc.SaveUserConfig(u.userRoot)
-		}
-	}
-	uc.MCP = append(uc.MCP, ref)
-	return uc.SaveUserConfig(u.userRoot)
+	specs := loadUserMCPServers(u.userRoot)
+	specs[name] = mcpServerSpec{Command: command, Args: args, Type: transport}
+	return writeMCPFile(userMCPPath(u.userRoot), specs)
 }
 
-// removeUserMCP removes a private MCP entry from users/<name>/.teamix/config.yaml.
+// removeUserMCP removes a private MCP entry from users/<name>/.reasonix/mcp-private.json.
 func (ts *TeamixServer) removeUserMCP(u *userSession, name string) (bool, error) {
-	uc, err := teamixconfig.LoadUserConfig(u.userRoot)
-	if err != nil {
-		return false, err
+	specs := loadUserMCPServers(u.userRoot)
+	if _, ok := specs[name]; !ok {
+		return false, nil
 	}
-	for i := range uc.MCP {
-		if uc.MCP[i].Name == name {
-			uc.MCP = append(uc.MCP[:i], uc.MCP[i+1:]...)
-			return true, uc.SaveUserConfig(u.userRoot)
-		}
-	}
-	return false, nil
+	delete(specs, name)
+	return true, writeMCPFile(userMCPPath(u.userRoot), specs)
 }
 
 
