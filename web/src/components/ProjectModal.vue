@@ -7,11 +7,39 @@ const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: "close"): void; (e: "selected"): void }>()
 const { toast } = useToast()
 
+watch(cloneProgress, updatePercent)
+
 const projects = ref<any[]>([])
 const currentProject = ref("")
 const loading = ref(false)
 const err = ref("")
 const working = ref(false)
+
+// clone 进度条（选择项目时真实百分比，轮询 /teamix/clone/progress）
+const cloneActive = ref(false)
+const cloneProgress = ref("")
+let pollTimer: any = null
+function startPolling(project: string) {
+  stopPolling()
+  pollTimer = setInterval(async () => {
+    try {
+      const p = await api.cloneProgress(project)
+      if (p && p.progress) cloneProgress.value = p.progress
+    } catch {}
+  }, 1200)
+}
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+// "45% (1234/2742)" → 45（进度条宽度）
+const clonePercent = ref(0)
+function updatePercent() {
+  const m = /(\d+)%/.exec(cloneProgress.value)
+  clonePercent.value = m ? parseInt(m[1], 10) : 0
+}
 
 // 模块选择（假选择，为资源池预留）：按项目多选，点项目卡片才真正选择项目。
 const selectedByProject = ref<Record<string, string[]>>({})
@@ -71,17 +99,36 @@ watch(() => props.visible, (v) => {
     credErr.value = ""
     currentProject.value = ""
     load()
+    // 刷新页面后恢复：检测是否有进行中的 clone（后端 continue）
+    checkRunningClone()
   }
 })
+
+async function checkRunningClone() {
+  try {
+    const p = await api.cloneProgress()
+    if (p && p.running && p.project) {
+      cloneActive.value = true
+      cloneProgress.value = p.progress || ""
+      startPolling(p.project)
+      toast("检测到进行中的项目拉取，正在继续...", "info", 10000)
+    }
+  } catch {}
+}
 
 async function doSelect(project: string) {
   working.value = true
   credErr.value = ""
   err.value = ""
+  cloneActive.value = true
+  cloneProgress.value = ""
+  startPolling(project)
   // 大仓库克隆可能较慢：明确告知进行中
   toast("正在拉取项目代码（大仓库可能需要几分钟）...", "info", 60000)
   try {
     const r = await api.projectSelect(project)
+    stopPolling()
+    cloneActive.value = false
     if (r && r.needCredentials) {
       targetProject.value = project
       credStep.value = true
@@ -133,7 +180,10 @@ async function saveCredentials() {
 }
 
 function close() {
-  if (working.value) return
+  if (working.value || cloneActive.value) {
+    toast("项目拉取进行中，请等待完成", "info")
+    return
+  }
   emit("close")
 }
 
@@ -184,6 +234,14 @@ function projectSelected(name: string) {
       </div>
 
       <!-- 醒目临时提示（全局 ToastContainer 渲染） -->
+
+      <!-- clone 进度条 -->
+      <div v-if="cloneActive" class="clone-progress">
+        <div class="clone-progress__track">
+          <div class="clone-progress__fill" :style="{ width: clonePercent + '%' }"></div>
+        </div>
+        <span class="clone-progress__text">{{ cloneProgress ? ("正在拉取项目代码 " + cloneProgress) : "正在准备拉取..." }}</span>
+      </div>
 
       <div style="flex:1;min-height:0;overflow-y:auto;padding:12px">
         <div v-if="loading" style="color:var(--muted-2);text-align:center;padding:24px;font-size:13px">加载项目列表...</div>
@@ -283,6 +341,11 @@ function projectSelected(name: string) {
 </template>
 
 <style scoped>
+/* clone 进度条（modal 顶部） */
+.clone-progress { padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.clone-progress__track { height: 6px; border-radius: 99px; background: var(--bg-2); overflow: hidden; }
+.clone-progress__fill { height: 100%; border-radius: 99px; background: var(--accent); transition: width .3s ease; }
+.clone-progress__text { display: block; margin-top: 6px; font-size: 12px; color: var(--muted-2); font-family: var(--mono); }
 .btn { padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg-2); font-size: 12px; cursor: pointer; transition: all .12s; }
 .btn:hover { background: var(--bg-2); color: var(--fg); }
 .btn.primary { border: none; background: var(--accent); color: #000; font-weight: 600; }

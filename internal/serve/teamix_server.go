@@ -49,6 +49,10 @@ type TeamixServer struct {
 	keyPool    *keypool.Pool
 	capCfg     *capabilities.AllConfigs
 	mux        http.Handler
+
+	// clone 进度追踪：key = "user/project" → 当前传输进度（供前端进度条轮询）
+	cloneMu   sync.Mutex
+	cloneProg map[string]string
 }
 
 func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *TeamixServer {
@@ -59,6 +63,7 @@ func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *Tea
 		modelRef:   modelRef,
 		profile:    profile,
 		sharedHost: plugin.NewHost(),
+		cloneProg:  make(map[string]string),
 	}
 	ts.globalCfg = ts.loadGlobalConfig()
 	ts.keyPool = keypool.NewPool("DEEPSEEK_API_KEY")
@@ -454,6 +459,7 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("POST /teamix/projects/remove", ts.withUser(ts.handleProjectRemove))
 	mux.HandleFunc("POST /teamix/projects/update", ts.withUser(ts.handleProjectUpdate))
 	mux.HandleFunc("POST /teamix/projects/{name}/scan", ts.withUser(ts.handleProjectScan))
+	mux.HandleFunc("GET /teamix/clone/progress", ts.withUser(ts.handleCloneProgress))
 	mux.HandleFunc("POST /teamix/workflows/select", ts.withUser(ts.handleWorkflowSelect))
 	mux.HandleFunc("GET /teamix/file", ts.withUser(ts.handleFile))
 	mux.HandleFunc("GET /teamix/project", ts.handleProjectLegacy)

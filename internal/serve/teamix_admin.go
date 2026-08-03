@@ -281,7 +281,7 @@ func (ts *TeamixServer) handleProjectAdd(w http.ResponseWriter, r *http.Request,
 	// 克隆到公共构建区 projects/<name>/（与 .teamix 同级，为资源池/构建预留）
 	projDir := filepath.Join(ts.workspaceRoot, "projects", body.Name)
 	uc, _ := teamixconfig.LoadUserConfig(u.userRoot)
-	if err := ts.cloneProject(gitURL, projDir, uc); err != nil {
+	if err := ts.cloneProject(gitURL, projDir, uc, ""); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "克隆到公共区失败: " + err.Error()})
 		return
 	}
@@ -316,7 +316,7 @@ func (ts *TeamixServer) handleProjectScan(w http.ResponseWriter, r *http.Request
 	// 公共区目录不存在（改造前添加的项目）→ 先 clone
 	if _, err := os.Stat(projDir); os.IsNotExist(err) {
 		uc, _ := teamixconfig.LoadUserConfig(u.userRoot)
-		if err := ts.cloneProject(target.Git, projDir, uc); err != nil {
+		if err := ts.cloneProject(target.Git, projDir, uc, ""); err != nil {
 			writeJSON(w, map[string]any{"ok": false, "error": "克隆到公共区失败: " + err.Error()})
 			return
 		}

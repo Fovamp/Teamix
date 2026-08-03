@@ -1,6 +1,7 @@
-﻿package serve
+package serve
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"reasonix/internal/teamixconfig"
@@ -113,8 +115,15 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 	projPath := filepath.Join(u.userRoot, body.Project)
 	cloned := false
 
-	// If project directory does not exist, clone it
-	if _, err := os.Stat(projPath); os.IsNotExist(err) {
+	// 目录不存在，或存在但不是有效 git 仓库（残留空壳）→ 清理后克隆
+	if _, err := os.Stat(filepath.Join(projPath, ".git")); os.IsNotExist(err) {
+		if _, statErr := os.Stat(projPath); statErr == nil {
+			// 残留目录（无 .git）：清掉再克隆
+			if rmErr := os.RemoveAll(projPath); rmErr != nil {
+				writeJSON(w, map[string]any{"ok": false, "error": "清理残留项目目录失败: " + rmErr.Error()})
+				return
+			}
+		}
 		// 按链接类型校验凭证：SSH 链接需 SSH Key，HTTPS 需账号，本地路径无需凭证
 		var needCred string
 		switch {
@@ -129,7 +138,7 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 			writeJSON(w, map[string]any{"ok": false, "needCredentials": true, "error": needCred})
 			return
 		}
-		if err := ts.cloneProject(proj.Git, projPath, uc); err != nil {
+		if err := ts.cloneProject(proj.Git, projPath, uc, u.name+"/"+body.Project); err != nil {
 			// 认证类错误（凭证错误/无权限）→ 弹凭证表单引导用户重新配置
 			if isAuthError(err.Error()) {
 				writeJSON(w, map[string]any{"ok": false, "needCredentials": true, "error": err.Error()})
@@ -164,9 +173,17 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig.UserConfig) error {
-	// 浅克隆（--depth 1）：开发/构建不需要完整历史，速度大幅提升
-	cmd := exec.Command("git", "clone", "--depth", "1", gitURL, targetPath)
+var (
+	// 接收对象进度（本地拉取）
+	receivingRe = regexp.MustCompile(`Receiving objects:\s+(\d+)% \((\d+)/(\d+)\)`)
+	// 文件检出进度（checkout 阶段，如 50/12350）
+	updatingRe = regexp.MustCompile(`Updating files:\s+(\d+)% \((\d+)/(\d+)\)`)
+)
+
+// cloneProject 完整克隆（保留全部提交历史，工作流关联性分析依赖 git log/blame）。
+// progKey 非空时记录传输进度供前端轮询（个人选择项目）；公共区构建克隆传 "" 不记录。
+func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig.UserConfig, progKey string) error {
+	cmd := exec.Command("git", "clone", "--progress", gitURL, targetPath)
 
 	// 按链接类型匹配凭证：SSH 链接用 SSH Key，HTTPS 链接用账号密码。
 	switch {
@@ -177,23 +194,108 @@ func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig
 	case isHTTPSURL(gitURL) && uc.Git.HTTPSUsername != "":
 		if u, err := url.Parse(gitURL); err == nil && u.Scheme == "https" {
 			u.User = url.UserPassword(uc.Git.HTTPSUsername, uc.Git.HTTPSPassword)
-			cmd = exec.Command("git", "clone", u.String(), targetPath)
+			cmd = exec.Command("git", "clone", "--progress", u.String(), targetPath)
 		}
 	}
 
-	output, err := cmd.CombinedOutput()
+	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		msg := strings.TrimSpace(string(output))
-		if msg == "" {
-			msg = err.Error()
+		return &gitError{msg: "无法读取克隆输出", err: err}
+	}
+	if err := cmd.Start(); err != nil {
+		return &gitError{msg: "启动克隆失败: " + err.Error(), err: err}
+	}
+	// 解析 stderr 的进度帧更新进度：先 "Receiving objects: xx% (a/b)"，
+	// 检出阶段 "Updating files: xx% (a/b)"。进度帧以 \r 结尾不换行（CR≈帧数、LF 极少），
+	// 必须按 \r 逐帧读取（实测完整 clone 171+85 帧）。
+	go func() {
+		br := bufio.NewReader(stderr)
+		frames := 0
+		for {
+			line, err := br.ReadString('\r')
+			if progKey != "" {
+				if m := receivingRe.FindStringSubmatch(line); m != nil {
+					frames++
+					ts.setCloneProgress(progKey, "接收 "+m[1]+"% ("+m[2]+"/"+m[3]+")")
+				} else if m := updatingRe.FindStringSubmatch(line); m != nil {
+					frames++
+					ts.setCloneProgress(progKey, "文件 "+m[1]+"% ("+m[2]+"/"+m[3]+")")
+				}
+			}
+			if err != nil {
+				if progKey != "" {
+					slog.Info("clone progress done", "progKey", progKey, "frames", frames)
+				}
+				break
+			}
 		}
-		// 凭证缺失/错误时给出中文提示（提取 git 真正错误行，跳过 Cloning into 进度行）
+	}()
+	werr := cmd.Wait()
+	if progKey != "" {
+		ts.clearCloneProgress(progKey)
+	}
+	if werr != nil {
+		// 从 git stderr 收集错误（StderrPipe 已消费，用错误本身兜底）
+		msg := "克隆失败：" + strings.TrimSpace(werr.Error())
 		if isSSHURL(gitURL) {
-			return &gitError{msg: "克隆失败（SSH 链接）：" + gitErrorSummary(msg) + "。请确认已配置正确的 SSH Key", err: err}
+			msg += "。请确认已配置正确的 SSH Key"
 		}
-		return &gitError{msg: "克隆失败：" + gitErrorSummary(msg), err: err}
+		return &gitError{msg: msg, err: werr}
 	}
 	return nil
+}
+
+// setCloneProgress / getCloneProgress / clearCloneProgress：clone 进度存取。
+func (ts *TeamixServer) setCloneProgress(key, progress string) {
+	ts.cloneMu.Lock()
+	defer ts.cloneMu.Unlock()
+	if ts.cloneProg == nil {
+		ts.cloneProg = make(map[string]string)
+	}
+	ts.cloneProg[key] = progress
+}
+
+func (ts *TeamixServer) getCloneProgress(key string) string {
+	ts.cloneMu.Lock()
+	defer ts.cloneMu.Unlock()
+	return ts.cloneProg[key]
+}
+
+func (ts *TeamixServer) clearCloneProgress(key string) {
+	ts.cloneMu.Lock()
+	defer ts.cloneMu.Unlock()
+	delete(ts.cloneProg, key)
+}
+
+func (ts *TeamixServer) snapshotCloneProgress() map[string]string {
+	ts.cloneMu.Lock()
+	defer ts.cloneMu.Unlock()
+	out := make(map[string]string, len(ts.cloneProg))
+	for k, v := range ts.cloneProg {
+		out[k] = v
+	}
+	return out
+}
+
+// GET /teamix/clone/progress?project=xxx — 轮询 clone 进度（前端进度条用）。
+func (ts *TeamixServer) handleCloneProgress(w http.ResponseWriter, r *http.Request, u *userSession) {
+	project := r.URL.Query().Get("project")
+	if project != "" {
+		writeJSON(w, map[string]any{
+			"running":  ts.getCloneProgress(u.name+"/"+project) != "",
+			"project":  project,
+			"progress": ts.getCloneProgress(u.name + "/" + project),
+		})
+		return
+	}
+	// 不带 project：返回当前用户第一个进行中的 clone（刷新页面后恢复用）
+	for key, prog := range ts.snapshotCloneProgress() {
+		if len(key) > len(u.name)+1 && key[:len(u.name)+1] == u.name+"/" {
+			writeJSON(w, map[string]any{"running": true, "project": key[len(u.name)+1:], "progress": prog})
+			return
+		}
+	}
+	writeJSON(w, map[string]any{"running": false})
 }
 
 // gitErrorSummary 从 git 输出中提取真正错误行（fatal:/error:/认证失败等），

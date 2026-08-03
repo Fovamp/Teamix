@@ -109,6 +109,8 @@ export const api = {
     return (data && data.services) || []
   },
   projectSelect: (project: string): Promise<any> => post("/teamix/projects/select", { project }),
+  cloneProgress: (project?: string): Promise<any> =>
+    get("/teamix/clone/progress" + (project ? "?project=" + encodeURIComponent(project) : "")),
   gitCredentials: (): Promise<{ sshKeyPath: string; httpsUsername: string; configured: boolean }> => get("/teamix/git/credentials"),
   gitCredentialsSave: (body: { sshKeyPath?: string; httpsUsername?: string; httpsPassword?: string }): Promise<any> =>
     post("/teamix/git/credentials", body),
