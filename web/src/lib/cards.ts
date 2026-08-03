@@ -146,48 +146,151 @@ export function createCards(ctx: CardsContext) {
   function showAsk(ask: any) {
     const d = el('div', 'ask')
     const cleanup = () => { ctx.setPendingPrompts(ctx.getPendingPrompts().filter(f => f !== cleanup)); d.remove() }
-    const allSelected: Map<number, Set<number>> = new Map()
-    ask.questions.forEach((q: any, qi: number) => {
-      const qDiv = el('div')
-      qDiv.style.marginBottom = '16px'
-      qDiv.appendChild(el('div', 'ask__prompt', q.prompt))
-      const opts = el('div', 'ask__options')
-      const selected = new Set<number>()
-      allSelected.set(qi, selected)
-      q.options.forEach((o: any, i: number) => {
-        const opt = el('button', 'ask__opt')
-        opt.innerHTML = '<div><div class="ask__opt-label">' + escHtml(o.label) + '</div>' + (o.description ? '<div class="ask__opt-desc">' + escHtml(o.description) + '</div>' : '') + '</div>'
-        opt.onclick = () => {
-          if (q.multi) { selected.has(i) ? selected.delete(i) : selected.add(i); opt.classList.toggle('ask__opt--selected', selected.has(i)) }
-          else { selected.clear(); selected.add(i); opts.querySelectorAll('.ask__opt').forEach((oj, j) => oj.classList.toggle('ask__opt--selected', j === i)) }
-          const sa = d.querySelector('.ask__submit') as HTMLButtonElement
-          if (sa) sa.disabled = !Array.from(allSelected.values()).some(s => s.size > 0)
-        }
-        opts.appendChild(opt)
-      })
-      qDiv.appendChild(opts)
-      d.appendChild(qDiv)
-    })
-    const submitAll = el('button', 'ask__submit', '提交')
-    submitAll.disabled = true
-    submitAll.onclick = () => {
-      const answers = ask.questions.map((qq: any, qi: number) => ({
-        questionId: qq.id,
-        selected: Array.from(allSelected.get(qi) || new Set()).map(i => qq.options[i].label)
-      }))
-      fetch('/answer?token=' + encodeURIComponent(localStorage.getItem('teamix_token') || ''), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: ask.id, answers })
-      })
-      cleanup()
+    const questions = ask.questions
+    let active = 0, sel = {}, custom = {}, customOpen = false, submitting = false
+
+    const q = () => questions[Math.min(active, questions.length - 1)]
+    const isLast = () => active >= questions.length - 1
+    const progress = () => (active + 1) + '/' + questions.length
+
+    function answerLabel(qi: number) {
+        if (custom[qi] && custom[qi].trim()) return custom[qi].trim()
+        return (sel[qi] || []).join(', ')
     }
-    d.appendChild(submitAll)
+
+    function setCustom(id: string, val: string) { custom[id] = val; if (val.trim()) sel[id] = [] }
+    function canConfirm() {
+        const cur = q()
+        if (!cur || submitting) return false
+        return (sel[cur.id] && sel[cur.id].length > 0) || (custom[cur.id] && custom[cur.id].trim()) || false
+    }
+    function advance() { active = Math.min(active + 1, questions.length - 1); customOpen = false; render() }
+
+    function buildAnswers() {
+        return questions.map((qq: any, qi: number) => ({
+            questionId: qq.id,
+            selected: custom[qq.id] && custom[qq.id].trim() ? [custom[qq.id].trim()] : (sel[qq.id] || [])
+        }))
+    }
+
+    function confirmOrAdvance() {
+        if (submitting || !canConfirm()) return
+        if (isLast()) {
+            submitting = true
+            fetch('/answer?token=' + encodeURIComponent(localStorage.getItem('teamix_token') || ''), {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: ask.id, answers: buildAnswers() })
+            })
+            cleanup()
+        } else { advance() }
+    }
+
+    function render() {
+        d.querySelectorAll('.ask__body').forEach((e: any) => e.remove())
+        const body = el('div', 'ask__body')
+        const cur = q()
+        if (!cur) return
+
+        // Breadcrumbs for completed questions
+        const crumbs = []
+        for (let i = 0; i < active; i++) {
+            const label = answerLabel(i)
+            if (label) crumbs.push(el('span', 'ask__crumb', (i + 1) + '. ' + label))
+        }
+        if (crumbs.length) {
+            const crumbDiv = el('div', 'ask__crumbs')
+            crumbs.forEach((c: any) => crumbDiv.appendChild(c))
+            body.appendChild(crumbDiv)
+        }
+
+        // Header with progress
+        const header = el('div', 'ask__header')
+        header.innerHTML = (cur.header ? '<span class="ask__header-text">' + escHtml(cur.header) + '</span>' : '')
+            + (questions.length > 1 ? '<span class="ask__progress">' + progress() + '</span>' : '')
+        body.appendChild(header)
+        body.appendChild(el('div', 'ask__prompt', cur.prompt))
+
+        // Options with number keys
+        const opts = el('div', 'ask__options')
+        cur.options.forEach((o: any, i: number) => {
+            const opt = el('button', 'ask__opt')
+            const isSel = (sel[cur.id] || []).includes(o.label)
+            if (isSel) opt.classList.add('ask__opt--selected')
+            opt.innerHTML = '<span class="ask__opt-num">' + (i + 1) + '</span><div><div class="ask__opt-label">' + escHtml(o.label) + '</div>'
+                + (o.description ? '<div class="ask__opt-desc">' + escHtml(o.description) + '</div>' : '') + '</div>'
+            opt.onclick = () => {
+                if (submitting) return
+                setCustom(cur.id, '')
+                if (cur.multi) {
+                    const s = sel[cur.id] || []
+                    sel[cur.id] = s.includes(o.label) ? s.filter((x: string) => x !== o.label) : [...s, o.label]
+                } else { sel[cur.id] = [o.label] }
+                customOpen = false
+                render()
+            }
+            opts.appendChild(opt)
+        })
+
+        // Custom answer row
+        const customRow = el('button', 'ask__opt')
+        if (customOpen) customRow.classList.add('ask__opt--selected')
+        customRow.innerHTML = '<div><div class="ask__opt-label">自定义回答</div><div class="ask__opt-desc">输入自由文字回答</div></div>'
+        customRow.onclick = () => { if (!submitting) { customOpen = !customOpen; sel[cur.id] = []; render() } }
+        opts.appendChild(customRow)
+
+        // Skip row
+        const skipRow = el('button', 'ask__opt', '直接聊天（跳过）')
+        skipRow.style.color = 'var(--danger)'
+        skipRow.onclick = () => {
+            if (submitting) return
+            if (isLast()) {
+                submitting = true
+                fetch('/answer?token=' + encodeURIComponent(localStorage.getItem('teamix_token') || ''), {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: ask.id, answers: buildAnswers() })
+                })
+                cleanup()
+                return
+            }
+            advance()
+        }
+        opts.appendChild(skipRow)
+        body.appendChild(opts)
+
+        // Free text input (only when custom is open)
+        if (customOpen) {
+            const input = el('textarea', 'ask__free') as HTMLTextAreaElement
+            input.placeholder = '输入自定义回答...'
+            input.value = custom[cur.id] || ''
+            input.style.cssText = 'width:100%;min-height:50px;margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:13px;resize:vertical;font-family:inherit'
+            input.oninput = () => { setCustom(cur.id, input.value); render() }
+            input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && custom[cur.id] && custom[cur.id].trim()) { e.preventDefault(); confirmOrAdvance() } }
+            body.appendChild(input)
+        }
+
+        // Footer buttons
+        const footer = el('div', 'ask__footer')
+        if (active > 0) {
+            const back = el('button', 'ask__back', '\u2190 上一题')
+            back.onclick = () => { if (!submitting) { active = Math.max(0, active - 1); customOpen = false; render() } }
+            footer.appendChild(back)
+        }
+        const btn = el('button', 'ask__submit', isLast() ? '提交' : '下一题 \u2192')
+        btn.disabled = !canConfirm()
+        btn.onclick = confirmOrAdvance
+        footer.appendChild(btn)
+        body.appendChild(footer)
+
+        d.appendChild(body)
+    }
+
     ctx.log()?.appendChild(d)
     ctx.scrollDown(true)
+    render()
     ctx.setPendingPrompts([...ctx.getPendingPrompts(), cleanup])
-  }
+}
 
-  // ── Compaction ──
+// ── Compaction ──
   function showCompaction(c: any) {
     const d = el('div', 'compaction')
     if (c.summary) {

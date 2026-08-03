@@ -455,6 +455,7 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("POST /teamix/users/remove", ts.withUser(ts.handleUserRemove))
 	mux.HandleFunc("POST /teamix/users/role", ts.withUser(ts.handleUserRoleUpdate))
 	mux.HandleFunc("POST /teamix/users/credentials", ts.withUser(ts.handleUserCredentials))
+	mux.HandleFunc("GET /teamix/users/credentials", ts.withUser(ts.handleUserCredentialsGet))
 	mux.HandleFunc("POST /teamix/projects/add", ts.withUser(ts.handleProjectAdd))
 	mux.HandleFunc("POST /teamix/projects/remove", ts.withUser(ts.handleProjectRemove))
 	mux.HandleFunc("POST /teamix/projects/update", ts.withUser(ts.handleProjectUpdate))

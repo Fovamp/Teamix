@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from "vue"
 import { api } from "../api"
 import { stripSystemTags, el, fmtTok, fmtElapsed } from "../utils/format"
@@ -246,7 +246,7 @@ function renderHistoryMessages(ms: any[]) {
     if (m.reasoning) m.reasoning = stripSystemTags(m.reasoning)
     return m
   })
-  Object.keys(toolCards).forEach(k => delete toolCards[k])
+  Object.keys(toolCards).forEach(k => { const el = document.getElementById('tool-' + k); if (el) el.remove(); delete toolCards[k] })
   // Restore usage strip from sessionStorage
   try {
     const saved = sessionStorage.getItem('teamix_last_usage')
@@ -272,7 +272,7 @@ const sse = useSSE({
           setRunning(true)
           clearPendingPrompts()
           finalizeMsg()
-          Object.keys(toolCards).forEach(k => delete toolCards[k])
+          Object.keys(toolCards).forEach(k => { const el = document.getElementById('tool-' + k); if (el) el.remove(); delete toolCards[k] })
           todosDismissed = false
           stageCompleteReason = ''
           stageCompleteExtra = ''

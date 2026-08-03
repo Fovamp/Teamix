@@ -95,21 +95,15 @@ func (ts *TeamixServer) handleFile(w http.ResponseWriter, r *http.Request, u *us
 }
 
 func (ts *TeamixServer) handleTree(w http.ResponseWriter, r *http.Request, u *userSession) {
-	root := u.userRoot
-	if u.selectedProject != "" {
-		root = filepath.Join(u.userRoot, u.selectedProject)
-	}
-	if root == "" {
+	// 未选项目：不展示原始工作区内容，前端显示"请先选择项目"
+	if u.selectedProject == "" {
 		writeJSON(w, map[string]any{"empty": true, "reason": "noProject"})
 		return
 	}
+	root := filepath.Join(u.userRoot, u.selectedProject)
 	tree := buildTree(root, "", 0, 15)
 	if len(tree) == 0 {
-		if u.selectedProject == "" {
-			writeJSON(w, map[string]any{"empty": true, "reason": "noProject"})
-		} else {
-			writeJSON(w, map[string]any{"empty": true, "reason": "emptyProject"})
-		}
+		writeJSON(w, map[string]any{"empty": true, "reason": "emptyProject"})
 		return
 	}
 	writeJSON(w, tree)

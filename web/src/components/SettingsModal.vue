@@ -488,7 +488,9 @@ document.addEventListener("click", (ev) => {
     const name = uEditBtn.getAttribute("data-user-edit")
     const box = name ? document.getElementById("user-edit-" + name) : null
     if (box) {
-      const showing = box.style.display !== "none" && box.style.display !== ""
+            const showing = box.style.display !== "none" && box.style.display !== ""
+      // 首次展开时回显已有凭证
+      if (!showing && name) { fetch("/teamix/users/credentials?name=" + encodeURIComponent(name) + "&token=" + encodeURIComponent(localStorage.getItem("teamix_token") || "")).then(r => r.json()).then(data => { const uEl = document.getElementById("edit-uuser-" + name); const pEl = document.getElementById("edit-upass-" + name); if (uEl && data.httpsUsername) uEl.value = data.httpsUsername; if (pEl && data.configured) pEl.placeholder = "(已设置，留空则不变)" }).catch(() => {}) }
       box.style.display = showing ? "none" : "block"
       uEditBtn.textContent = showing ? "编辑" : "取消"
     }
@@ -534,7 +536,9 @@ document.addEventListener("click", (ev) => {
     const name = editBtn.getAttribute("data-proj-edit")
     const box = name ? document.getElementById("proj-edit-" + name) : null
     if (box) {
-      const showing = box.style.display !== "none" && box.style.display !== ""
+            const showing = box.style.display !== "none" && box.style.display !== ""
+      // 首次展开时回显已有凭证
+      if (!showing && name) { fetch("/teamix/users/credentials?name=" + encodeURIComponent(name) + "&token=" + encodeURIComponent(localStorage.getItem("teamix_token") || "")).then(r => r.json()).then(data => { const uEl = document.getElementById("edit-uuser-" + name); const pEl = document.getElementById("edit-upass-" + name); if (uEl && data.httpsUsername) uEl.value = data.httpsUsername; if (pEl && data.configured) pEl.placeholder = "(已设置，留空则不变)" }).catch(() => {}) }
       box.style.display = showing ? "none" : "block"
       editBtn.textContent = showing ? "编辑" : "取消"
     }

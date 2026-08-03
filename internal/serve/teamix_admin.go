@@ -1,4 +1,4 @@
-package serve
+﻿package serve
 
 import (
 	"context"
@@ -278,25 +278,44 @@ func (ts *TeamixServer) handleProjectAdd(w http.ResponseWriter, r *http.Request,
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	// 克隆到公共构建区 projects/<name>/（与 .teamix 同级，为资源池/构建预留）
+	// 克隆到公共构建区 projects/<name>/（异步，避免大仓库阻塞 HTTP）
 	projDir := filepath.Join(ts.workspaceRoot, "projects", body.Name)
+	os.RemoveAll(projDir)
 	uc, _ := teamixconfig.LoadUserConfig(u.userRoot)
-	if err := ts.cloneProject(gitURL, projDir, uc, ""); err != nil {
-		writeJSON(w, map[string]any{"ok": false, "error": "克隆到公共区失败: " + err.Error()})
+	if !uc.HasGitCredentials() {
+		writeJSON(w, map[string]any{"ok": false, "error": "请先在\"用户管理\"中为当前账号配置 Git 凭证（SSH Key 或 HTTPS 账号/令牌）"})
 		return
 	}
-	// 自动分析器：扫描模块写入 services
-	services := analyzeProject(projDir)
-
+	// 先写 projects.yaml（services 为空），clone + 扫描完成后更新
 	pc.Projects = append(pc.Projects, teamixconfig.ProjectEntry{
-		Name: body.Name, Git: gitURL, Description: body.Description, Services: services,
+		Name: body.Name, Git: gitURL, Description: body.Description,
 	})
 	if err := pc.SaveProjects(ts.workspaceRoot); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	ts.reloadConfigs()
-	writeJSON(w, map[string]any{"ok": true, "services": len(services)})
+	progKey := "public/" + body.Name
+	go func() {
+		ts.setCloneProgress(progKey, "开始克隆...")
+		if err := ts.cloneProject(gitURL, projDir, uc, progKey); err != nil {
+			ts.setCloneProgress(progKey, "失败: "+err.Error())
+			slog.Error("teamix: public clone failed", "project", body.Name, "err", err)
+			return
+		}
+		ts.setCloneProgress(progKey, "扫描模块...")
+		services := analyzeProject(projDir)
+		pc2 := ts.projectsConfig()
+		if tgt := pc2.FindProject(body.Name); tgt != nil {
+			tgt.Services = services
+			if err := pc2.SaveProjects(ts.workspaceRoot); err != nil {
+				slog.Error("teamix: save scanned services failed", "project", body.Name, "err", err)
+			}
+			ts.reloadConfigs()
+		}
+		ts.setCloneProgress(progKey, "完成 ("+fmt.Sprintf("%d", len(services))+" 个服务)")
+	}()
+	writeJSON(w, map[string]any{"ok": true, "cloning": true, "progressKey": progKey})
 }
 
 // POST /teamix/projects/{name}/scan — 架构师手动重新扫描模块（先 git pull 更新公共区）。
@@ -316,6 +335,10 @@ func (ts *TeamixServer) handleProjectScan(w http.ResponseWriter, r *http.Request
 	// 公共区目录不存在（改造前添加的项目）→ 先 clone
 	if _, err := os.Stat(projDir); os.IsNotExist(err) {
 		uc, _ := teamixconfig.LoadUserConfig(u.userRoot)
+	if !uc.HasGitCredentials() {
+		writeJSON(w, map[string]any{"ok": false, "error": "请先在\"用户管理\"中为当前账号配置 Git 凭证（SSH Key 或 HTTPS 账号/令牌）"})
+		return
+	}
 		if err := ts.cloneProject(target.Git, projDir, uc, ""); err != nil {
 			writeJSON(w, map[string]any{"ok": false, "error": "克隆到公共区失败: " + err.Error()})
 			return
@@ -418,4 +441,27 @@ func (ts *TeamixServer) handleProjectUpdate(w http.ResponseWriter, r *http.Reque
 	}
 	ts.reloadConfigs()
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// GET /teamix/users/credentials?name=xxx — 架构师读取任意用户的 git 凭证（回显编辑表单）。
+func (ts *TeamixServer) handleUserCredentialsGet(w http.ResponseWriter, r *http.Request, u *userSession) {
+	if !ts.isArchitect(u) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	targetRoot := ts.UserRoot(name)
+	uc, err := teamixconfig.LoadUserConfig(targetRoot)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "failed to load user config"})
+		return
+	}
+	writeJSON(w, map[string]any{
+		"httpsUsername": uc.Git.HTTPSUsername,
+		"configured":    uc.HasGitCredentials(),
+	})
 }

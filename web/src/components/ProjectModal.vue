@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, watch } from "vue"
 import { api } from "../api"
 import { useToast } from "../composables/useToast"
@@ -6,8 +6,6 @@ import { useToast } from "../composables/useToast"
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: "close"): void; (e: "selected"): void }>()
 const { toast } = useToast()
-
-watch(cloneProgress, updatePercent)
 
 const projects = ref<any[]>([])
 const currentProject = ref("")
@@ -40,6 +38,8 @@ function updatePercent() {
   const m = /(\d+)%/.exec(cloneProgress.value)
   clonePercent.value = m ? parseInt(m[1], 10) : 0
 }
+
+watch(cloneProgress, updatePercent)
 
 // 模块选择（假选择，为资源池预留）：按项目多选，点项目卡片才真正选择项目。
 const selectedByProject = ref<Record<string, string[]>>({})

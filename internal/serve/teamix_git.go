@@ -1,7 +1,9 @@
-package serve
+﻿package serve
 
 import (
 	"bufio"
+	"bytes"
+	"io"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -183,7 +185,8 @@ var (
 // cloneProject 完整克隆（保留全部提交历史，工作流关联性分析依赖 git log/blame）。
 // progKey 非空时记录传输进度供前端轮询（个人选择项目）；公共区构建克隆传 "" 不记录。
 func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig.UserConfig, progKey string) error {
-	cmd := exec.Command("git", "clone", "--progress", gitURL, targetPath)
+	cmd := exec.Command("git", "-c", "credential.helper=", "-c", "core.longpaths=true", "clone", "--progress", gitURL, targetPath)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 
 	// 按链接类型匹配凭证：SSH 链接用 SSH Key，HTTPS 链接用账号密码。
 	switch {
@@ -194,11 +197,13 @@ func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig
 	case isHTTPSURL(gitURL) && uc.Git.HTTPSUsername != "":
 		if u, err := url.Parse(gitURL); err == nil && u.Scheme == "https" {
 			u.User = url.UserPassword(uc.Git.HTTPSUsername, uc.Git.HTTPSPassword)
-			cmd = exec.Command("git", "clone", "--progress", u.String(), targetPath)
+			cmd = exec.Command("git", "-c", "credential.helper=", "-c", "core.longpaths=true", "clone", "--progress", u.String(), targetPath)
+		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 		}
 	}
 
-	stderr, err := cmd.StderrPipe()
+	var stderrBuf bytes.Buffer
+	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
 		return &gitError{msg: "无法读取克隆输出", err: err}
 	}
@@ -209,7 +214,7 @@ func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig
 	// 检出阶段 "Updating files: xx% (a/b)"。进度帧以 \r 结尾不换行（CR≈帧数、LF 极少），
 	// 必须按 \r 逐帧读取（实测完整 clone 171+85 帧）。
 	go func() {
-		br := bufio.NewReader(stderr)
+		br := bufio.NewReader(io.TeeReader(stderrPipe, &stderrBuf))
 		frames := 0
 		for {
 			line, err := br.ReadString('\r')
@@ -236,7 +241,14 @@ func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig
 	}
 	if werr != nil {
 		// 从 git stderr 收集错误（StderrPipe 已消费，用错误本身兜底）
+		errOutput := strings.TrimSpace(stderrBuf.String())
 		msg := "克隆失败：" + strings.TrimSpace(werr.Error())
+		if errOutput != "" {
+			if len(errOutput) > 500 {
+				errOutput = "..." + errOutput[len(errOutput)-500:]
+			}
+			msg += "\\n" + errOutput
+		}
 		if isSSHURL(gitURL) {
 			msg += "。请确认已配置正确的 SSH Key"
 		}
