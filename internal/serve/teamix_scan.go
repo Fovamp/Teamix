@@ -9,158 +9,139 @@ import (
 	"reasonix/internal/teamixconfig"
 )
 
-// 项目自动分析器：扫描公共区克隆的项目，识别模块（services）写回 projects.yaml。
-// 第一版支持：
-//   - Java Maven 多模块（根 pom.xml 的 <modules> + 模块内 @SpringBootApplication 启动类）
-//   - Node 子项目（子目录 package.json 含 dev script）
-//   - 端口：尝试从 application.yml / application.properties 识别 server.port
+// 项目自动分析器 v2：递归扫描整个目录树。
+//   - 启动类识别：文件名约定 *Application.java + 读文件内容验证 @SpringBootApplication
+//     （Spring Boot 主类惯例命名；只读小文件，不整树读内容）
+//   - 端口：模块根下递归查找 application*.yml / application*.properties 的 server.port
+//   - 前端：package.json 含 dev/start script
+//
+// 不依赖 pom.xml 的 <modules> 声明，任何嵌套布局（如 JeecgBoot 单仓库 jeecg-boot/）都能扫全。
 
 var (
-	mavenModuleRe   = regexp.MustCompile(`(?s)<module>\s*([^<]+?)\s*</module>`)
-	springBootRe    = regexp.MustCompile(`@SpringBootApplication`)
-	devScriptRe     = regexp.MustCompile(`"(dev|start)"\s*:`)
-	ymlPortRe       = regexp.MustCompile(`(?m)^\s*port:\s*["']?(\d+)["']?\s*$`)
-	propPortRe      = regexp.MustCompile(`(?m)^\s*server\.port\s*=\s*(\d+)`)
+	springBootRe = regexp.MustCompile(`@SpringBootApplication`)
+	devScriptRe  = regexp.MustCompile(`"(dev|start)"\s*:`)
+	ymlPortRe    = regexp.MustCompile(`(?m)^\s*port:\s*["']?(\d+)["']?\s*$`)
+	propPortRe   = regexp.MustCompile(`(?m)^\s*server\.port\s*=\s*(\d+)`)
+	skipScanDirs = map[string]bool{
+		".git": true, ".idea": true, ".vscode": true, "node_modules": true,
+		"target": true, "dist": true, "build": true, "out": true,
+	}
+	// 前端子项目的噪音目录（测试/示例/文档），不作为独立模块
+	skipFrontendDirs = map[string]bool{
+		"tests": true, "test": true, "docs": true, "examples": true, "mock": true, "scripts": true,
+	}
 )
 
-// analyzeProject 扫描项目目录，识别模块清单。
-// 支持：根目录 Maven 多模块、子目录独立 Maven 项目（如 JeecgBoot 仓库的 jeecg-boot/）、
-// 根/子目录 Node 前端。
+// analyzeProject 扫描项目目录，识别全部模块（backend 启动类 + frontend）。
 func analyzeProject(dir string) []teamixconfig.ServiceEntry {
 	var out []teamixconfig.ServiceEntry
-	seenDirs := map[string]bool{}
+	seen := map[string]bool{}
 	add := func(s teamixconfig.ServiceEntry) {
-		if s.Dir == "" || seenDirs[s.Dir] {
+		if s.Dir == "" || seen[s.Dir] {
 			return
 		}
-		seenDirs[s.Dir] = true
+		seen[s.Dir] = true
 		out = append(out, s)
 	}
 
-	rootPom := filepath.Join(dir, "pom.xml")
-	rootHasPom := fileExists(rootPom)
-
-	// 1. 根目录 Maven 多模块
-	if rootHasPom {
-		for _, m := range mavenModules(rootPom) {
-			modDir := filepath.Join(dir, m)
-			if !hasSpringBootApp(modDir) {
-				continue
-			}
-			add(teamixconfig.ServiceEntry{
-				Name: m, Type: "backend", Dir: m + "/",
-				Startup: "mvn spring-boot:run -pl " + m, Port: detectPort(modDir),
-			})
-		}
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return out
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		sub := filepath.Join(dir, e.Name())
-		if e.Name() == "node_modules" || e.Name() == ".git" {
-			continue
-		}
-		// 2. 子目录独立 Maven 项目（根无 pom，或该子目录不在根 modules 内）
-		subPom := filepath.Join(sub, "pom.xml")
-		if fileExists(subPom) && (!rootHasPom || !mavenModules(rootPom).Contains(e.Name())) {
-			for _, m := range mavenModules(subPom) {
-				modDir := filepath.Join(sub, m)
-				if !hasSpringBootApp(modDir) {
-					continue
-				}
-				add(teamixconfig.ServiceEntry{
-					Name: m, Type: "backend", Dir: e.Name() + "/" + m + "/",
-					Startup: "mvn spring-boot:run -pl " + m, Port: detectPort(modDir),
-				})
-			}
-		}
-		// 3. Node 前端（package.json 含 dev/start script）
-		if hasDevScript(filepath.Join(sub, "package.json")) {
-			add(teamixconfig.ServiceEntry{
-				Name: e.Name(), Type: "frontend", Dir: e.Name() + "/",
-				Startup: "npm run dev",
-			})
-		}
-	}
-	return out
-}
-
-func fileExists(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && !fi.IsDir()
-}
-
-type stringList []string
-
-func (l stringList) Contains(s string) bool {
-	for _, v := range l {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
-// mavenModules 解析 pom.xml 的 <modules> 列表。
-func mavenModules(pomPath string) stringList {
-	data, err := os.ReadFile(pomPath)
-	if err != nil {
-		return nil
-	}
-	var out stringList
-	for _, m := range mavenModuleRe.FindAllStringSubmatch(string(data), -1) {
-		mod := strings.TrimSpace(m[1])
-		if mod != "" {
-			out = append(out, mod)
-		}
-	}
-	return out
-}
-
-// analyzeMavenModules 解析根 pom.xml 的多模块，含 SpringBootApplication 的为 backend 服务。
-func analyzeMavenModules(dir string) []teamixconfig.ServiceEntry {
-	rootPom := filepath.Join(dir, "pom.xml")
-	var out []teamixconfig.ServiceEntry
-	for _, m := range mavenModules(rootPom) {
-		modDir := filepath.Join(dir, m)
-		if !hasSpringBootApp(modDir) {
-			continue
-		}
-		out = append(out, teamixconfig.ServiceEntry{
-			Name:    m,
-			Type:    "backend",
-			Dir:     m + "/",
-			Startup: "mvn spring-boot:run -pl " + m,
-			Port:    detectPort(modDir),
-		})
-	}
-	return out
-}
-
-// hasSpringBootApp 递归查找模块目录内带 @SpringBootApplication 注解的 Java 文件。
-func hasSpringBootApp(dir string) bool {
-	found := false
 	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || found {
-			return err
+		if err != nil {
+			return nil
 		}
 		if d.IsDir() {
-			if d.Name() == "target" || d.Name() == ".git" || d.Name() == "node_modules" {
+			if skipScanDirs[d.Name()] {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !strings.HasSuffix(d.Name(), ".java") {
+		// Spring Boot 启动类：*Application.java + @SpringBootApplication 注解
+		if strings.HasSuffix(d.Name(), "Application.java") {
+			if data, err := os.ReadFile(path); err == nil && springBootRe.Match(data) {
+				modRoot := moduleRootOf(path)
+				rel, _ := filepath.Rel(dir, modRoot)
+				modName := filepath.Base(modRoot)
+				add(teamixconfig.ServiceEntry{
+					Name:    modName,
+					Type:    "backend",
+					Dir:     filepath.ToSlash(rel) + "/",
+					Startup: "mvn spring-boot:run -pl " + modName,
+					Port:    detectPortRecursive(modRoot),
+				})
+			}
 			return nil
 		}
-		if data, err := os.ReadFile(path); err == nil && springBootRe.Match(data) {
-			found = true
+		// Node 前端：package.json 含 dev/start script（跳过测试/示例/文档等噪音子项目）
+		if d.Name() == "package.json" {
+			if hasDevScript(path) {
+				projDir := filepath.Dir(path)
+				rel, _ := filepath.Rel(dir, projDir)
+				// 相对路径任意一段命中噪音目录（如 tests/server）→ 不作为模块
+				skip := false
+				for _, seg := range strings.Split(filepath.ToSlash(rel), "/") {
+					if skipFrontendDirs[seg] {
+						skip = true
+						break
+					}
+				}
+				if skip {
+					return nil
+				}
+				add(teamixconfig.ServiceEntry{
+					Name: filepath.Base(projDir), Type: "frontend",
+					Dir:     filepath.ToSlash(rel) + "/",
+					Startup: "npm run dev",
+				})
+			}
+		}
+		return nil
+	})
+	return out
+}
+
+// moduleRootOf 从启动类文件路径向上找 src 的父目录（Maven 模块根）。
+// .../src/main/java/com/x/App.java → src 的父目录。
+func moduleRootOf(javaFilePath string) string {
+	p := filepath.Dir(javaFilePath)
+	for {
+		if filepath.Base(p) == "src" {
+			return filepath.Dir(p)
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return filepath.Dir(javaFilePath)
+		}
+		p = parent
+	}
+}
+
+// detectPortRecursive 在模块根下递归查找 application*.yml / properties 的 server.port。
+func detectPortRecursive(modRoot string) int {
+	found := 0
+	filepath.WalkDir(modRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if skipScanDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		name := d.Name()
+		if strings.HasPrefix(name, "application") &&
+			(strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".properties")) {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			if m := ymlPortRe.FindSubmatch(data); m != nil {
+				found = atoiSafe(string(m[1]))
+				return filepath.SkipAll
+			}
+			if m := propPortRe.FindSubmatch(data); m != nil {
+				found = atoiSafe(string(m[1]))
+				return filepath.SkipAll
+			}
 		}
 		return nil
 	})
@@ -174,24 +155,6 @@ func hasDevScript(packageJSONPath string) bool {
 		return false
 	}
 	return devScriptRe.Match(data)
-}
-
-// detectPort 尝试从 application.yml / application.properties 识别 server.port。
-func detectPort(modDir string) int {
-	for _, f := range []string{"application.yml", "application.yaml", "application.properties"} {
-		path := filepath.Join(modDir, "src", "main", "resources", f)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		if m := ymlPortRe.FindSubmatch(data); m != nil {
-			return atoiSafe(string(m[1]))
-		}
-		if m := propPortRe.FindSubmatch(data); m != nil {
-			return atoiSafe(string(m[1]))
-		}
-	}
-	return 0
 }
 
 func atoiSafe(s string) int {
