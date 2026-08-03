@@ -41,7 +41,7 @@ async function load() {
       api.gitCredentials().catch(() => null),
     ])
     projects.value = ps || []
-    currentProject.value = (st && st.selectedProject) || ""
+    // 不回显上次选中的项目（每次打开都是初始状态）
     try {
       selectedByProject.value = JSON.parse(localStorage.getItem("teamix_selected_services") || "{}")
     } catch {
@@ -63,9 +63,13 @@ async function load() {
 
 watch(() => props.visible, (v) => {
   if (v) {
+    // 每次打开重置为初始状态（不回显上次操作）
+    err.value = ""
+    working.value = false
     credStep.value = false
     targetProject.value = ""
     credErr.value = ""
+    currentProject.value = ""
     load()
   }
 })
@@ -74,16 +78,20 @@ async function doSelect(project: string) {
   working.value = true
   credErr.value = ""
   err.value = ""
+  // 大仓库克隆可能较慢：明确告知进行中
+  toast("正在拉取项目代码（大仓库可能需要几分钟）...", "info", 60000)
   try {
     const r = await api.projectSelect(project)
     if (r && r.needCredentials) {
       targetProject.value = project
       credStep.value = true
       credErr.value = (r && r.error) || ""
+      toast("需要配置 git 凭证：" + ((r && r.error) || ""), "error")
       return
     }
     if (r && r.ok) {
       currentProject.value = project
+      toast("项目已就绪", "success")
       emit("selected")
       emit("close")
       return
