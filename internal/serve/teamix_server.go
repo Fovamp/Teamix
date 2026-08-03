@@ -452,6 +452,7 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("POST /teamix/projects/add", ts.withUser(ts.handleProjectAdd))
 	mux.HandleFunc("POST /teamix/projects/remove", ts.withUser(ts.handleProjectRemove))
 	mux.HandleFunc("POST /teamix/projects/update", ts.withUser(ts.handleProjectUpdate))
+	mux.HandleFunc("POST /teamix/projects/{name}/scan", ts.withUser(ts.handleProjectScan))
 	mux.HandleFunc("POST /teamix/workflows/select", ts.withUser(ts.handleWorkflowSelect))
 	mux.HandleFunc("GET /teamix/file", ts.withUser(ts.handleFile))
 	mux.HandleFunc("GET /teamix/project", ts.handleProjectLegacy)

@@ -88,7 +88,8 @@ async function renderProjects() {
     projects.forEach((p: any) => {
       h += '<div class="card" style="flex-direction:row;align-items:center;justify-content:space-between;padding:8px 12px">'
       h += '<div class="card-info"><div class="card-title">' + escH(p.name) + ' <span style="font-size:10px;color:var(--muted-2)">' + (p.serviceCount || 0) + ' \u4e2a\u670d\u52a1</span></div><div class="card-sub" style="font-size:11px;color:var(--muted-2)">' + escH(p.git) + (p.description ? ' \u00b7 ' + escH(p.description) : '') + '</div></div>'
-      h += '<button class="btn danger sm" data-proj-del="' + escAttr(p.name) + '" style="padding:4px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>'
+      h += '<div style="display:flex;gap:6px;align-items:center"><button class="btn sm" data-proj-scan="' + escAttr(p.name) + '" style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:11px;cursor:pointer">\u91cd\u65b0\u626b\u63cf</button>'
+      h += '<button class="btn danger sm" data-proj-del="' + escAttr(p.name) + '" style="padding:4px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button></div>'
       h += '</div>'
     })
     h += '<div class="section"><div class="section-title">\u6dfb\u52a0\u9879\u76ee</div>'
@@ -470,6 +471,15 @@ document.addEventListener("click", (ev) => {
     ev.preventDefault()
     const name = projBtn.getAttribute("data-proj-del")
     if (name) removeProject(name)
+    return
+  }
+  const scanBtn = target.closest("[data-proj-scan]") as HTMLElement | null
+  if (scanBtn) {
+    ev.preventDefault()
+    const name = scanBtn.getAttribute("data-proj-scan")
+    if (name) {
+      postJSON("/teamix/projects/" + encodeURIComponent(name) + "/scan", {}).then(() => { refreshTab("projects") })
+    }
   }
 })
 // 角色切换下拉 change 事件委托

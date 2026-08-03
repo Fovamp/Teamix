@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -182,6 +184,7 @@ func validateGitRemote(url string) error {
 }
 
 // POST /teamix/projects/add {name, git, description}
+// 添加流程：校验 git 链接 → clone 到公共区 projects/<name>/ → 扫描模块 → 写 projects.yaml。
 func (ts *TeamixServer) handleProjectAdd(w http.ResponseWriter, r *http.Request, u *userSession) {
 	if !ts.isArchitect(u) {
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -205,20 +208,70 @@ func (ts *TeamixServer) handleProjectAdd(w http.ResponseWriter, r *http.Request,
 		http.Error(w, `{"error":"项目已存在"}`, http.StatusConflict)
 		return
 	}
+	gitURL := strings.TrimSpace(body.Git)
 	// 添加时校验 git 链接可访问
-	if err := validateGitRemote(strings.TrimSpace(body.Git)); err != nil {
+	if err := validateGitRemote(gitURL); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	// 克隆到公共构建区 projects/<name>/（与 .teamix 同级，为资源池/构建预留）
+	projDir := filepath.Join(ts.workspaceRoot, "projects", body.Name)
+	uc, _ := teamixconfig.LoadUserConfig(u.userRoot)
+	if err := ts.cloneProject(gitURL, projDir, uc); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "克隆到公共区失败: " + err.Error()})
+		return
+	}
+	// 自动分析器：扫描模块写入 services
+	services := analyzeProject(projDir)
+
 	pc.Projects = append(pc.Projects, teamixconfig.ProjectEntry{
-		Name: body.Name, Git: strings.TrimSpace(body.Git), Description: body.Description,
+		Name: body.Name, Git: gitURL, Description: body.Description, Services: services,
 	})
 	if err := pc.SaveProjects(ts.workspaceRoot); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	ts.reloadConfigs()
-	writeJSON(w, map[string]bool{"ok": true})
+	writeJSON(w, map[string]any{"ok": true, "services": len(services)})
+}
+
+// POST /teamix/projects/{name}/scan — 架构师手动重新扫描模块（先 git pull 更新公共区）。
+func (ts *TeamixServer) handleProjectScan(w http.ResponseWriter, r *http.Request, u *userSession) {
+	if !ts.isArchitect(u) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	project := r.PathValue("name")
+	pc := ts.projectsConfig()
+	target := pc.FindProject(project)
+	if target == nil {
+		http.Error(w, `{"error":"项目不存在"}`, http.StatusNotFound)
+		return
+	}
+	projDir := filepath.Join(ts.workspaceRoot, "projects", project)
+	// 公共区目录不存在（改造前添加的项目）→ 先 clone
+	if _, err := os.Stat(projDir); os.IsNotExist(err) {
+		uc, _ := teamixconfig.LoadUserConfig(u.userRoot)
+		if err := ts.cloneProject(target.Git, projDir, uc); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": "克隆到公共区失败: " + err.Error()})
+			return
+		}
+	}
+	// 尝试 git pull 更新公共区代码（失败不阻断，用现有目录重新扫描）
+	if _, err := os.Stat(filepath.Join(projDir, ".git")); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		cmd := exec.CommandContext(ctx, "git", "-C", projDir, "pull", "--ff-only")
+		_ = cmd.Run()
+		cancel()
+	}
+	services := analyzeProject(projDir)
+	target.Services = services
+	if err := pc.SaveProjects(ts.workspaceRoot); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	ts.reloadConfigs()
+	writeJSON(w, map[string]any{"ok": true, "services": services})
 }
 
 // POST /teamix/projects/remove {name}
