@@ -292,7 +292,7 @@ const sse = useSSE({
           break
         case 'tool_result':
           if (e.tool) {
-            const tm = messages.value.find((m: any) => m.role === 'tool' && m.id === e.tool.id); if (tm) { tm.status = e.tool.err ? 'error' : 'done'; if (e.tool.err) tm.err = e.tool.err; if (e.tool.output) tm.output = String(e.tool.output || '').slice(0, 2000) + (e.tool.truncated ? '...[truncated]' : '') }
+            let tm = messages.value.find((m: any) => m.role === 'tool' && m.id === e.tool.id); if (!tm) { tm = { role: 'tool', id: e.tool.id, name: e.tool.name || 'tool', args: e.tool.args, status: 'done', output: '', err: '', startedAt: Date.now() }; messages.value.push(tm) } tm.status = e.tool.err ? 'error' : 'done'; if (e.tool.err) tm.err = e.tool.err; if (e.tool.output) tm.output = String(e.tool.output || '').slice(0, 2000) + (e.tool.truncated ? '...[truncated]' : '')
             if (e.tool.name === 'todo_write' && !e.tool.parentId && !e.tool.err) {
               try {
                 const ts = parseTodos(e.tool.args)
