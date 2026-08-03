@@ -401,10 +401,15 @@ input,textarea{font:inherit;color:inherit}
 .settings-content .btn { padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg-2); font-size: 12px; cursor: pointer; white-space: nowrap; transition: all .12s; }
 .settings-content .btn:hover { background: var(--bg-2) !important; color: var(--fg) !important; }
 .settings-content .btn.primary { border: none; background: var(--accent); color: oklch(99% 0 0); }
-.settings-content .btn.primary:hover { background: var(--accent-strong) !important; }
+.settings-content .btn.primary:hover { background: var(--accent-strong) !important; filter: brightness(1.15); }
 .settings-content .btn.danger { border-color: #f44336; color: #f44336; }
 .settings-content .btn.danger:hover { background: #3a1a1a !important; }
 .settings-content .btn.sm { padding: 3px 10px; font-size: 11px; }
+/* 配置页加载进度条（添加项目/重新扫描时显示） */
+.settings-content .cfg-progress { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 11px; color: var(--muted-2); }
+.settings-content .cfg-progress__bar { width: 140px; height: 4px; border-radius: 99px; background: var(--bg-2); overflow: hidden; position: relative; }
+.settings-content .cfg-progress__bar::after { content: ""; position: absolute; top: 0; left: -40%; width: 40%; height: 100%; border-radius: 99px; background: var(--accent); animation: cfg-progress-slide 1s infinite linear; }
+@keyframes cfg-progress-slide { to { left: 100%; } }
 .settings-content input[type=text], .settings-content input[type=password], .settings-content select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 13px; }
 .settings-content .input-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .settings-content .input-row label { font-size: 12px; color: var(--muted-2); min-width: 80px; flex-shrink: 0; }

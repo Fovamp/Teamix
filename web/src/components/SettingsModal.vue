@@ -91,11 +91,13 @@ async function renderProjects() {
       h += '<div style="display:flex;gap:6px;align-items:center"><button class="btn sm" data-proj-scan="' + escAttr(p.name) + '" style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:11px;cursor:pointer">\u91cd\u65b0\u626b\u63cf</button>'
       h += '<button class="btn danger sm" data-proj-del="' + escAttr(p.name) + '" style="padding:4px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button></div>'
       h += '</div>'
+      h += '<div class="cfg-progress" id="proj-bar-' + escAttr(p.name) + '" style="display:none"><div class="cfg-progress__bar"></div><span>\u6b63\u5728\u62c9\u53d6\u4ee3\u7801\u5e76\u626b\u63cf\u6a21\u5757...</span></div>'
     })
     h += '<div class="section"><div class="section-title">\u6dfb\u52a0\u9879\u76ee</div>'
     h += '<div id="proj-err" style="color:var(--danger);font-size:12px;margin-bottom:6px"></div>'
     h += '<div style="display:flex;gap:8px;margin-bottom:8px"><div style="flex:1"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u540d\u79f0</label><input id="proj-name" type="text" placeholder="mall-system" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div><div style="flex:2"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">Git \u94fe\u63a5</label><input id="proj-git" type="text" placeholder="git@github.com:team/mall-system.git" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div></div>'
     h += '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u63cf\u8ff0</label><input id="proj-desc" type="text" placeholder="\u7535\u5546\u7cfb\u7edf" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+    h += '<div class="cfg-progress" id="proj-add-bar" style="display:none"><div class="cfg-progress__bar"></div><span>\u6b63\u5728\u9a8c\u8bc1 git \u94fe\u63a5\u5e76\u62c9\u53d6\u4ee3\u7801...</span></div>'
     h += '<button class="btn primary" onclick="addProject()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0\u9879\u76ee</button></div>'
   } catch (e) {
     h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
@@ -478,7 +480,12 @@ document.addEventListener("click", (ev) => {
     ev.preventDefault()
     const name = scanBtn.getAttribute("data-proj-scan")
     if (name) {
-      postJSON("/teamix/projects/" + encodeURIComponent(name) + "/scan", {}).then(() => { refreshTab("projects") })
+      const bar = document.getElementById("proj-bar-" + name)
+      if (bar) bar.style.display = "flex"
+      postJSON("/teamix/projects/" + encodeURIComponent(name) + "/scan", {}).finally(() => {
+        if (bar) bar.style.display = "none"
+        refreshTab("projects")
+      })
     }
   }
 })
@@ -552,7 +559,9 @@ w.addProject = async function() {
   const desc = (document.getElementById("proj-desc") as HTMLInputElement)?.value.trim()
   const errEl = document.getElementById("proj-err")
   if (!name || !git) { if (errEl) errEl.textContent = "请填写项目名与 git 链接"; return }
-  if (errEl) errEl.textContent = "校验 git 链接中..."
+  const bar = document.getElementById("proj-add-bar")
+  if (errEl) errEl.textContent = ""
+  if (bar) bar.style.display = "flex"
   const t = localStorage.getItem("teamix_token")
   if (!t) return
   try {
@@ -568,6 +577,8 @@ w.addProject = async function() {
     await refreshTab("projects")
   } catch (e: any) {
     if (errEl) errEl.textContent = "添加失败: " + String(e)
+  } finally {
+    if (bar) bar.style.display = "none"
   }
 }
 function removeProject(name: string) {
