@@ -189,6 +189,46 @@ func (ts *TeamixServer) handleUserRoleUpdate(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+// POST /teamix/users/credentials {name, httpsUsername, httpsPassword} — 为已存在用户补/改 git 凭证
+func (ts *TeamixServer) handleUserCredentials(w http.ResponseWriter, r *http.Request, u *userSession) {
+	if !ts.isArchitect(u) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	var body struct {
+		Name          string `json:"name"`
+		HTTPSUsername string `json:"httpsUsername"`
+		HTTPSPassword string `json:"httpsPassword"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if ts.usersConfig().FindUser(body.Name) == nil {
+		http.Error(w, `{"error":"用户不存在"}`, http.StatusNotFound)
+		return
+	}
+	// 用户可能尚未登录过：先初始化工作区
+	if _, err := ts.InitUserWorkspace(body.Name); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	userRoot := ts.UserRoot(body.Name)
+	puc, err := teamixconfig.LoadUserConfig(userRoot)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	puc.Git.HTTPSUsername = body.HTTPSUsername
+	puc.Git.HTTPSPassword = body.HTTPSPassword
+	puc.Git.SSHKeyPath = ""
+	if err := puc.SaveUserConfig(userRoot); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
 // ── 项目管理 ──
 
 // validateGitRemote 用 git ls-remote 校验仓库链接可访问。

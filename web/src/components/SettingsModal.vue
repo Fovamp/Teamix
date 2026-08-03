@@ -1,8 +1,10 @@
 ﻿<script setup lang="ts">
 import { ref, watch, onMounted } from "vue"
 import { api } from "../api"
+import { useToast } from "../composables/useToast"
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: "close"): void }>()
+const { toast } = useToast()
 const isArch = ref(false)
 const tab = ref("keys")
 const allTabs = ["users", "projects", "keys", "mcp", "soul", "skills", "memory"]
@@ -63,8 +65,10 @@ async function renderUsers() {
       h += '<div class="card-info"><div class="card-title"><code>' + escH(u.name) + '</code>' + cur + '</div></div>'
       h += '<div style="display:flex;gap:6px;align-items:center">'
       h += '<select data-user-role="' + escAttr(u.name) + '" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="developer"' + (u.role === 'developer' ? ' selected' : '') + '>developer</option><option value="architect"' + (u.role === 'architect' ? ' selected' : '') + '>architect</option></select>'
+      h += '<button class="btn sm" data-user-edit="' + escAttr(u.name) + '" id="user-editbtn-' + escAttr(u.name) + '" style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:11px;cursor:pointer">\u7f16\u8f91</button>'
       h += '<button class="btn danger sm" data-user-del="' + escAttr(u.name) + '" style="padding:4px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>'
       h += '</div></div>'
+      h += '<div id="user-edit-' + escAttr(u.name) + '" style="display:none;padding:8px 12px;border-bottom:1px solid var(--border)"><div style="font-size:11px;color:var(--muted-2);margin-bottom:4px">Git HTTPS \u51ed\u8bc1\uff08\u8d26\u53f7 / \u8bbf\u95ee\u4ee4\u724c\uff09</div><div style="display:flex;gap:8px;margin-bottom:6px"><input id="edit-uuser-' + escAttr(u.name) + '" type="text" placeholder="\u8d26\u53f7 / oauth2" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><input id="edit-upass-' + escAttr(u.name) + '" type="password" placeholder="\u5bc6\u7801 / \u4ee4\u724c" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div><button class="btn primary sm" data-user-save-cred="' + escAttr(u.name) + '" style="padding:4px 14px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58\u51ed\u8bc1</button></div>'
     })
     h += '<div class="section"><div class="section-title">\u6dfb\u52a0\u7528\u6237</div>'
     h += '<div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px">'
@@ -478,6 +482,24 @@ document.addEventListener("click", (ev) => {
     if (name) removeUser(name)
     return
   }
+  const uEditBtn = target.closest("[data-user-edit]") as HTMLElement | null
+  if (uEditBtn) {
+    ev.preventDefault()
+    const name = uEditBtn.getAttribute("data-user-edit")
+    const box = name ? document.getElementById("user-edit-" + name) : null
+    if (box) {
+      const showing = box.style.display !== "none" && box.style.display !== ""
+      box.style.display = showing ? "none" : "block"
+      uEditBtn.textContent = showing ? "编辑" : "取消"
+    }
+    return
+  }
+  const uSaveBtn = target.closest("[data-user-save-cred]") as HTMLElement | null
+  if (uSaveBtn) {
+    ev.preventDefault()
+    const name = uSaveBtn.getAttribute("data-user-save-cred")
+    if (name) saveUserCredentials(name)
+  }
   const projBtn = target.closest("[data-proj-del]") as HTMLElement | null
   if (projBtn) {
     ev.preventDefault()
@@ -590,6 +612,20 @@ function removeUser(name: string) {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name })
   }).then(() => { refreshTab("users") })
+}
+
+// 为已存在用户补/改 git 凭证（账号或访问令牌）
+function saveUserCredentials(name: string) {
+  const user = (document.getElementById("edit-uuser-" + name) as HTMLInputElement)?.value.trim()
+  const pass = (document.getElementById("edit-upass-" + name) as HTMLInputElement)?.value || ""
+  if (!user) {
+    toast("请输入账号/令牌用户名", "error")
+    return
+  }
+  postJSON("/teamix/users/credentials", { name, httpsUsername: user, httpsPassword: pass }).then(() => {
+    toast("凭证已保存", "success")
+    refreshTab("users")
+  })
 }
 w.addProject = async function() {
   const name = (document.getElementById("proj-name") as HTMLInputElement)?.value.trim()
