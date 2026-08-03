@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"reasonix/internal/config"
 	"reasonix/internal/capabilities"
@@ -215,13 +216,23 @@ func (ts *TeamixServer) handleSkillsList(w http.ResponseWriter, r *http.Request,
 		Scope       string `json:"scope"`
 		Description string `json:"description"`
 		Source      string `json:"source"` // "global" | "user"
+		mod         int64  `json:"-"`      // 文件修改时间，用于排序
 	}
 	var out []skillView
 	for _, s := range u.ctrl.AllSkills() {
+		var mod int64
+		if s.Path != "" && s.Path != "(builtin)" {
+			if fi, err := os.Stat(s.Path); err == nil {
+				mod = fi.ModTime().Unix()
+			}
+		}
 		out = append(out, skillView{
 			Name: s.Name, Enabled: u.ctrl.SkillEnabled(s.Name), Scope: string(s.Scope), Description: s.Description, Source: string(s.Scope),
+			mod: mod,
 		})
 	}
+	// 按文件修改时间 旧→新 排序（内置 skill 无文件排最前）：新增 skill 显示在列表末尾。
+	sort.SliceStable(out, func(i, j int) bool { return out[i].mod < out[j].mod })
 	if out == nil {
 		out = []skillView{}
 	}
