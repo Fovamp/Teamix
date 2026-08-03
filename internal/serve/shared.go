@@ -59,7 +59,7 @@ func historyMessages(msgs []provider.Message) []historyMessage {
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Warn("serve: writeJSON encode failed", "err", err)
 	}

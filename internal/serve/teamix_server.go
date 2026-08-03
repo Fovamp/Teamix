@@ -143,7 +143,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		return nil, false, errors.New("name is required")
 	}
 	if ts.globalCfg != nil && !ts.globalCfg.UserExists(name) {
-		return nil, false, fmt.Errorf("user %q is not allowed (check users.yaml)", name)
+		return nil, false, fmt.Errorf("用户 %q 不在白名单中，请联系架构师在 .teamix/users.yaml 中添加后重试", name)
 	}
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
@@ -481,7 +481,7 @@ func (ts *TeamixServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
-		writeJSON(w, map[string]string{"error": "name is required"})
+		writeJSON(w, map[string]string{"error": "请输入昵称"})
 		return
 	}
 	sess, isNew, err := ts.Login(body.Name)
