@@ -40,7 +40,9 @@ function cancel() { emit("login") }
 .teamix-login-box input { width:100%;padding:10px 14px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg-2);color:var(--fg);font-size:15px;text-align:center;outline:none;margin-bottom:16px }
 .teamix-login-box input:focus { border-color:var(--accent) }
 .teamix-login-box .btn-row { display:flex;gap:8px }
-.teamix-login-box .cancel,.teamix-login-box .join { flex:1;padding:10px;border-radius:var(--radius);font-size:14px;font-weight:600;border:none;cursor:pointer }
+.teamix-login-box .cancel,.teamix-login-box .join { flex:1;padding:10px;border-radius:var(--radius);font-size:14px;font-weight:600;border:none;cursor:pointer;transition:all .12s }
 .teamix-login-box .cancel { background:var(--card);color:var(--muted);border:1px solid var(--border) }
 .teamix-login-box .join { background:var(--accent);color:#000 }
+.teamix-login-box .join:hover { background:var(--accent-strong);filter:brightness(1.15);color:#000 }
+.teamix-login-box .cancel:hover { background:var(--bg-2);border-color:var(--accent);color:var(--fg) }
 </style>
