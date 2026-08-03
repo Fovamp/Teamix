@@ -410,6 +410,17 @@ input,textarea{font:inherit;color:inherit}
 .settings-content .cfg-progress__bar { width: 140px; height: 4px; border-radius: 99px; background: var(--bg-2); overflow: hidden; position: relative; }
 .settings-content .cfg-progress__bar::after { content: ""; position: absolute; top: 0; left: -40%; width: 40%; height: 100%; border-radius: 99px; background: var(--accent); animation: cfg-progress-slide 1s infinite linear; }
 @keyframes cfg-progress-slide { to { left: 100%; } }
+/* 项目服务明细展开列表 */
+.settings-content .cfg-svc-list { padding: 4px 12px 10px; border-bottom: 1px solid var(--border); }
+.settings-content .cfg-svc-head { font-size: 11px; font-weight: 600; color: var(--fg-2); padding: 4px 0 6px; }
+.settings-content .cfg-svc-empty { font-size: 12px; color: var(--muted-2); padding: 6px 0; }
+.settings-content .cfg-svc-row { display: flex; align-items: center; gap: 10px; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+.settings-content .cfg-svc-row:hover { background: var(--bg-2); }
+.settings-content .cfg-svc-name { font-weight: 600; min-width: 180px; }
+.settings-content .cfg-svc-type { font-size: 10px; padding: 0 6px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); min-width: 54px; text-align: center; }
+.settings-content .cfg-svc-port { font-family: var(--mono); color: var(--muted-2); min-width: 60px; }
+.settings-content .cfg-svc-dir { font-family: var(--mono); font-size: 11px; color: var(--muted-2); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-content .cfg-svc-startup { font-family: var(--mono); font-size: 11px; color: var(--fg-2); }
 .settings-content input[type=text], .settings-content input[type=password], .settings-content select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 13px; }
 .settings-content .input-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .settings-content .input-row label { font-size: 12px; color: var(--muted-2); min-width: 80px; flex-shrink: 0; }

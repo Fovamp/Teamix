@@ -88,9 +88,11 @@ async function renderProjects() {
     projects.forEach((p: any) => {
       h += '<div class="card" style="flex-direction:row;align-items:center;justify-content:space-between;padding:8px 12px">'
       h += '<div class="card-info"><div class="card-title">' + escH(p.name) + ' <span style="font-size:10px;color:var(--muted-2)">' + (p.serviceCount || 0) + ' \u4e2a\u670d\u52a1</span></div><div class="card-sub" style="font-size:11px;color:var(--muted-2)">' + escH(p.git) + (p.description ? ' \u00b7 ' + escH(p.description) : '') + '</div></div>'
-      h += '<div style="display:flex;gap:6px;align-items:center"><button class="btn sm" data-proj-scan="' + escAttr(p.name) + '" style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:11px;cursor:pointer">\u91cd\u65b0\u626b\u63cf</button>'
+      h += '<div style="display:flex;gap:6px;align-items:center"><button class="btn sm" data-proj-expand="' + escAttr(p.name) + '" id="proj-exp-' + escAttr(p.name) + '" style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:11px;cursor:pointer">\u5c55\u5f00</button>'
+      h += '<button class="btn sm" data-proj-scan="' + escAttr(p.name) + '" style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:11px;cursor:pointer">\u91cd\u65b0\u626b\u63cf</button>'
       h += '<button class="btn danger sm" data-proj-del="' + escAttr(p.name) + '" style="padding:4px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button></div>'
       h += '</div>'
+      h += '<div class="cfg-svc-list" id="proj-svc-' + escAttr(p.name) + '" style="display:none"></div>'
       h += '<div class="cfg-progress" id="proj-bar-' + escAttr(p.name) + '" style="display:none"><div class="cfg-progress__bar"></div><span>\u6b63\u5728\u62c9\u53d6\u4ee3\u7801\u5e76\u626b\u63cf\u6a21\u5757...</span></div>'
     })
     h += '<div class="section"><div class="section-title">\u6dfb\u52a0\u9879\u76ee</div>'
@@ -487,6 +489,13 @@ document.addEventListener("click", (ev) => {
         refreshTab("projects")
       })
     }
+    return
+  }
+  const expBtn = target.closest("[data-proj-expand]") as HTMLElement | null
+  if (expBtn) {
+    ev.preventDefault()
+    const name = expBtn.getAttribute("data-proj-expand")
+    if (name) toggleProjectServices(name, expBtn)
   }
 })
 // 角色切换下拉 change 事件委托
@@ -589,6 +598,40 @@ function removeProject(name: string) {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name })
   }).then(() => { refreshTab("projects") })
+}
+
+// 展开/收起项目的服务明细（首次展开拉取 /teamix/projects/{name}/services）。
+function toggleProjectServices(name: string, btn: HTMLElement) {
+  const box = document.getElementById("proj-svc-" + name)
+  if (!box) return
+  if (box.style.display === "none" || box.style.display === "") {
+    box.style.display = "block"
+    btn.textContent = "收起"
+    if (box.innerHTML === "") {
+      const t = localStorage.getItem("teamix_token")
+      fetch("/teamix/projects/" + encodeURIComponent(name) + "/services" + (t ? "?token=" + encodeURIComponent(t) : ""))
+        .then(r => r.json()).then((list: any[]) => {
+          if (!Array.isArray(list) || list.length === 0) {
+            box.innerHTML = '<div class="cfg-svc-empty">该项目未配置服务（可点\u201c重新扫描\u201d识别模块）</div>'
+            return
+          }
+          let h = '<div class="cfg-svc-head">共 ' + list.length + ' 个服务</div>'
+          list.forEach((s: any) => {
+            h += '<div class="cfg-svc-row"><span class="cfg-svc-name">' + escH(s.name) + '</span>'
+            h += '<span class="cfg-svc-type">' + escH(s.type || "-") + '</span>'
+            h += '<span class="cfg-svc-port">' + (s.port ? ":" + s.port : "") + '</span>'
+            h += '<span class="cfg-svc-dir">' + escH(s.dir || "") + '</span>'
+            h += '<span class="cfg-svc-startup">' + escH(s.startup || "") + '</span></div>'
+          })
+          box.innerHTML = h
+        }).catch(() => {
+          box.innerHTML = '<div class="cfg-svc-empty">加载失败</div>'
+        })
+    }
+  } else {
+    box.style.display = "none"
+    btn.textContent = "展开"
+  }
 }
 w.addSkill = async function() {
   const name = (document.getElementById("skill-name") as HTMLInputElement)?.value.trim()
