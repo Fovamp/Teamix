@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"reasonix/internal/config"
 	"reasonix/internal/capabilities"
 	"reasonix/internal/keypool"
+	"reasonix/internal/teamixconfig"
 )
 
 // Configuration, MCP, Skills, and Secrets management handlers.
@@ -171,6 +173,8 @@ func (ts *TeamixServer) handleMCPServers(w http.ResponseWriter, r *http.Request,
 		Error     string     `json:"error"`
 		Source    string     `json:"source"` // "global" | "user"
 	}
+	// 真实来源：name 在公共 mcp.json 中 → global，否则 user（私有）。
+	global := ts.loadGlobalMCPServers()
 	var out []serverView
 	host := u.ctrl.Host()
 	if host != nil {
@@ -179,13 +183,21 @@ func (ts *TeamixServer) handleMCPServers(w http.ResponseWriter, r *http.Request,
 			for _, t := range s.ToolList {
 				tools = append(tools, toolInfo{Name: t.Name, Description: t.Description})
 			}
+			src := "user"
+			if _, isGlobal := global[s.Name]; isGlobal {
+				src = "global"
+			}
 			out = append(out, serverView{
-				Name: s.Name, Transport: s.Transport, Tools: s.Tools, ToolList: tools, Status: "connected", Source: "global",
+				Name: s.Name, Transport: s.Transport, Tools: s.Tools, ToolList: tools, Status: "connected", Source: src,
 			})
 		}
 		for _, f := range host.Failures() {
+			src := "user"
+			if _, isGlobal := global[f.Name]; isGlobal {
+				src = "global"
+			}
 			out = append(out, serverView{
-				Name: f.Name, Transport: f.Transport, Status: "failed", Error: f.Error,
+				Name: f.Name, Transport: f.Transport, Status: "failed", Error: f.Error, Source: src,
 			})
 		}
 	}
@@ -219,38 +231,49 @@ func (ts *TeamixServer) handleSkillsList(w http.ResponseWriter, r *http.Request,
 
 func (ts *TeamixServer) handleMCPAdd(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
-		Name      string   `json:"name"`
-		Command   string   `json:"command"`
-		Args      []string `json:"args"`
-		Transport string   `json:"transport"`
-		Scope     string   `json:"scope"` // "private" (default) | "global"
+		Name      string          `json:"name"`
+		Command   string          `json:"command"`
+		Args      json.RawMessage `json:"args"` // string 或 []string 均兼容
+		Transport string          `json:"transport"`
+		Scope     string          `json:"scope"` // "private" (default) | "global"
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	if !safeTokenName(body.Name) {
+		http.Error(w, `{"error":"invalid MCP name (letters, digits, _ - . only)"}`, http.StatusBadRequest)
+		return
+	}
+	args := parseMCPArgs(body.Args)
 	if body.Scope == "global" {
 		if !ts.isArchitect(u) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		if err := ts.saveGlobalMCP(body.Name, body.Command, body.Args, body.Transport); err != nil {
+		if err := ts.saveGlobalMCP(body.Name, body.Command, args, body.Transport); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		// Broadcast to all online users
 		ts.broadcastMCP(config.PluginEntry{
-			Name: body.Name, Type: body.Transport, Command: body.Command, Args: body.Args,
+			Name: body.Name, Type: body.Transport, Command: body.Command, Args: args,
 		})
 		writeJSON(w, map[string]any{"ok": true, "scope": "global"})
 		return
 	}
 	// Private scope (default)
-	if body.Scope != "global" && body.Scope != "" && !ts.isArchitect(u) {
-		// non-architect can only add private
+	if body.Scope != "" && body.Scope != "private" {
+		http.Error(w, `{"error":"invalid scope, expect private|global"}`, http.StatusBadRequest)
+		return
+	}
+	// Persist private MCP into users/<name>/.teamix/config.yaml so it survives restart.
+	if err := ts.saveUserMCP(u, body.Name, body.Command, args, body.Transport); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	_, err := u.ctrl.AddMCPServer(config.PluginEntry{
-		Name: body.Name, Type: body.Transport, Command: body.Command, Args: body.Args,
+		Name: body.Name, Type: body.Transport, Command: body.Command, Args: args,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -259,12 +282,57 @@ func (ts *TeamixServer) handleMCPAdd(w http.ResponseWriter, r *http.Request, u *
 	writeJSON(w, map[string]any{"ok": true, "scope": "private"})
 }
 
+// parseMCPArgs accepts either a JSON string (space-separated) or a JSON array.
+func parseMCPArgs(raw json.RawMessage) []string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return strings.Fields(s)
+	}
+	var arr []string
+	if json.Unmarshal(raw, &arr) == nil {
+		return arr
+	}
+	return nil
+}
+
+
+// saveUserMCP upserts a private MCP entry into users/<name>/.teamix/config.yaml.
+func (ts *TeamixServer) saveUserMCP(u *userSession, name, command string, args []string, transport string) error {
+	uc, err := teamixconfig.LoadUserConfig(u.userRoot)
+	if err != nil {
+		return fmt.Errorf("failed to load user config: %w", err)
+	}
+	ref := teamixconfig.PluginRef{Name: name, Command: command, Args: args, Type: transport}
+	for i := range uc.MCP {
+		if uc.MCP[i].Name == name {
+			uc.MCP[i] = ref
+			return uc.SaveUserConfig(u.userRoot)
+		}
+	}
+	uc.MCP = append(uc.MCP, ref)
+	return uc.SaveUserConfig(u.userRoot)
+}
+
+// removeUserMCP removes a private MCP entry from users/<name>/.teamix/config.yaml.
+func (ts *TeamixServer) removeUserMCP(u *userSession, name string) (bool, error) {
+	uc, err := teamixconfig.LoadUserConfig(u.userRoot)
+	if err != nil {
+		return false, err
+	}
+	for i := range uc.MCP {
+		if uc.MCP[i].Name == name {
+			uc.MCP = append(uc.MCP[:i], uc.MCP[i+1:]...)
+			return true, uc.SaveUserConfig(u.userRoot)
+		}
+	}
+	return false, nil
+}
+
 
 func (ts *TeamixServer) handleMCPRemove(w http.ResponseWriter, r *http.Request, u *userSession) {
-	if !ts.isArchitect(u) {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
 	var body struct {
 		Name string `json:"name"`
 	}
@@ -272,10 +340,27 @@ func (ts *TeamixServer) handleMCPRemove(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if removed := u.ctrl.DisconnectMCPServer(body.Name); !removed {
-		// Also try removing from config
-		/* remove handled by DisconnectMCPServer */
+	// Global MCP: entry lives in public .reasonix/mcp.json — only architects may remove,
+	// and every online user must be disconnected.
+	if _, isGlobal := ts.loadGlobalMCPServers()[body.Name]; isGlobal {
+		if !ts.isArchitect(u) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if err := ts.removeGlobalMCP(body.Name); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		ts.broadcastMCPRemove(body.Name) // disconnects the caller too
+		writeJSON(w, map[string]bool{"ok": true})
+		return
 	}
+	// Private MCP: remove from user config and disconnect own connection.
+	if _, err := ts.removeUserMCP(u, body.Name); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	u.ctrl.DisconnectMCPServer(body.Name)
 	writeJSON(w, map[string]bool{"ok": true})
 }
 

@@ -31,7 +31,7 @@ func (p *Pool) Save(root string) error {
 		return err
 	}
 
-	dir := filepath.Join(root, ".teamix", "secrets")
+	dir := filepath.Join(root, ".reasonix", "secrets")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
@@ -39,10 +39,10 @@ func (p *Pool) Save(root string) error {
 	return os.WriteFile(path, data, 0600)
 }
 
-// Load reads the persisted pool from .teamix/secrets/pool.yaml.
+// Load reads the persisted pool from .reasonix/secrets/pool.yaml.
 // If the file does not exist, the pool remains empty.
 func (p *Pool) Load(root string) error {
-	path := filepath.Join(root, ".teamix", "secrets", "pool.yaml")
+	path := filepath.Join(root, ".reasonix", "secrets", "pool.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

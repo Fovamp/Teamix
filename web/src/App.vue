@@ -10,6 +10,7 @@ import BranchesModal from "./components/BranchesModal.vue"
 import ModelsModal from "./components/ModelsModal.vue"
 import WorkflowsModal from "./components/WorkflowsModal.vue"
 import SettingsModal from "./components/SettingsModal.vue"
+import ProjectModal from "./components/ProjectModal.vue"
 
 const showLogin = ref(!api.isLoggedIn())
 const showStats = ref(false)
@@ -17,6 +18,7 @@ const showBranches = ref(false)
 const showModels = ref(false)
 const showWorkflows = ref(false)
 const showSettings = ref(false)
+const showProject = ref(false)
 
 // 左右两侧拖拽竖线（resize-divider）：
 // 直接在模板中渲染，随 .app 一起挂载，无登录时序问题；
@@ -34,6 +36,11 @@ function onDividerDown(e: MouseEvent, side: 'left' | 'right') {
   const dv = document.getElementById(side === 'left' ? 'app-divider-left' : 'app-divider-right')
   if (dv) dv.classList.add('resize-divider--active')
   e.preventDefault()
+}
+
+function onProjectSelected() {
+  // 通知 RightPanel 等组件刷新文件树
+  window.dispatchEvent(new CustomEvent("teamix-project-selected"))
 }
 
 const onMove = (e: MouseEvent) => {
@@ -72,12 +79,13 @@ onUnmounted(() => {
 
     <SideBar @stats="showStats = true" @branches="showBranches = true" @models="showModels = true" @workflows="showWorkflows = true" @settings="showSettings = true" />
     <ChatArea />
-    <RightPanel />
+    <RightPanel @open-projects="showProject = true" />
     <StatsModal :visible="showStats" @close="showStats = false" />
     <BranchesModal :visible="showBranches" @close="showBranches = false" />
     <ModelsModal :visible="showModels" @close="showModels = false" />
     <WorkflowsModal :visible="showWorkflows" @close="showWorkflows = false" />
     <SettingsModal :visible="showSettings" @close="showSettings = false" />
+    <ProjectModal :visible="showProject" @close="showProject = false" @selected="onProjectSelected" />
   </div>
 </template>
 

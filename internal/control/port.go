@@ -182,6 +182,7 @@ type SessionPersistence interface {
 	Snapshot() error
 	SnapshotActivity() error
 	SessionCache() (hit, miss int)
+	SetSessionDir(dir string)
 	BeginDestroySession(sessionPath string) SessionDestroyHandle
 	CloseAfterDestroy()
 	IsDestroyingSession(sessionPath string) bool

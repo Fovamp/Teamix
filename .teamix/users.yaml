@@ -1,8 +1,0 @@
-﻿# 用户白名单，空列表 = 开放模式（允许任意用户名登录）
-users:
-  - name: chisato
-    role: architect
-  - name: alice
-    role: developer
-  - name: bob
-    role: developer

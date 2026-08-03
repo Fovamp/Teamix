@@ -33,6 +33,7 @@ type userSession struct {
 	workflow        *workflow.State
 	userRoot        string
 	selectedProject string
+	model           string // 合并后的有效默认模型（私有 > 公共 > 启动参数）
 }
 
 type TeamixServer struct {
@@ -125,7 +126,8 @@ func (ts *TeamixServer) InitUserWorkspace(name string) (string, error) {
 			"[skills]\n" +
 			"paths = [\"../../.reasonix/skills\"]\n"
 		// Inject global MCP plugins from global/.reasonix/mcp.json
-		tomlContent += ts.mcpPluginsTOML()
+		// plus user-private MCPs from users/<name>/.teamix/config.yaml
+		tomlContent += ts.mcpPluginsTOML(root)
 		if err := os.WriteFile(reasonixTOML, []byte(tomlContent), 0o644); err != nil {
 			slog.Warn("teamix: failed to write reasonix.toml", "path", reasonixTOML, "err", err)
 		}
@@ -157,8 +159,17 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 	token := teamixGenerateToken()
 	ts.keyPool.Acquire()
 	bc := NewBroadcaster()
+	// 两层配置合并：私有 preferences.model > 公共 teamix.default_model > 启动参数 modelRef
+	model := ts.modelRef
+	if uc, ucErr := teamixconfig.LoadUserConfig(userRoot); ucErr == nil {
+		if uc.Preferences.Model != "" {
+			model = uc.Preferences.Model
+		} else if ts.globalCfg != nil && ts.globalCfg.Config != nil && ts.globalCfg.Config.Teamix.DefaultModel != "" {
+			model = ts.globalCfg.Config.Teamix.DefaultModel
+		}
+	}
 	ctrl, err := boot.Build(context.Background(), boot.Options{
-		Model:         ts.modelRef,
+		Model:         model,
 		RequireKey:    true,
 		Sink:          bc,
 		Stderr:        os.Stderr,
@@ -179,6 +190,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		token:    token,
 		workflow: workflow.NewEmptyState("", ""),
 		userRoot: userRoot,
+		model:    model,
 	}
 	ts.sessions[token] = sess
 	ts.nameToTok[name] = token
@@ -248,6 +260,10 @@ func (ts *TeamixServer) RunGraceful(ctx context.Context, addr string) error {
 
 func (ts *TeamixServer) SetWorkspaceRoot(wr string) {
 	ts.workspaceRoot = wr
+	// 首次指向新工作区时自动初始化全局结构（幂等，不覆盖已有配置）。
+	if err := teamixconfig.EnsureGlobalWorkspace(wr); err != nil {
+		slog.Warn("teamix: failed to ensure global workspace", "err", err)
+	}
 	cfg, err := teamixconfig.LoadAll(ts.workspaceRoot)
 	if err != nil {
 		slog.Warn("teamix: failed to load global config", "err", err)
@@ -268,46 +284,90 @@ func (ts *TeamixServer) loadGlobalConfig() *teamixconfig.GlobalConfig {
 	return cfg
 }
 
-// mcpPluginsTOML scans global/.reasonix/mcp.json and returns TOML [[plugins]] sections.
-func (ts *TeamixServer) mcpPluginsTOML() string {
-	path := filepath.Join(ts.workspaceRoot, ".reasonix", "mcp.json")
+// mcpServerSpec 描述一个 MCP 服务器（公共 mcp.json / 私有 config.yaml 通用）。
+type mcpServerSpec struct {
+	Command string   `json:"command" yaml:"command"`
+	Args    []string `json:"args" yaml:"args"`
+	Type    string   `json:"type" yaml:"type"`
+}
+
+// loadGlobalMCPServers 读取公共 .reasonix/mcp.json 的 MCP 服务器列表。
+func (ts *TeamixServer) loadGlobalMCPServers() map[string]mcpServerSpec {
+	out := make(map[string]mcpServerSpec)
+	path := ts.globalMCPPath()
 	f, err := os.Open(path)
 	if err != nil {
-		return "" // no global MCP configured
+		return out
 	}
 	defer f.Close()
 	var doc struct {
-		MCPServers map[string]struct {
-			Command string   `json:"command"`
-			Args    []string `json:"args"`
-			Type    string   `json:"type"`
-		} `json:"mcpServers"`
+		MCPServers map[string]mcpServerSpec `json:"mcpServers"`
 	}
 	if err := json.NewDecoder(f).Decode(&doc); err != nil {
-		return ""
+		return out
 	}
-	var sb strings.Builder
 	for name, srv := range doc.MCPServers {
-		typ := srv.Type
-		if typ == "" {
-			typ = "stdio"
+		out[name] = srv
+	}
+	return out
+}
+
+// loadUserMCPServers 读取用户私有 config.yaml 的 MCP 列表。
+func loadUserMCPServers(userRoot string) map[string]mcpServerSpec {
+	out := make(map[string]mcpServerSpec)
+	uc, err := teamixconfig.LoadUserConfig(userRoot)
+	if err != nil {
+		return out
+	}
+	for _, m := range uc.MCP {
+		out[m.Name] = mcpServerSpec{Command: m.Command, Args: m.Args, Type: m.Type}
+	}
+	return out
+}
+
+// mcpPluginsTOML 生成用户 reasonix.toml 的 [[plugins]] 段。
+// 合并规则：公共 mcp.json + 私有 config.yaml；同名以私有为准（覆盖公共）。
+func (ts *TeamixServer) mcpPluginsTOML(userRoot string) string {
+	global := ts.loadGlobalMCPServers()
+	private := loadUserMCPServers(userRoot)
+	var sb strings.Builder
+	for name, srv := range global {
+		if _, override := private[name]; override {
+			continue // 被私有同名覆盖
 		}
-		sb.WriteString("\n[[plugins]]\n")
-		sb.WriteString(fmt.Sprintf("name = \"%s\"\n", name))
-		sb.WriteString(fmt.Sprintf("type = \"%s\"\n", typ))
-		sb.WriteString(fmt.Sprintf("command = \"%s\"\n", srv.Command))
-		if len(srv.Args) > 0 {
-			sb.WriteString("args = [")
-			for i, a := range srv.Args {
-				if i > 0 {
-					sb.WriteString(", ")
-				}
-				sb.WriteString(fmt.Sprintf("\"%s\"", a))
-			}
-			sb.WriteString("]\n")
-		}
+		writeMCPServerTOML(&sb, name, srv)
+	}
+	for name, srv := range private {
+		writeMCPServerTOML(&sb, name, srv)
 	}
 	return sb.String()
+}
+
+func writeMCPServerTOML(sb *strings.Builder, name string, srv mcpServerSpec) {
+	typ := srv.Type
+	if typ == "" {
+		typ = "stdio"
+	}
+	sb.WriteString("\n[[plugins]]\n")
+	sb.WriteString(fmt.Sprintf("name = \"%s\"\n", tomlStr(name)))
+	sb.WriteString(fmt.Sprintf("type = \"%s\"\n", tomlStr(typ)))
+	sb.WriteString(fmt.Sprintf("command = \"%s\"\n", tomlStr(srv.Command)))
+	if len(srv.Args) > 0 {
+		sb.WriteString("args = [")
+		for i, a := range srv.Args {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(fmt.Sprintf("\"%s\"", tomlStr(a)))
+		}
+		sb.WriteString("]\n")
+	}
+}
+
+// tomlStr 转义 TOML 基础字符串内的特殊字符，防止畸形输入破坏生成的 reasonix.toml。
+func tomlStr(s string) string {
+	r := strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "\n", "\\n", "\r", "\\r", "\t", "\\t")
+	return r.Replace(s)
 }
 
 func (ts *TeamixServer) ReloadModules() {

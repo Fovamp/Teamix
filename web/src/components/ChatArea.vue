@@ -121,6 +121,7 @@ onMounted(() => {
     showTodoPanel.value = false
   })
   window.addEventListener("workflow-changed", loadWorkflow)
+  window.addEventListener("teamix-project-selected", () => { fetchNotifications(); fetchStatus() })
   window.addEventListener("workflow-selected", ((e: CustomEvent) => {
     const name = e.detail || ""
     wfName.value = name || "-"
@@ -706,7 +707,10 @@ function loadSessions() {
 
 // ── Notifications ──
 function fetchNotifications() {
-  api.notifications().then(data => {
+  api.status().then((st: any) => {
+    const project = (st && st.selectedProject) || ""
+    return api.notifications(project)
+  }).then((data: any) => {
     if (!Array.isArray(data)) return
     window.dispatchEvent(new CustomEvent('notifications-update', { detail: data }))
   }).catch(() => { })

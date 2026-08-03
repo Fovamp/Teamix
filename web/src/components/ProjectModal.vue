@@ -1,0 +1,209 @@
+<script setup lang="ts">
+import { ref, watch } from "vue"
+import { api } from "../api"
+
+const props = defineProps<{ visible: boolean }>()
+const emit = defineEmits<{ (e: "close"): void; (e: "selected"): void }>()
+
+const projects = ref<any[]>([])
+const currentProject = ref("")
+const loading = ref(false)
+const err = ref("")
+const working = ref(false)
+
+// 凭证步骤
+const credStep = ref(false)
+const targetProject = ref("")
+const credMode = ref<"ssh" | "https">("ssh")
+const sshKeyPath = ref("")
+const httpsUser = ref("")
+const httpsPass = ref("")
+const credErr = ref("")
+const configured = ref(false)
+
+async function load() {
+  loading.value = true
+  err.value = ""
+  try {
+    const [ps, st, creds] = await Promise.all([
+      api.projects(),
+      api.status().catch(() => null),
+      api.gitCredentials().catch(() => null),
+    ])
+    projects.value = ps || []
+    currentProject.value = (st && st.selectedProject) || ""
+    if (creds) {
+      configured.value = !!creds.configured
+      sshKeyPath.value = creds.sshKeyPath || ""
+      httpsUser.value = creds.httpsUsername || ""
+      if (creds.sshKeyPath) credMode.value = "ssh"
+      else if (creds.httpsUsername) credMode.value = "https"
+    }
+  } catch (e: any) {
+    err.value = e.message || "加载失败"
+  } finally {
+    loading.value = false
+  }
+}
+
+watch(() => props.visible, (v) => {
+  if (v) {
+    credStep.value = false
+    targetProject.value = ""
+    credErr.value = ""
+    load()
+  }
+})
+
+async function doSelect(project: string) {
+  working.value = true
+  credErr.value = ""
+  err.value = ""
+  try {
+    const r = await api.projectSelect(project)
+    if (r && r.needCredentials) {
+      targetProject.value = project
+      credStep.value = true
+      return
+    }
+    if (r && r.ok) {
+      currentProject.value = project
+      emit("selected")
+      emit("close")
+      return
+    }
+    err.value = (r && r.error) || "选择项目失败"
+  } catch (e: any) {
+    err.value = e.message || "选择项目失败"
+  } finally {
+    working.value = false
+  }
+}
+
+async function saveCredentials() {
+  working.value = true
+  credErr.value = ""
+  try {
+    const body = credMode.value === "ssh"
+      ? { sshKeyPath: sshKeyPath.value.trim() }
+      : { httpsUsername: httpsUser.value.trim(), httpsPassword: httpsPass.value }
+    const r = await api.gitCredentialsSave(body)
+    if (r && r.ok === false) {
+      credErr.value = r.error || "凭证校验失败"
+      return
+    }
+    // 保存成功 → 继续选择目标项目
+    if (targetProject.value) {
+      credStep.value = false
+      await doSelect(targetProject.value)
+    }
+  } catch (e: any) {
+    credErr.value = e.message || "保存凭证失败"
+  } finally {
+    working.value = false
+  }
+}
+
+function close() {
+  if (working.value) return
+  emit("close")
+}
+</script>
+
+<template>
+  <div class="modal-overlay" v-if="visible" @click.self="close" style="z-index:200">
+    <div class="modal" style="width:min(560px,92vw);max-height:75vh;display:flex;flex-direction:column">
+      <div class="modal__head" style="flex-shrink:0">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v10l7 4V11z"/><path d="M3 7l7-4 7 4-7 4z"/><path d="M17 7v10"/><path d="M10 11v10"/><path d="M17 11h4v6h-4"/></svg>
+        <span>选择项目</span>
+        <span class="modal__close" @click="close">&times;</span>
+      </div>
+
+      <div style="flex:1;min-height:0;overflow-y:auto;padding:12px">
+        <div v-if="loading" style="color:var(--muted-2);text-align:center;padding:24px;font-size:13px">加载项目列表...</div>
+        <div v-else-if="err" style="color:var(--danger);padding:12px;font-size:13px">{{ err }}</div>
+
+        <!-- 项目列表 -->
+        <template v-else>
+          <div v-if="projects.length === 0" style="color:var(--muted-2);text-align:center;padding:24px;font-size:13px">
+            暂无可用项目（请架构师在 .teamix/projects.yaml 中配置）
+          </div>
+          <div v-for="p in projects" :key="p.name" class="proj-card"
+            :class="{ 'proj-card--active': p.name === currentProject, 'proj-card--working': working }"
+            @click="working ? null : doSelect(p.name)">
+            <div class="proj-card__main">
+              <div class="proj-card__name">{{ p.name }}
+                <span v-if="p.name === currentProject" class="proj-card__cur">当前</span>
+              </div>
+              <div class="proj-card__desc">{{ p.description || "（无描述）" }}</div>
+            </div>
+            <div class="proj-card__meta">
+              <span>{{ p.serviceCount }} 个服务</span>
+              <span v-if="p.git" class="proj-card__git">{{ p.git }}</span>
+            </div>
+          </div>
+        </template>
+
+        <!-- 凭证表单 -->
+        <div v-if="credStep" class="cred-box">
+          <div class="cred-box__title">配置 Git 凭证（{{ targetProject }}）</div>
+          <div class="cred-box__mode">
+            <button class="cred-mode-btn" :class="{ active: credMode === 'ssh' }" @click="credMode = 'ssh'">SSH Key</button>
+            <button class="cred-mode-btn" :class="{ active: credMode === 'https' }" @click="credMode = 'https'">HTTPS 账号</button>
+          </div>
+
+          <div v-if="credMode === 'ssh'" class="cred-box__row">
+            <label>SSH 私钥路径</label>
+            <input v-model="sshKeyPath" type="text" placeholder="C:\Users\you\.ssh\id_ed25519 或 ~/.ssh/id_ed25519" />
+          </div>
+          <template v-else>
+            <div class="cred-box__row">
+              <label>用户名</label>
+              <input v-model="httpsUser" type="text" placeholder="git 用户名" />
+            </div>
+            <div class="cred-box__row">
+              <label>密码 / Token</label>
+              <input v-model="httpsPass" type="password" placeholder="密码或个人访问令牌" />
+            </div>
+          </template>
+
+          <div v-if="credErr" class="cred-box__err">{{ credErr }}</div>
+          <div class="cred-box__actions">
+            <button class="btn" @click="credStep = false">取消</button>
+            <button class="btn primary" :disabled="working" @click="saveCredentials">
+              {{ working ? "处理中..." : "保存并选择项目" }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.proj-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 12px 14px; margin-bottom: 8px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--card); cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.proj-card:hover { border-color: var(--accent); background: var(--card-hover); }
+.proj-card--active { border-color: var(--accent); }
+.proj-card--working { opacity: .6; pointer-events: none; }
+.proj-card__name { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.proj-card__cur { font-size: 10px; padding: 1px 6px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+.proj-card__desc { font-size: 12px; color: var(--muted-2); margin-top: 2px; }
+.proj-card__meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 11px; color: var(--muted-2); flex-shrink: 0; }
+.proj-card__git { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+
+.cred-box { margin-top: 12px; padding: 14px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--bg-2); }
+.cred-box__title { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.cred-box__mode { display: flex; gap: 6px; margin-bottom: 10px; }
+.cred-mode-btn { padding: 4px 12px; font-size: 12px; border: 1px solid var(--border); border-radius: 99px; background: var(--bg); color: var(--muted); cursor: pointer; }
+.cred-mode-btn.active { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+.cred-box__row { margin-bottom: 8px; }
+.cred-box__row label { display: block; font-size: 11px; color: var(--muted-2); margin-bottom: 3px; }
+.cred-box__row input { width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); font-size: 12px; }
+.cred-box__err { color: var(--danger); font-size: 12px; margin: 6px 0; }
+.cred-box__actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+</style>

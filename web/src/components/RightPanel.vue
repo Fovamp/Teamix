@@ -2,18 +2,29 @@
 import { ref, watch, onMounted, onUnmounted } from "vue"
 import { api } from "../api"
 
+const emit = defineEmits<{ (e: "open-projects"): void }>()
+
 const showRp = ref(true)
 const treeData = ref<any>(null)
 const notifications = ref<any[]>([])
 const notiCollapsed = ref(true)
 const projectName = ref("项目文件")
+const currentProject = ref("")
 
 onMounted(async () => {
   try {
     treeData.value = await api.tree()
     updateProjectName()
   } catch {}
+  try {
+    const st = await api.status()
+    if (st && st.selectedProject) {
+      currentProject.value = st.selectedProject
+      projectName.value = st.selectedProject
+    }
+  } catch {}
   window.addEventListener("notifications-update", onNotiUpdate as any)
+  window.addEventListener("teamix-project-selected", reloadTree as any)
   const saved = localStorage.getItem("rp_noti_collapsed")
   if (saved !== null) notiCollapsed.value = saved === "true"
 
@@ -56,7 +67,20 @@ watch(treeData, () => { setTimeout(loadFileTree, 50) })
 
 onUnmounted(() => {
   window.removeEventListener("notifications-update", onNotiUpdate as any)
+  window.removeEventListener("teamix-project-selected", reloadTree as any)
 })
+
+async function reloadTree() {
+  try {
+    treeData.value = await api.tree()
+    updateProjectName()
+    const st = await api.status().catch(() => null)
+    if (st && st.selectedProject) {
+      currentProject.value = st.selectedProject
+      projectName.value = st.selectedProject
+    }
+  } catch {}
+}
 
 function onNotiUpdate(e: CustomEvent) {
   if (Array.isArray(e.detail)) notifications.value = e.detail
@@ -80,7 +104,15 @@ function notiBadgeClass() {
 }
 
 function markRead(n: any) {
-  if (!n.read && n.id) { n.read = true }
+  if (!n.read && n.id) {
+    n.read = true
+    const t = localStorage.getItem("teamix_token")
+    if (!t) return
+    fetch("/teamix/notifications/read?token=" + encodeURIComponent(t), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: n.id, project: n.project || currentProject.value || "" })
+    }).catch(() => {})
+  }
 }
 
 // ── File tree: recursive DOM approach matching original rn() + tog() ──
@@ -210,7 +242,10 @@ function openFilePreview(path: string) {
 
 <template>
   <aside class="right-panel" v-if="showRp" id="right-panel">
-    <div class="right-panel__title" id="rp-project-name">{{ projectName }}</div>
+    <div class="right-panel__title" id="rp-project-name" style="cursor:pointer" title="点击选择项目" @click="emit('open-projects')">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:6px"><path d="M3 7v10l7 4V11z"/><path d="M3 7l7-4 7 4-7 4z"/><path d="M17 7v10"/><path d="M10 11v10"/><path d="M17 11h4v6h-4"/></svg>
+      {{ currentProject || "选择项目" }} <span style="color:var(--muted-2);font-size:10px;margin-left:4px">切换</span>
+    </div>
     <div class="right-panel__tree" id="rp-tree" style="flex:3;min-height:80px;padding:4px 0;overflow-y:auto;font-size:12px">
       <div v-if="!treeData" style="padding:16px;font-size:12px;color:var(--muted-2)">加载文件树...</div>
     </div>

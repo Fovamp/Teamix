@@ -161,7 +161,7 @@ func (ts *TeamixServer) handleSubmit(w http.ResponseWriter, r *http.Request, u *
 					seen := make(map[string]bool)
 					for _, line := range strings.Split(string(out), "\n") {
 						user := strings.TrimSpace(line)
-						if user == "" || seen[user] {
+						if user == "" || seen[user] || !safeTokenName(user) {
 							continue
 						}
 						seen[user] = true
@@ -170,17 +170,23 @@ func (ts *TeamixServer) handleSubmit(w http.ResponseWriter, r *http.Request, u *
 							ID:          fmt.Sprintf("n%d", time.Now().UnixNano()),
 							FromUser:    u.name,
 							ToUser:      user,
+							Project:     u.selectedProject,
 							Message:     msg,
 							FileChanged: cf,
 							Read:        false,
 							Time:        time.Now(),
 						}
-						notis := ts.loadNotifications(user)
-						if len(notis) > 100 {
-							notis = notis[len(notis)-100:]
+						appendNoti := func(list []notification) []notification {
+							if len(list) > 100 {
+								list = list[len(list)-100:]
+							}
+							return append(list, noti)
 						}
-						notis = append(notis, noti)
-						ts.saveNotifications(user, notis)
+						if u.selectedProject != "" {
+							ts.saveNotificationsProject(user, u.selectedProject, appendNoti(ts.loadNotificationsProject(user, u.selectedProject)))
+						} else {
+							ts.saveNotifications(user, appendNoti(ts.loadNotifications(user)))
+						}
 					}
 				}
 			}

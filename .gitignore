@@ -39,19 +39,17 @@ node_modules/
 .pnpm-store/
 .npm/
 
-# Project-local Reasonix state; keep the checked-in review command.
-/.reasonix/*
-!/.reasonix/commands/
-!/.reasonix/commands/review.md
+# Project-local Reasonix state — auto-generated per selected workspace
+# (--project), never part of the platform source.
+/.reasonix/
+
+# Teamix workspace runtime data — auto-generated per selected workspace,
+# never part of the platform source (config.yaml/users.yaml/projects.yaml,
+# workflows/, notifications/, secrets/, capabilities/ all live there).
+/.teamix/
 
 # CodeGraph per-project index
 .codegraph/
-
-# Teamix project secrets
-.teamix/secrets/
-
-# Teamix runtime data
-.teamix/notifications/
 
 # Editor / OS
 .DS_Store

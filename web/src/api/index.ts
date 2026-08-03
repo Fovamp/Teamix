@@ -44,7 +44,9 @@ export function currentUser(): string {
 
 // Generic fetch helpers
 async function get(path: string): Promise<any> {
-  const r = await fetch(path + authQuery(), { headers: authHeaders() })
+  const t = token()
+  const sep = path.includes("?") ? "&" : "?"
+  const r = await fetch(path + (t ? sep + "token=" + encodeURIComponent(t) : ""), { headers: authHeaders() })
   if (!r.ok) { if (r.status === 401) { localStorage.removeItem('teamix_token'); localStorage.removeItem('teamix_user'); location.reload() }; throw new Error(await r.text()) }
   return r.json()
 }
@@ -96,9 +98,24 @@ export const api = {
 
   // MCP Servers
   mcpServers: (): Promise<import("../types").MCPServer[]> => get("/teamix/mcp/servers"),
+  mcpAdd: (body: { name: string; command: string; transport?: string; args?: string[]; scope?: string }): Promise<any> =>
+    post("/teamix/mcp/add", body),
+  mcpRemove: (name: string): Promise<any> => post("/teamix/mcp/remove", { name }),
+
+  // Projects (selection + git credentials)
+  projects: (): Promise<Array<{ name: string; git: string; description: string; serviceCount: number }>> => get("/teamix/projects"),
+  projectServices: (name: string): Promise<any> => get("/teamix/projects/" + encodeURIComponent(name) + "/services"),
+  projectSelect: (project: string): Promise<any> => post("/teamix/projects/select", { project }),
+  gitCredentials: (): Promise<{ sshKeyPath: string; httpsUsername: string; configured: boolean }> => get("/teamix/git/credentials"),
+  gitCredentialsSave: (body: { sshKeyPath?: string; httpsUsername?: string; httpsPassword?: string }): Promise<any> =>
+    post("/teamix/git/credentials", body),
+  gitValidate: (): Promise<any> => post("/teamix/git/validate", {}),
 
   // Notifications
-  notifications: (): Promise<import("../types").Notification[]> => get("/teamix/notifications"),
+  notifications: (project?: string): Promise<import("../types").Notification[]> =>
+    get("/teamix/notifications" + (project ? "?project=" + encodeURIComponent(project) : "")),
+  notificationRead: (id: string, project?: string): Promise<any> =>
+    post("/teamix/notifications/read", { id, project: project || "" }),
 
   // Workflow
   workflow: (): Promise<import("../types").WorkflowState> => get("/teamix/workflow"),

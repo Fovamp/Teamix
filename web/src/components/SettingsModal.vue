@@ -38,7 +38,7 @@ async function renderKeys() {
   const resp = await fetch("/teamix/secrets/status" + q)
   const data = await resp.json()
   const keys = data.keyList || []
-  let h = '<div class="section"><h3>\ud83d\udd11 \u5bc6\u94a5\u6c60</h3><p class="desc">\u56e2\u961f\u5171\u4eab\u7684 API Key\uff0c\u8d1f\u8f7d\u5747\u8861\u5206\u53d1\u5230\u6bcf\u4e2a Agent \u4f1a\u8bdd\u3002\u5bc6\u94a5\u4ec5\u5b58\u50a8\u5728\u670d\u52a1\u5668\u672c\u5730 .teamix/secrets/ \u76ee\u5f55\u3002</p></div><div id="key-render">'
+  let h = '<div class="section"><h3>\ud83d\udd11 \u5bc6\u94a5\u6c60</h3><p class="desc">\u56e2\u961f\u5171\u4eab\u7684 API Key\uff0c\u8d1f\u8f7d\u5747\u8861\u5206\u53d1\u5230\u6bcf\u4e2a Agent \u4f1a\u8bdd\u3002\u5bc6\u94a5\u4ec5\u5b58\u50a8\u5728\u670d\u52a1\u5668\u672c\u5730 .reasonix/secrets/ \u76ee\u5f55\u3002</p></div><div id="key-render">'
   h += '<div class="section"><div class="section-title">\u8d1f\u8f7d\u7b56\u7565</div>'
   h += '<div class="card" style="flex-direction:row;align-items:center;justify-content:space-between;padding:8px 12px"><div class="card-info"><div class="card-title">\u5206\u914d\u65b9\u5f0f</div><div class="card-sub">\u73af\u5883\u53d8\u91cf: <code>' + (data.target || '-') + '</code></div></div>'
   h += '<select id="key-strategy-select" style="width:140px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;cursor:pointer">'
@@ -52,7 +52,7 @@ async function renderKeys() {
     h += '<div class="card" style="flex-direction:row;align-items:center;justify-content:space-between;padding:8px 12px">'
     h += '<div class="card-info"><div class="card-title"><code>' + k.envName + '</code></div><div class="card-sub">\u4f7f\u7528 ' + k.useCount + ' \u6b21</div></div>'
     h += '<span class="badge ' + (k.enabled ? "on" : "off") + '" style="padding:1px 8px;border-radius:99px;font-size:10px;font-weight:500;">' + (k.enabled ? "\u5df2\u542f\u7528" : "\u5df2\u7981\u7528") + '</span>'
-    h += '<button class="btn danger sm" onclick="deleteKey(\'' + k.envName.replace(/'/g, "\\'") + '\')" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button></div>'
+    h += '<button class="btn danger sm" data-key-del="' + escAttr(k.envName) + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button></div>'
   })
   h += '<div class="section"><div class="section-title">\u6dfb\u52a0\u5bc6\u94a5</div>'
   h += '<div style="display:flex;gap:8px;margin-bottom:8px"><input id="new-key-env" type="text" placeholder="\u73af\u5883\u53d8\u91cf\u540d" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><input id="new-key-value" type="password" placeholder="API Key" style="flex:2;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
@@ -71,6 +71,12 @@ async function renderMCP() {
       const resp = await fetch("/teamix/mcp/servers" + q)
       servers = await resp.json()
     } catch (e) { }
+    let role = ""
+    try {
+      const rr = await fetch("/teamix/user/role" + q)
+      role = ((await rr.json()).role || "") as string
+    } catch (e) { }
+    const isArch = role === "architect"
     if (servers.length === 0) {
       h += '<div style="color:var(--muted-2);text-align:center;padding:20px;font-size:13px">\u5c1a\u65e0 MCP \u670d\u52a1\u5668</div>'
     }
@@ -81,13 +87,16 @@ async function renderMCP() {
             (t.description ? '<br><span style="color:var(--muted-2);font-size:11px">' + escH(t.description) + '</span>' : '') + '</div>').join('')
         : ''
       const isFailed = s.status === "failed"
+      const srcBadge = s.source === "global"
+        ? '<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(76,175,80,.15);color:#4caf50">\u5168\u5c40</span>'
+        : '<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(150,150,150,.15);color:var(--muted-2)">\u79c1\u6709</span>'
       h += '<div class="card" style="flex-direction:column;align-items:stretch" data-open="false">'
       h += '<div class="card-head" onclick="const c=this.closest(\'.card\');const b=c.querySelector(\'.card-body\');const o=c.dataset.open===\'true\';c.dataset.open=o?\'false\':\'true\';b.style.display=o?\'none\':\'\'">'
       h += '<span class="chev" style="color:var(--muted-2);transition:transform .15s;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>'
-      h += '<div class="card-main"><div class="card-title"><span class="name"><code>' + escH(s.name) + '</code></span></div>'
+      h += '<div class="card-main"><div class="card-title"><span class="name"><code>' + escH(s.name) + '</code></span>' + srcBadge + '</div>'
       h += '<span class="subject">' + (s.transport || "stdio") + ' \u00b7 ' + s.tools + ' \u4e2a\u5de5\u5177' + (isFailed ? ' <span style="color:#f44336">\u79bb\u7ebf</span>' : '') + '</span></div>'
       h += '</div>'
-      h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2)">' + (isFailed && s.error ? '<span style="color:#f44336;font-size:11px">' + escH(s.error) + '</span>' : (toolHtml || '<span style="color:var(--muted-2)">\u65e0\u5de5\u5177</span>')) + '</div>'
+      h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2)">' + (isFailed && s.error ? '<span style="color:#f44336;font-size:11px">' + escH(s.error) + '</span>' : (toolHtml || '<span style="color:var(--muted-2)">\u65e0\u5de5\u5177</span>')) + '<div style="margin-top:8px;text-align:right"><button class="btn danger sm" data-mcp-remove="' + escAttr(s.name) + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u79fb\u9664</button></div></div>'
       h += '</div>'
     })
     h += '<div class="section"><div class="section-title">\u6dfb\u52a0 MCP \u670d\u52a1\u5668</div>'
@@ -95,6 +104,9 @@ async function renderMCP() {
     h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u547d\u4ee4</label><input id="mcp-cmd" type="text" placeholder="npx" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
     h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u4f20\u8f93</label><select id="mcp-transport" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="stdio">stdio</option><option value="http">http</option></select></div>'
     h += '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u53c2\u6570</label><input id="mcp-args" type="text" placeholder="-y @modelcontextprotocol/server-filesystem" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+    if (isArch) {
+      h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u8303\u56f4</label><select id="mcp-scope" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="private">\u79c1\u6709\uff08\u4ec5\u81ea\u5df1\u53ef\u7528\uff09</option><option value="global">\u5168\u5c40\uff08\u5199\u5165\u516c\u5171\u914d\u7f6e\uff0c\u5168\u5458\u53ef\u7528\uff09</option></select></div>'
+    }
     h += '<button class="btn primary" onclick="addMCPServer()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0\u670d\u52a1\u5668</button></div>'
   } catch (e: any) {
     h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25: ' + e.message + '</div>'
@@ -181,7 +193,7 @@ async function renderCapability(kind: string) {
     const data = await resp.json()
     const cfg = data[kind] || {}
     h += '<div class="section"><div class="section-title">\u5f53\u524d\u914d\u7f6e</div>'
-    h += '<div style="color:var(--muted-2);font-size:12px;margin-bottom:8px">\u4fdd\u5b58\u5230 .teamix/capabilities/' + kind + '.yaml</div>'
+    h += '<div style="color:var(--muted-2);font-size:12px;margin-bottom:8px">\u4fdd\u5b58\u5230 .reasonix/capabilities/' + kind + '.yaml</div>'
     h += '<textarea id="' + kind + '-raw" style="min-height:180px;width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)">' + escH(JSON.stringify(cfg, null, 2)) + '</textarea>'
     h += '<div style="margin-top:8px;display:flex;gap:8px"><button class="btn primary" onclick="saveCapability(\'' + kind + '\')" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58\u914d\u7f6e</button><button class="btn" onclick="switchSettingsTab(\'' + kind + '\')" style="padding:6px 16px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:12px;cursor:pointer">\u8fd8\u539f</button></div></div>'
   } catch (e) {
@@ -196,6 +208,7 @@ function tokenQuery() {
   return "?token=" + encodeURIComponent(t)
 }
 function escH(s: any) { return String(s).replace(/</g, "&lt;").replace(/>/g, "&gt;") }
+function escAttr(s: any) { return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;") }
 
 // Global functions needed by inline onclick handlers
 const w = window as any
@@ -209,14 +222,14 @@ w.saveKeyStrategy = async function() {
     body: JSON.stringify({ strategy: sel.value })
   })
 }
-w.deleteKey = async function(envName: string) {
+function deleteKey(envName: string) {
+  if (!envName) return
   const t = localStorage.getItem("teamix_token")
   if (!t) return
-  await fetch("/teamix/secrets/delete?token=" + encodeURIComponent(t), {
+  fetch("/teamix/secrets/delete?token=" + encodeURIComponent(t), {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ envName })
-  })
-  tab.value = "keys"
+  }).then(() => { tab.value = "keys" })
 }
 w.addKey = async function() {
   const env = document.getElementById("new-key-env") as HTMLInputElement
@@ -235,15 +248,43 @@ w.addMCPServer = async function() {
   const cmd = (document.getElementById("mcp-cmd") as HTMLInputElement)?.value.trim()
   const transport = (document.getElementById("mcp-transport") as HTMLSelectElement)?.value
   const args = (document.getElementById("mcp-args") as HTMLInputElement)?.value.trim()
+  const scopeSel = document.getElementById("mcp-scope") as HTMLSelectElement
+  const scope = scopeSel ? scopeSel.value : "private"
   if (!name || !cmd) return
   const t = localStorage.getItem("teamix_token")
   if (!t) return
   await fetch("/teamix/mcp/add?token=" + encodeURIComponent(t), {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, command: cmd, transport, args })
+    body: JSON.stringify({ name, command: cmd, transport, args, scope })
   })
   tab.value = "mcp"
 }
+function removeMCPServer(name: string) {
+  if (!name) return
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  fetch("/teamix/mcp/remove?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name })
+  }).then(() => { tab.value = "mcp" })
+}
+// MCP 移除/密钥删除按钮事件委托（避免内联 onclick 拼接名字导致的注入）
+document.addEventListener("click", (ev) => {
+  const target = ev.target as HTMLElement
+  const mcpBtn = target.closest("[data-mcp-remove]") as HTMLElement | null
+  if (mcpBtn) {
+    ev.preventDefault()
+    const name = mcpBtn.getAttribute("data-mcp-remove")
+    if (name) removeMCPServer(name)
+    return
+  }
+  const keyBtn = target.closest("[data-key-del]") as HTMLElement | null
+  if (keyBtn) {
+    ev.preventDefault()
+    const env = keyBtn.getAttribute("data-key-del")
+    if (env) deleteKey(env)
+  }
+})
 w.toggleSkill = async function(name: string, checked: boolean) {
   const t = localStorage.getItem("teamix_token")
   if (!t) return

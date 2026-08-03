@@ -26,6 +26,7 @@ type PluginRef struct {
 	Name    string   `yaml:"name"`
 	Command string   `yaml:"command"`
 	Args    []string `yaml:"args"`
+	Type    string   `yaml:"type,omitempty"`
 }
 
 type SkillRef struct {
@@ -35,6 +36,7 @@ type SkillRef struct {
 
 type Preferences struct {
 	Language string `yaml:"language"`
+	Model    string `yaml:"model,omitempty"` // 私有默认模型，非空时覆盖公共 teamix.default_model
 }
 
 // DefaultUserConfig returns a minimal user config template.

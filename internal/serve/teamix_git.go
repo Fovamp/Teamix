@@ -2,7 +2,9 @@
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -87,6 +89,11 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 		http.Error(w, `{"error":"project name required"}`, http.StatusBadRequest)
 		return
 	}
+	// 项目名只允许普通名称，防止 projects.yaml 配置的 name 含 .. 逃逸 userRoot。
+	if filepath.Base(body.Project) != body.Project {
+		http.Error(w, `{"error":"invalid project name"}`, http.StatusBadRequest)
+		return
+	}
 
 	// Validate project exists in global config
 	proj := ts.globalCfg.Projects.FindProject(body.Project)
@@ -103,6 +110,7 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 	}
 
 	projPath := filepath.Join(u.userRoot, body.Project)
+	cloned := false
 
 	// If project directory does not exist, clone it
 	if _, err := os.Stat(projPath); os.IsNotExist(err) {
@@ -114,22 +122,26 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 			writeJSON(w, map[string]any{"ok": false, "error": "clone failed: " + err.Error()})
 			return
 		}
+		cloned = true
 	}
 
 	// Switch user session to this project
 	u.selectedProject = body.Project
 
-	// Switch controller workspace to project directory
+	// Switch controller session directory to the project's .teamix/sessions,
+	// so new sessions and session listings are project-scoped.
 	sessionDir := filepath.Join(projPath, ".teamix", "sessions")
-	os.MkdirAll(sessionDir, 0o755)
-	// Note: full controller workspace switch requires rebuilding;
-	// for now, directory-based isolation is sufficient.
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "create session dir: " + err.Error()})
+		return
+	}
+	u.ctrl.SetSessionDir(sessionDir)
 
 	writeJSON(w, map[string]any{
 		"ok":      true,
 		"project": body.Project,
 		"path":    projPath,
-		"cloned":  true,
+		"cloned":  cloned,
 	})
 }
 
@@ -139,14 +151,13 @@ func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig
 	// Set up git credentials via environment
 	if uc.Git.SSHKeyPath != "" {
 		cmd.Env = append(os.Environ(),
-			"GIT_SSH_COMMAND=ssh -i "+uc.Git.SSHKeyPath+" -o StrictHostKeyChecking=accept-new",
+			fmt.Sprintf("GIT_SSH_COMMAND=ssh -i %q -o StrictHostKeyChecking=accept-new", uc.Git.SSHKeyPath),
 		)
 	} else if uc.Git.HTTPSUsername != "" {
-		// For HTTPS, we need to embed credentials in the URL
-		// Replace https:// with https://user:pass@
-		if strings.HasPrefix(gitURL, "https://") {
-			authURL := "https://" + uc.Git.HTTPSUsername + ":" + uc.Git.HTTPSPassword + "@" + strings.TrimPrefix(gitURL, "https://")
-			cmd = exec.Command("git", "clone", authURL, targetPath)
+		// For HTTPS, embed credentials in the URL safely (password with @ / % won't break it).
+		if u, err := url.Parse(gitURL); err == nil && u.Scheme == "https" {
+			u.User = url.UserPassword(uc.Git.HTTPSUsername, uc.Git.HTTPSPassword)
+			cmd = exec.Command("git", "clone", u.String(), targetPath)
 		}
 	}
 

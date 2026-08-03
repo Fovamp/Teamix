@@ -19,6 +19,21 @@ func (c *Controller) EnsureSessionPath() {
 	c.SetSessionPath(agent.NewSessionPath(c.SessionDir(), c.Label()))
 }
 
+// SetSessionDir repoints where new auto-save sessions are created (Teamix
+// project-level session isolation). It updates the session dir and re-pins the
+// current auto-save path into the new directory, so subsequent NewSession and
+// session listings land under the project.
+func (c *Controller) SetSessionDir(dir string) {
+	if dir == "" {
+		return
+	}
+	c.mu.Lock()
+	c.sessionDir = dir
+	c.mu.Unlock()
+	c.SetSessionPath(agent.NewSessionPath(dir, c.Label()))
+	c.EnsureSessionPath()
+}
+
 // AdoptHistory makes a freshly built controller continue an existing
 // conversation in path: it resumes the carried messages there when there are
 // any, otherwise just points auto-save at path. An empty path with no messages

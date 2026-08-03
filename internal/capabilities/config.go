@@ -1,6 +1,7 @@
 ﻿// Package capabilities manages per-project capability overrides for
 // MCP servers, AI personality (Soul), Skills, and model Gateway routing.
-// Each capability is stored as a YAML file under .teamix/capabilities/.
+// Each capability is stored as a YAML file under .reasonix/capabilities/
+// (Reasonix-side Agent infrastructure config, per the layout doc).
 // A zero-value (file missing or empty) means "use global default".
 package capabilities
 
@@ -78,7 +79,7 @@ func LoadAll(root string) *AllConfigs {
 }
 
 func loadSingle[T any](root, name string) *T {
-	path := filepath.Join(root, ".teamix", "capabilities", name)
+	path := filepath.Join(root, ".reasonix", "capabilities", name)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -112,7 +113,7 @@ func SaveGateway(root string, cfg *GatewayConfig) error {
 }
 
 func saveSingle(root, name string, v any) error {
-	dir := filepath.Join(root, ".teamix", "capabilities")
+	dir := filepath.Join(root, ".reasonix", "capabilities")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
