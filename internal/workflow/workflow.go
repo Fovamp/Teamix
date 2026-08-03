@@ -1,4 +1,4 @@
-// Package workflow implements the Teamix 5-stage delivery state machine.
+﻿// Package workflow implements the Teamix 5-stage delivery state machine.
 package workflow
 
 import (
@@ -210,11 +210,11 @@ func LoadState(sessionDir, sessionID string) *State {
 	path := filepath.Join(sessionDir, sessionID+".workflow.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return NewState(sessionDir, sessionID)
+		return NewEmptyState(sessionDir, sessionID)
 	}
 	var s State
 	if err := json.Unmarshal(data, &s); err != nil {
-		return NewState(sessionDir, sessionID)
+		return NewEmptyState(sessionDir, sessionID)
 	}
 	s.SessionDir = sessionDir
 	s.sessionID = sessionID

@@ -252,9 +252,9 @@ function projectSelected(name: string) {
           <div v-if="projects.length === 0" style="color:var(--muted-2);text-align:center;padding:24px;font-size:13px">
             暂无可用项目（请架构师在 .teamix/projects.yaml 中配置）
           </div>
-          <div v-for="p in projects" :key="p.name" class="proj-card"
+          <div v-for="p in projects" :key="p.name" class="proj-card" @click="working ? null : doSelect(p.name)"
             :class="{ 'proj-card--active': p.name === currentProject, 'proj-card--working': working }">
-            <div class="proj-card__main" @click="working ? null : doSelect(p.name)">
+            <div class="proj-card__main">
               <div class="proj-card__name">{{ p.name }}
                 <span v-if="p.name === currentProject" class="proj-card__cur">当前</span>
               </div>

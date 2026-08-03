@@ -1,4 +1,4 @@
-// 卡片类 DOM 渲染：从 ChatArea.vue 拆出（tool/approval/ask/compaction/usage/notice/phase/error/openpage/jump/stageApproval/wfConfirm）。
+﻿// 卡片类 DOM 渲染：从 ChatArea.vue 拆出（tool/approval/ask/compaction/usage/notice/phase/error/openpage/jump/stageApproval/wfConfirm）。
 // 不持有任何组件状态：共享状态通过 CardsContext 注入，保证与原实现行为一致。
 import { el, escHtml, fmtTok, fmtMoney, fmtElapsed, lineCount, toolArgsSummary } from "../utils/format"
 
@@ -44,6 +44,24 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 export function createCards(ctx: CardsContext) {
+  // insertCard inserts a DOM element into #log before the todo panel (if present),
+  // so tool/ask/compaction cards stay interleaved with messages instead of stacking at bottom.
+  function insertCard(el: HTMLElement) {
+    const log = ctx.log()
+    if (!log) return
+    // Insert after the last element that is part of the conversation flow:
+    // tool cards, usage strips, approvals, asks, compaction, errors, or the last assistant message.
+    const flowSelectors = '.card, .metric-strip, .approval, .ask, .compaction, .msg--error, .msg--assistant, .msg--user'
+    const allFlow = log.querySelectorAll(flowSelectors)
+    const anchor = allFlow.length > 0 ? allFlow[allFlow.length - 1] : null
+    if (anchor && anchor.nextSibling) {
+      log.insertBefore(el, anchor.nextSibling)
+    } else {
+      const todo = document.getElementById('todo-panel')
+      if (todo) log.insertBefore(el, todo)
+      else log.appendChild(el)
+    }
+  }
   // ── Tool cards ──
   function renderToolDispatch(tool: any) {
     ctx.hideWelcome()
@@ -74,7 +92,7 @@ export function createCards(ctx: CardsContext) {
     }
     card.appendChild(head)
     card.appendChild(body)
-    ctx.log()?.appendChild(card)
+    insertCard(card)
     ctx.toolCards[tool.id] = card
     ctx.scrollDown()
   }
@@ -122,7 +140,7 @@ export function createCards(ctx: CardsContext) {
       '<button class="approval__btn approval__btn--deny" data-allow="false"><span class="approval__key">N</span> 拒绝</button>',
     ]
     d.innerHTML = '<div class="approval__header"><svg class="approval__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="approval__title">需要批准</span></div><div class="approval__subject">' + escHtml(a.tool) + (a.subject ? ' — ' + escHtml(a.subject) : '') + '</div><div class="approval__actions">' + actions.join('') + '</div>'
-    ctx.log()?.appendChild(d)
+    insertCard(d)
     ctx.scrollDown(true)
     const cleanup = () => { ctx.setPendingPrompts(ctx.getPendingPrompts().filter(f => f !== cleanup)); d.remove() }
     ctx.setPendingPrompts([...ctx.getPendingPrompts(), cleanup])
@@ -284,7 +302,7 @@ export function createCards(ctx: CardsContext) {
         d.appendChild(body)
     }
 
-    ctx.log()?.appendChild(d)
+    insertCard(d)
     ctx.scrollDown(true)
     render()
     ctx.setPendingPrompts([...ctx.getPendingPrompts(), cleanup])
@@ -304,7 +322,7 @@ export function createCards(ctx: CardsContext) {
     } else {
       d.textContent = '压缩中...'
     }
-    ctx.log()?.appendChild(d)
+    insertCard(d)
     ctx.scrollDown()
   }
 
@@ -335,7 +353,7 @@ export function createCards(ctx: CardsContext) {
       sp.innerHTML = '费用 <span class="v">' + fmtMoney(cost, usage.currency) + '</span>'
       strip.appendChild(sp)
     }
-    log.appendChild(strip)
+    insertCard(strip)
     ctx.scrollDown()
   }
 
@@ -343,12 +361,12 @@ export function createCards(ctx: CardsContext) {
   function showNotice(text: string, tone?: string) {
     ctx.hideWelcome()
     const n = el('div', 'notice' + (tone === 'warn' ? ' notice--warn' : ''), text)
-    ctx.log()?.appendChild(n)
+    insertCard(n)
     ctx.scrollDown(true)
   }
 
   function showPhase(text: string) {
-    ctx.log()?.appendChild(el('div', 'phase', text))
+    insertCard(el('div', 'phase', text))
     ctx.scrollDown()
   }
 
@@ -366,7 +384,7 @@ export function createCards(ctx: CardsContext) {
     const btns = pages.map((p, i) => '<button class="approval__btn approval__btn--allow" id="opg-' + i + '"><span class="approval__key">' + (i + 1) + '</span> 打开 ' + escHtml(p.label) + '</button>').join('')
     const list = pages.map(p => '<div style="font-family:var(--mono);font-size:11px;color:var(--fg-2);padding:2px 0">• ' + p.url + ' <span style="color:var(--muted-2)">(' + p.label + ')</span></div>').join('')
     d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg><span class="approval__title">查看效果</span></div><div class="approval__subject">修改已完成，请检查效果：</div><div style="padding:6px 12px 8px;border-bottom:1px solid var(--border);background:var(--bg-2)">' + list + '</div><div class="approval__actions">' + btns + '<button class="approval__btn approval__btn--deny" id="opg-dismiss" style="margin-left:auto">暂不打开</button></div>'
-    ctx.log()?.appendChild(d)
+    insertCard(d)
     ctx.scrollDown(true)
     ctx.setPendingPrompts([...ctx.getPendingPrompts(), () => { if (d.parentNode) d.remove() }])
     pages.forEach((p, i) => {
@@ -381,7 +399,7 @@ export function createCards(ctx: CardsContext) {
     d.style.borderLeft = '3px solid var(--accent)'
     d.style.marginBottom = '8px'
     d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="approval__title">跳转到阶段</span></div><div class="approval__subject">请选择要跳转到的阶段：</div><div id="jump-stage-list" style="padding:6px 12px;border-bottom:1px solid var(--border);background:var(--bg-2)"></div><div class="approval__actions"><button class="approval__btn approval__btn--deny" id="jump-cancel">取消</button></div>'
-    ctx.log()?.appendChild(d)
+    insertCard(d)
     ctx.scrollDown(true)
     document.getElementById('jump-cancel')!.onclick = () => { d.remove() }
     const list = document.getElementById('jump-stage-list')!
@@ -419,7 +437,7 @@ export function createCards(ctx: CardsContext) {
     d.style.borderLeft = '3px solid var(--accent)'
     d.style.marginBottom = '8px'
     d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="approval__title">阶段完成</span></div><div class="approval__subject">' + msg + '</div><div class="approval__actions"><button class="approval__btn approval__btn--allow" id="sa-confirm"><span class="approval__key">Y</span> 确认进入下一阶段</button><button class="approval__btn approval__btn--deny" id="sa-cancel"><span class="approval__key">N</span> 继续当前阶段</button><button class="approval__btn" id="sa-jump" style="border:1px solid var(--border);color:var(--fg-2);font-size:11px"><span class="approval__key">J</span> 跳转到...</button></div><div id="sa-jump-list" style="display:none;border-top:1px solid var(--border);padding:8px 12px;font-size:12px"></div>'
-    ctx.log()?.appendChild(d)
+    insertCard(d)
     ctx.scrollDown(true)
     document.getElementById('sa-confirm')!.onclick = () => {
       ctx.setStageState({ pending: false, reason: '', extra: '' })
@@ -468,7 +486,7 @@ export function createCards(ctx: CardsContext) {
     d.style.borderLeft = '3px solid var(--accent)'
     d.style.marginBottom = '8px'
     d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="approval__title">工作流确认</span></div><div class="approval__subject">' + msg + '</div><div class="approval__actions"><button class="approval__btn approval__btn--allow" id="wfc-yes"><span class="approval__key">Y</span> 确认</button><button class="approval__btn approval__btn--deny" id="wfc-no"><span class="approval__key">N</span> 取消</button></div>'
-    ctx.log()?.appendChild(d)
+    insertCard(d)
     ctx.scrollDown(true)
     const cleanup = () => { d.remove() }
     document.getElementById('wfc-yes')!.onclick = () => { cleanup(); callback(true) }

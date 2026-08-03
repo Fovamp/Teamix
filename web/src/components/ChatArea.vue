@@ -253,7 +253,7 @@ function renderHistoryMessages(ms: any[]) {
     if (saved && messages.value.length > 0) {
       const lastMsg = messages.value[messages.value.length - 1]
       if (lastMsg.role === 'assistant' || lastMsg.role === 'user') {
-        cards.showUsageStrip(JSON.parse(saved))
+        // usage shown in SideBar, not inline
       }
     }
   } catch {}
@@ -288,11 +288,11 @@ const sse = useSSE({
           finalizeMsg()
           break
         case 'tool_dispatch':
-          if (e.tool) cards.renderToolDispatch(e.tool)
+          if (e.tool) { messages.value.push({ role: 'tool', id: e.tool.id, name: e.tool.name, args: e.tool.args, status: 'running', output: '', err: '', startedAt: Date.now() }) }
           break
         case 'tool_result':
           if (e.tool) {
-            cards.renderToolResult(e.tool)
+            const tm = messages.value.find((m: any) => m.role === 'tool' && m.id === e.tool.id); if (tm) { tm.status = e.tool.err ? 'error' : 'done'; if (e.tool.err) tm.err = e.tool.err; if (e.tool.output) tm.output = String(e.tool.output || '').slice(0, 2000) + (e.tool.truncated ? '...[truncated]' : '') }
             if (e.tool.name === 'todo_write' && !e.tool.parentId && !e.tool.err) {
               try {
                 const ts = parseTodos(e.tool.args)
@@ -302,7 +302,7 @@ const sse = useSSE({
           }
           break
         case 'tool_progress':
-          if (e.tool) cards.renderToolProgress(e.tool)
+          if (e.tool) { const tm = messages.value.find((m: any) => m.role === 'tool' && m.id === e.tool.id); if (tm && e.tool.output) tm.output = (tm.output || '') + (e.tool.output || '') }
           break
         case 'usage':
           if (e.usage) {
@@ -310,7 +310,7 @@ const sse = useSSE({
             cumulativeCost += e.usage.cost ?? e.usage.costUsd ?? 0
             cumulativeCacheHit += e.usage.cacheHitTokens || 0
             cumulativeCacheMiss += e.usage.cacheMissTokens || 0
-            cards.showUsageStrip(e.usage)
+            // usage shown in SideBar, not inline
           }
           break
         case 'notice':
@@ -349,7 +349,7 @@ const sse = useSSE({
           if (pendingPages.length > 0 && !e.err) { cards.showOpenPageCard(pendingPages); pendingPages = [] }
           if (stageCompletePending && !e.err) { cards.showStageApproval(stageCompleteReason) }
           // Fallback: check accumulated text in case marker was split across chunks
-          if (!stageCompletePending && !e.err && window._wfLastText && window._wfLastText.indexOf('\u9636\u6bb5\u5b8c\u6210') >= 0) {
+          if (!stageCompletePending && !e.err && wfVisible.value && wfStages.value.length > 0 && window._wfLastText && window._wfLastText.indexOf('\u9636\u6bb5\u5b8c\u6210') >= 0 && activeStageIdx >= 0) {
             stageCompletePending = true
             try { sessionStorage.setItem('wf_advance_pending', '1') } catch (e) {}
             cards.showStageApproval('')
@@ -690,7 +690,10 @@ function fetchStatus() {
           let parts = fullPath.split('/').filter(Boolean)
           if (parts.length > 0 && parts[0].endsWith(':')) parts[0] = parts[0].slice(0, -1)
           cwdTitle.value = '/' + parts.join('/')
-          if (parts.length <= 2) { cwd.value = '/' + parts.join('/') }
+          // Show short display: user name + "工作区"
+          const userName = (s.user || '').trim()
+          if (userName) { cwd.value = userName + ' 的工作区' }
+          else if (parts.length <= 2) { cwd.value = '/' + parts.join('/') }
           else { cwd.value = '/' + parts.slice(0, 2).join('/') + '/.../' + parts.slice(-2).join('/') }
         }
       }).catch(() => {})
