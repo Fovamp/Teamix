@@ -302,11 +302,13 @@ func (ts *TeamixServer) handleProjectRemove(w http.ResponseWriter, r *http.Reque
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// 删除公共区克隆目录 projects/<name>/（配置与代码一起移除）
+	if err := os.RemoveAll(filepath.Join(ts.workspaceRoot, "projects", body.Name)); err != nil {
+		slog.Warn("teamix: failed to remove project dir", "project", body.Name, "err", err)
+	}
 	ts.reloadConfigs()
 	writeJSON(w, map[string]bool{"ok": true})
 }
-
-// POST /teamix/projects/update {name, git?, description?}
 func (ts *TeamixServer) handleProjectUpdate(w http.ResponseWriter, r *http.Request, u *userSession) {
 	if !ts.isArchitect(u) {
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -328,11 +330,20 @@ func (ts *TeamixServer) handleProjectUpdate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if body.Git != "" && strings.TrimSpace(body.Git) != target.Git {
-		if err := validateGitRemote(strings.TrimSpace(body.Git)); err != nil {
-			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		newGit := strings.TrimSpace(body.Git)
+		// 编辑时只做格式校验（网络可达性由拉取时验证——此时凭证可能尚未配置）
+		if !isSSHURL(newGit) && !isHTTPSURL(newGit) && !isLocalURL(newGit) {
+			writeJSON(w, map[string]any{"ok": false, "error": "git 链接格式无法识别（支持 SSH / HTTPS / 本地路径）"})
 			return
 		}
-		target.Git = strings.TrimSpace(body.Git)
+		target.Git = newGit
+		// 同步公共区 remote：已 clone 则把 origin 切到新链接
+		projDir := filepath.Join(ts.workspaceRoot, "projects", body.Name)
+		if _, err := os.Stat(filepath.Join(projDir, ".git")); err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			_ = exec.CommandContext(ctx, "git", "-C", projDir, "remote", "set-url", "origin", newGit).Run()
+			cancel()
+		}
 	}
 	if body.Description != "" {
 		target.Description = body.Description
