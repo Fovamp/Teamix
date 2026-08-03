@@ -95,7 +95,7 @@ async function renderProjects() {
       h += '<button class="btn danger sm" data-proj-del="' + escAttr(p.name) + '" style="padding:4px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button></div>'
       h += '</div>'
       h += '<div class="cfg-svc-list" id="proj-svc-' + escAttr(p.name) + '" style="display:none"></div>'
-      h += '<div id="proj-edit-' + escAttr(p.name) + '" style="display:none;padding:8px 12px;border-bottom:1px solid var(--border)"><div style="display:flex;gap:8px;margin-bottom:6px"><input id="edit-git-' + escAttr(p.name) + '" type="text" value="' + escAttr(p.git || "") + '" placeholder="git \u94fe\u63a5 (SSH/HTTPS)" style="flex:2;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><input id="edit-desc-' + escAttr(p.name) + '" type="text" value="' + escAttr(p.description || "") + '" placeholder="\u63cf\u8ff0" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div><button class="btn primary sm" onclick="saveProjectEdit(\'' + escAttr(p.name) + '\')" style="padding:4px 14px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58</button></div>'
+      h += '<div id="proj-edit-' + escAttr(p.name) + '" style="display:none;padding:8px 12px;border-bottom:1px solid var(--border)"><div style="display:flex;gap:8px;margin-bottom:6px"><input id="edit-git-' + escAttr(p.name) + '" type="text" value="' + escAttr(p.git || "") + '" placeholder="git \u94fe\u63a5 (SSH/HTTPS)" style="flex:2;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><input id="edit-desc-' + escAttr(p.name) + '" type="text" value="' + escAttr(p.description || "") + '" placeholder="\u63cf\u8ff0" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div><button class="btn primary sm" data-proj-save="' + escAttr(p.name) + '" style="padding:4px 14px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58</button></div>'
       h += '<div class="cfg-progress" id="proj-bar-' + escAttr(p.name) + '" style="display:none"><div class="cfg-progress__bar"></div><span>\u6b63\u5728\u62c9\u53d6\u4ee3\u7801\u5e76\u626b\u63cf\u6a21\u5757...</span></div>'
     })
     h += '<div class="section"><div class="section-title">\u6dfb\u52a0\u9879\u76ee</div>'
@@ -511,6 +511,13 @@ document.addEventListener("click", (ev) => {
       box.style.display = showing ? "none" : "block"
       editBtn.textContent = showing ? "编辑" : "取消"
     }
+    return
+  }
+  const saveBtn = target.closest("[data-proj-save]") as HTMLElement | null
+  if (saveBtn) {
+    ev.preventDefault()
+    const name = saveBtn.getAttribute("data-proj-save")
+    if (name) saveProjectEdit(name)
   }
 })
 // 角色切换下拉 change 事件委托
