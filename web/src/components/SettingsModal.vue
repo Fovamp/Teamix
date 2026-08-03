@@ -187,7 +187,9 @@ async function renderMemory() {
     // 全局记忆（架构师维护，全员只读继承）
     let globalMem: any[] = []
     try {
-      const g = await (await fetch("/teamix/memory?scope=global" + q)).json()
+      const t = localStorage.getItem("teamix_token")
+      const gUrl = "/teamix/memory?scope=global" + (t ? "&token=" + encodeURIComponent(t) : "")
+      const g = await (await fetch(gUrl)).json()
       globalMem = g.memories || []
     } catch (e) { }
     h += '<div class="section"><div class="section-title">\u5168\u5c40\u8bb0\u5fc6 (' + globalMem.length + ') <span style="font-size:11px;color:var(--muted-2)">\u56e2\u961f\u5171\u4eab\uff0c\u67b6\u6784\u5e08\u7ef4\u62a4</span></div>'
@@ -296,7 +298,7 @@ function deleteKey(envName: string) {
   fetch("/teamix/secrets/delete?token=" + encodeURIComponent(t), {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ envName })
-  }).then(() => { tab.value = "keys" })
+  }).then(() => { refreshTab("keys") })
 }
 w.addKey = async function() {
   const env = document.getElementById("new-key-env") as HTMLInputElement
@@ -309,6 +311,7 @@ w.addKey = async function() {
     body: JSON.stringify({ envName: env ? env.value.trim() : "", value: val.value.trim() })
   })
   tab.value = "keys"
+  await refreshTab("keys")
 }
 w.addMCPServer = async function() {
   const name = (document.getElementById("mcp-name") as HTMLInputElement)?.value.trim()
@@ -325,6 +328,7 @@ w.addMCPServer = async function() {
     body: JSON.stringify({ name, command: cmd, transport, args, scope })
   })
   tab.value = "mcp"
+  await refreshTab("mcp")
 }
 function removeMCPServer(name: string) {
   if (!name) return
@@ -333,9 +337,17 @@ function removeMCPServer(name: string) {
   fetch("/teamix/mcp/remove?token=" + encodeURIComponent(t), {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name })
-  }).then(() => { tab.value = "mcp" })
+  }).then(() => { refreshTab("mcp") })
 }
 // 删除类按钮事件委托（避免内联 onclick 拼接名字导致的注入）
+// 刷新指定 tab：若已在当前 tab（Vue watch 不触发），显式重新加载渲染。
+async function refreshTab(t: string) {
+  if (tab.value === t) {
+    await switchTab(t)
+  } else {
+    tab.value = t
+  }
+}
 function postJSON(path: string, body: any) {
   const t = localStorage.getItem("teamix_token")
   if (!t) return Promise.resolve()
@@ -366,7 +378,7 @@ document.addEventListener("click", (ev) => {
     const name = skillBtn.getAttribute("data-skill-del")
     const scope = skillBtn.getAttribute("data-skill-scope") || "private"
     if (name) {
-      postJSON("/teamix/skills/delete", { name, scope }).then(() => { tab.value = "skills" })
+      postJSON("/teamix/skills/delete", { name, scope }).then(() => { refreshTab("skills") })
     }
     return
   }
@@ -375,7 +387,7 @@ document.addEventListener("click", (ev) => {
     ev.preventDefault()
     const name = memBtn.getAttribute("data-mem-del")
     if (name) {
-      postJSON("/teamix/memory/delete", { name, scope: "private" }).then(() => { tab.value = "memory" })
+      postJSON("/teamix/memory/delete", { name, scope: "private" }).then(() => { refreshTab("memory") })
     }
     return
   }
@@ -384,7 +396,7 @@ document.addEventListener("click", (ev) => {
     ev.preventDefault()
     const name = memGBtn.getAttribute("data-mem-del-global")
     if (name) {
-      postJSON("/teamix/memory/delete", { name, scope: "global" }).then(() => { tab.value = "memory" })
+      postJSON("/teamix/memory/delete", { name, scope: "global" }).then(() => { refreshTab("memory") })
     }
   }
 })
@@ -412,6 +424,7 @@ w.addMemory = async function() {
     body: JSON.stringify({ name, title, description: desc, type: mtype || "user", body: body || "", scope })
   })
   tab.value = "memory"
+  await refreshTab("memory")
 }
 w.addSkill = async function() {
   const name = (document.getElementById("skill-name") as HTMLInputElement)?.value.trim()
@@ -427,6 +440,7 @@ w.addSkill = async function() {
     body: JSON.stringify({ name, description: desc, body: body || "", scope })
   })
   tab.value = "skills"
+  await refreshTab("skills")
 }
 w.saveCapability = async function(kind: string) {
   const el = document.getElementById(kind + "-raw") as HTMLTextAreaElement
