@@ -399,11 +399,11 @@ input,textarea{font:inherit;color:inherit}
 .settings-content .badge.on { background: #1a3a1a; color: #4caf50; }
 .settings-content .badge.off { background: #3a1a1a; color: #f44336; }
 .settings-content .btn { padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg-2); font-size: 12px; cursor: pointer; white-space: nowrap; transition: all .12s; }
-.settings-content .btn:hover { background: var(--bg-2); color: var(--fg); }
+.settings-content .btn:hover { background: var(--bg-2) !important; color: var(--fg) !important; }
 .settings-content .btn.primary { border: none; background: var(--accent); color: oklch(99% 0 0); }
-.settings-content .btn.primary:hover { background: var(--accent-strong); }
+.settings-content .btn.primary:hover { background: var(--accent-strong) !important; }
 .settings-content .btn.danger { border-color: #f44336; color: #f44336; }
-.settings-content .btn.danger:hover { background: #3a1a1a; }
+.settings-content .btn.danger:hover { background: #3a1a1a !important; }
 .settings-content .btn.sm { padding: 3px 10px; font-size: 11px; }
 .settings-content input[type=text], .settings-content input[type=password], .settings-content select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 13px; }
 .settings-content .input-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }

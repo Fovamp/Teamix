@@ -220,6 +220,12 @@ function chooseService(name: string) {
 </template>
 
 <style scoped>
+.btn { padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg-2); font-size: 12px; cursor: pointer; transition: all .12s; }
+.btn:hover { background: var(--bg-2); color: var(--fg); }
+.btn.primary { border: none; background: var(--accent); color: #000; font-weight: 600; }
+.btn.primary:hover { background: var(--accent-strong); color: #000; }
+.btn.primary:disabled { opacity: .6; cursor: not-allowed; }
+.btn:disabled:hover { opacity: .6; cursor: not-allowed; }
 .proj-card {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 12px 14px; margin-bottom: 8px; border: 1px solid var(--border);
