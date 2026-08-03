@@ -181,20 +181,35 @@ func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig
 		if msg == "" {
 			msg = err.Error()
 		}
-		// 凭证缺失/错误时给出中文提示（git 原始错误可能很长，保留首行要点）
+		// 凭证缺失/错误时给出中文提示（提取 git 真正错误行，跳过 Cloning into 进度行）
 		if isSSHURL(gitURL) {
-			return &gitError{msg: "克隆失败（SSH 链接）：" + firstLine(msg) + "。请确认已配置正确的 SSH Key", err: err}
+			return &gitError{msg: "克隆失败（SSH 链接）：" + gitErrorSummary(msg) + "。请确认已配置正确的 SSH Key", err: err}
 		}
-		return &gitError{msg: "克隆失败：" + firstLine(msg), err: err}
+		return &gitError{msg: "克隆失败：" + gitErrorSummary(msg), err: err}
 	}
 	return nil
 }
 
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return strings.TrimSpace(s[:i])
+// gitErrorSummary 从 git 输出中提取真正错误行（fatal:/error:/认证失败等），
+// 跳过 "Cloning into" 等进度行。
+func gitErrorSummary(output string) string {
+	lines := strings.Split(output, "\n")
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.Contains(t, "fatal:") || strings.Contains(t, "error:") ||
+			strings.Contains(t, "denied") || strings.Contains(t, "Authentication") ||
+			strings.Contains(t, "Could not") || strings.Contains(t, "unable to") ||
+			strings.Contains(t, "找不到") {
+			return t
+		}
 	}
-	return strings.TrimSpace(s)
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if t != "" && !strings.HasPrefix(t, "Cloning into") {
+			return t
+		}
+	}
+	return strings.TrimSpace(output)
 }
 
 // isSSHURL 判断 git 链接是否为 SSH 格式（git@host:path 或 ssh://）。
