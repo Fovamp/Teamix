@@ -12,8 +12,10 @@ const (
 	globalConfigTemplate = `# Teamix 全局公共配置（架构师维护，Web 配置中心可改）
 teamix:
   name: "Teamix Cloud"
-  # 公共默认模型；用户私有配置 preferences.model 可覆盖
-  default_model: "deepseek-v3"
+  # 公共默认模型（可选）：留空则使用启动参数/CLI 默认模型。
+  # 填写的值必须是 reasonix.toml [[providers]] 中已配置的模型名，
+  # 否则登录会报 unknown model。用户私有配置 preferences.model 可覆盖。
+  default_model: ""
 `
 
 	globalUsersTemplate = `# 用户白名单。空列表 = 开放模式（任何昵称都能登录）。
