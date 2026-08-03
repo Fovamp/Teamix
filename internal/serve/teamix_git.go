@@ -130,6 +130,11 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		if err := ts.cloneProject(proj.Git, projPath, uc); err != nil {
+			// 认证类错误（凭证错误/无权限）→ 弹凭证表单引导用户重新配置
+			if isAuthError(err.Error()) {
+				writeJSON(w, map[string]any{"ok": false, "needCredentials": true, "error": err.Error()})
+				return
+			}
 			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 			return
 		}
@@ -210,6 +215,17 @@ func gitErrorSummary(output string) string {
 		}
 	}
 	return strings.TrimSpace(output)
+}
+
+// isAuthError 判断克隆错误是否为认证/权限类（应引导用户重新配置凭证）。
+func isAuthError(msg string) bool {
+	lower := strings.ToLower(msg)
+	for _, kw := range []string{"access denied", "authentication", "permission denied", "401", "403", "not found: repository", "could not read username"} {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // isSSHURL 判断 git 链接是否为 SSH 格式（git@host:path 或 ssh://）。

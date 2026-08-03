@@ -77,6 +77,7 @@ async function doSelect(project: string) {
     if (r && r.needCredentials) {
       targetProject.value = project
       credStep.value = true
+      credErr.value = (r && r.error) || ""
       return
     }
     if (r && r.ok) {
