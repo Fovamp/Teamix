@@ -165,7 +165,8 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 }
 
 func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig.UserConfig) error {
-	cmd := exec.Command("git", "clone", gitURL, targetPath)
+	// 浅克隆（--depth 1）：开发/构建不需要完整历史，速度大幅提升
+	cmd := exec.Command("git", "clone", "--depth", "1", gitURL, targetPath)
 
 	// 按链接类型匹配凭证：SSH 链接用 SSH Key，HTTPS 链接用账号密码。
 	switch {
