@@ -24,34 +24,119 @@ var (
 )
 
 // analyzeProject 扫描项目目录，识别模块清单。
+// 支持：根目录 Maven 多模块、子目录独立 Maven 项目（如 JeecgBoot 仓库的 jeecg-boot/）、
+// 根/子目录 Node 前端。
 func analyzeProject(dir string) []teamixconfig.ServiceEntry {
 	var out []teamixconfig.ServiceEntry
-	out = append(out, analyzeMavenModules(dir)...)
-	out = append(out, analyzeNodeProjects(dir)...)
+	seenDirs := map[string]bool{}
+	add := func(s teamixconfig.ServiceEntry) {
+		if s.Dir == "" || seenDirs[s.Dir] {
+			return
+		}
+		seenDirs[s.Dir] = true
+		out = append(out, s)
+	}
+
+	rootPom := filepath.Join(dir, "pom.xml")
+	rootHasPom := fileExists(rootPom)
+
+	// 1. 根目录 Maven 多模块
+	if rootHasPom {
+		for _, m := range mavenModules(rootPom) {
+			modDir := filepath.Join(dir, m)
+			if !hasSpringBootApp(modDir) {
+				continue
+			}
+			add(teamixconfig.ServiceEntry{
+				Name: m, Type: "backend", Dir: m + "/",
+				Startup: "mvn spring-boot:run -pl " + m, Port: detectPort(modDir),
+			})
+		}
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sub := filepath.Join(dir, e.Name())
+		if e.Name() == "node_modules" || e.Name() == ".git" {
+			continue
+		}
+		// 2. 子目录独立 Maven 项目（根无 pom，或该子目录不在根 modules 内）
+		subPom := filepath.Join(sub, "pom.xml")
+		if fileExists(subPom) && (!rootHasPom || !mavenModules(rootPom).Contains(e.Name())) {
+			for _, m := range mavenModules(subPom) {
+				modDir := filepath.Join(sub, m)
+				if !hasSpringBootApp(modDir) {
+					continue
+				}
+				add(teamixconfig.ServiceEntry{
+					Name: m, Type: "backend", Dir: e.Name() + "/" + m + "/",
+					Startup: "mvn spring-boot:run -pl " + m, Port: detectPort(modDir),
+				})
+			}
+		}
+		// 3. Node 前端（package.json 含 dev/start script）
+		if hasDevScript(filepath.Join(sub, "package.json")) {
+			add(teamixconfig.ServiceEntry{
+				Name: e.Name(), Type: "frontend", Dir: e.Name() + "/",
+				Startup: "npm run dev",
+			})
+		}
+	}
+	return out
+}
+
+func fileExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && !fi.IsDir()
+}
+
+type stringList []string
+
+func (l stringList) Contains(s string) bool {
+	for _, v := range l {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// mavenModules 解析 pom.xml 的 <modules> 列表。
+func mavenModules(pomPath string) stringList {
+	data, err := os.ReadFile(pomPath)
+	if err != nil {
+		return nil
+	}
+	var out stringList
+	for _, m := range mavenModuleRe.FindAllStringSubmatch(string(data), -1) {
+		mod := strings.TrimSpace(m[1])
+		if mod != "" {
+			out = append(out, mod)
+		}
+	}
 	return out
 }
 
 // analyzeMavenModules 解析根 pom.xml 的多模块，含 SpringBootApplication 的为 backend 服务。
 func analyzeMavenModules(dir string) []teamixconfig.ServiceEntry {
+	rootPom := filepath.Join(dir, "pom.xml")
 	var out []teamixconfig.ServiceEntry
-	data, err := os.ReadFile(filepath.Join(dir, "pom.xml"))
-	if err != nil {
-		return out
-	}
-	for _, m := range mavenModuleRe.FindAllStringSubmatch(string(data), -1) {
-		mod := strings.TrimSpace(m[1])
-		if mod == "" {
-			continue
-		}
-		modDir := filepath.Join(dir, mod)
+	for _, m := range mavenModules(rootPom) {
+		modDir := filepath.Join(dir, m)
 		if !hasSpringBootApp(modDir) {
 			continue
 		}
 		out = append(out, teamixconfig.ServiceEntry{
-			Name:    mod,
+			Name:    m,
 			Type:    "backend",
-			Dir:     mod + "/",
-			Startup: "mvn spring-boot:run -pl " + mod,
+			Dir:     m + "/",
+			Startup: "mvn spring-boot:run -pl " + m,
 			Port:    detectPort(modDir),
 		})
 	}
@@ -82,34 +167,13 @@ func hasSpringBootApp(dir string) bool {
 	return found
 }
 
-// analyzeNodeProjects 识别子目录中含 dev/start script 的 package.json → frontend 服务。
-func analyzeNodeProjects(dir string) []teamixconfig.ServiceEntry {
-	var out []teamixconfig.ServiceEntry
-	entries, err := os.ReadDir(dir)
+// hasDevScript 检查 package.json 是否含 dev/start script（判定前端模块）。
+func hasDevScript(packageJSONPath string) bool {
+	data, err := os.ReadFile(packageJSONPath)
 	if err != nil {
-		return out
+		return false
 	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if e.Name() == "node_modules" || e.Name() == ".git" {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name(), "package.json"))
-		if err != nil {
-			continue
-		}
-		if devScriptRe.Match(data) {
-			out = append(out, teamixconfig.ServiceEntry{
-				Name:    e.Name(),
-				Type:    "frontend",
-				Dir:     e.Name() + "/",
-				Startup: "npm run dev",
-			})
-		}
-	}
-	return out
+	return devScriptRe.Match(data)
 }
 
 // detectPort 尝试从 application.yml / application.properties 识别 server.port。
