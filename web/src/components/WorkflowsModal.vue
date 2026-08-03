@@ -7,6 +7,7 @@ const templates = ref<any[]>([])
 const showConfirm = ref(false)
 const confirmMsg = ref('')
 const currentDeleteName = ref('')
+const currentDeleteScope = ref('private')
 const loading = ref(false)
 const isArchitect = ref(false)
 
@@ -17,6 +18,8 @@ const editName = ref("")
 const editLabel = ref("")
 const editDesc = ref("")
 const editStages = ref<any[]>([])
+const editScope = ref("private")
+const editErr = ref("")
 const showFse = ref(false)
 const fseText = ref('')
 const fseTarget = ref<{ set: (v: string) => void } | null>(null)
@@ -57,16 +60,17 @@ function showDeleteConfirm(name: string) {
   const tpl = templates.value.find((t: any) => t.name === name)
   const label = tpl?.label || name
   currentDeleteName.value = name
+  currentDeleteScope.value = tpl?.source === 'global' ? 'global' : 'private'
   confirmMsg.value = '确定删除工作流\u201c' + label + '\u201d吗？'
   showConfirm.value = true
 }
 
-async function deleteWf(name: string) {
+async function deleteWf(name: string, scope: string) {
   if (!name || name === 'none') return
   try {
     await fetch("/teamix/workflows/template/delete?token=" + encodeURIComponent(localStorage.getItem("teamix_token") || ""), {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name, scope })
     })
     const ts = await api.workflowTemplates()
     templates.value = Array.isArray(ts) ? ts : []
@@ -74,10 +78,13 @@ async function deleteWf(name: string) {
 }
 
 function openEditor(name?: string) {
+  editErr.value = ""
   if (name) {
+    const tpl = templates.value.find((t: any) => t.name === name)
+    editScope.value = tpl?.source === 'global' ? 'global' : 'private'
     editTitle.value = "编辑工作流"
     showEditor.value = true
-    fetch('/teamix/workflows/template?name=' + encodeURIComponent(name) + '&token=' + encodeURIComponent(localStorage.getItem("teamix_token") || ''))
+    fetch('/teamix/workflows/template?name=' + encodeURIComponent(name) + '&scope=' + editScope.value + '&token=' + encodeURIComponent(localStorage.getItem("teamix_token") || ''))
       .then(r => r.json()).then((t: any) => {
         editName.value = name || ''
         editLabel.value = t.label || ''
@@ -95,6 +102,7 @@ function openEditor(name?: string) {
     editLabel.value = ''
     editDesc.value = ''
     editStages.value = []
+    editScope.value = isArchitect.value ? 'global' : 'private'
     showEditor.value = true
   }
 }
@@ -130,7 +138,7 @@ function updateDesc() {
 
 async function saveWorkflow() {
   const label = editLabel.value.trim()
-  if (!label) { alert('请输入工作流名称'); return }
+  if (!label) { editErr.value = '请输入工作流名称'; return }
   let name = editName.value
   if (!name) {
     name = label.toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-/, '').replace(/-$/, '')
@@ -147,7 +155,8 @@ async function saveWorkflow() {
     name,
     label,
     description: editDesc.value.trim(),
-    stages
+    stages,
+    scope: editScope.value
   }
   const t = localStorage.getItem('teamix_token')
   if (!t) return
@@ -162,10 +171,10 @@ async function saveWorkflow() {
       const ts = await api.workflowTemplates()
       templates.value = Array.isArray(ts) ? ts : []
     } else {
-      alert('保存失败')
+      editErr.value = data?.error || '保存失败'
     }
   } catch (e) {
-    alert('保存失败: ' + String(e))
+    editErr.value = '保存失败: ' + String(e)
   }
 }
 
@@ -269,12 +278,12 @@ function cleanupDrag() {
         <div v-else-if="templates.length === 0" style="color:var(--muted-2);text-align:center;padding:20px;font-size:13px">暂无工作流模板</div>
         <div v-for="t in templates" :key="t.name" class="model-item" @click="selectWf(t.name)" style="cursor:pointer">
           <div style="min-width:0">
-            <div class="model-item__title" :style="t.name === 'none' ? { color: 'var(--muted)' } : {}">{{ t.name === 'none' ? '自由对话' : (t.label || t.name) }}<span v-if="t.source" class="wf-source-tag" :class="'wf-source--' + t.source">{{ t.source === 'global' ? '全局' : t.source === 'project' ? '项目' : t.source }}</span></div>
+            <div class="model-item__title" :style="t.name === 'none' ? { color: 'var(--muted)' } : {}">{{ t.name === 'none' ? '自由对话' : (t.label || t.name) }}<span v-if="t.source" class="wf-source-tag" :class="'wf-source--' + t.source">{{ t.source === 'global' ? '全局' : t.source === 'private' ? '私有' : t.source }}</span></div>
             <div class="model-item__meta" :title="t.name === 'none' ? '灵活模式，自由对话' : (t.description || '')">{{ t.name === 'none' ? '灵活模式，自由对话' : (t.description || '') }}</div>
-            <button v-if="isArchitect && t.name && t.name !== 'none'" class="branch-item__btn" style="color:var(--danger);margin-top:6px;width:80%" @click.stop="showDeleteConfirm(t.name)">删除工作流</button>
+            <button v-if="(t.source === 'private' || isArchitect) && t.name && t.name !== 'none'" class="branch-item__btn" style="color:var(--danger);margin-top:6px;width:80%" @click.stop="showDeleteConfirm(t.name)">删除工作流</button>
           </div>
           <div style="display:flex;flex-direction:column;gap:4px;align-items:stretch">
-            <button v-if="isArchitect && t.name && t.name !== 'none'" class="branch-item__btn" @click.stop="openEditor(t.name)">编辑</button>
+            <button v-if="(t.source === 'private' || isArchitect) && t.name && t.name !== 'none'" class="branch-item__btn" @click.stop="openEditor(t.name)">编辑</button>
             
             <button class="branch-item__btn" @click.stop="selectWf(t.name)">选择</button>
           </div>
@@ -295,8 +304,10 @@ function cleanupDrag() {
         <span class="modal__close" @click="closeEditor">&times;</span>
       </div>
       <div style="padding:8px 12px;display:flex;flex-direction:column;gap:8px;max-height:70vh;overflow-y:auto">
+        <div v-if="editErr" style="color:var(--danger);font-size:12px;background:var(--danger-soft);padding:6px 10px;border-radius:4px">{{ editErr }}</div>
         <div style="display:flex;gap:8px">
           <div style="flex:1"><label style="font-size:11px;color:var(--muted-2)">名称</label><input v-model="editLabel" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:13px"></div>
+          <div style="flex:1"><label style="font-size:11px;color:var(--muted-2)">范围</label><select v-if="isArchitect" v-model="editScope" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:13px"><option value="global">全局（全员可用）</option><option value="private">私有（仅自己）</option></select><div v-else style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--muted-2);font-size:13px">私有（仅自己）</div></div>
           <div style="flex:2"><label style="font-size:11px;color:var(--muted-2)">描述</label><input v-model="editDesc" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:13px"></div>
         </div>
         <div><label style="font-size:11px;color:var(--muted-2)">阶段</label></div>
@@ -344,7 +355,7 @@ function cleanupDrag() {
       <div class="confirm-modal__head" style="padding:14px 16px 0;font-size:14px;font-weight:500;color:var(--fg)">{{ confirmMsg }}</div>
       <div class="confirm-modal__actions" style="display:flex;gap:8px;justify-content:center;padding:16px">
         <button class="confirm-modal__btn confirm-modal__btn--cancel" @click="showConfirm = false" style="padding:7px 20px;border-radius:var(--radius);font-size:12px;cursor:pointer;border:1px solid var(--border);background:var(--bg-2);color:var(--fg-2)">取消</button>
-        <button class="confirm-modal__btn confirm-modal__btn--ok" @click="showConfirm = false; deleteWf(currentDeleteName)" style="padding:7px 20px;border-radius:var(--radius);font-size:12px;cursor:pointer;border:none;background:var(--accent);color:oklch(99% 0 0)">确定</button>
+        <button class="confirm-modal__btn confirm-modal__btn--ok" @click="showConfirm = false; deleteWf(currentDeleteName, currentDeleteScope)" style="padding:7px 20px;border-radius:var(--radius);font-size:12px;cursor:pointer;border:none;background:var(--accent);color:oklch(99% 0 0)">确定</button>
       </div>
     </div>
   </div>
@@ -365,7 +376,7 @@ function cleanupDrag() {
 .stage-row.drag-before { border-top: 2px solid var(--accent) !important; border-radius: 0 !important; }
 .stage-row.dragging { opacity: .4; }
 .we-stage-drag-handle:hover { color: var(--accent) !important; }
-.wf-source-tag { display:inline-block; margin-left:6px; padding:1px 6px; border-radius:99px; font-size:10px; font-weight:500; vertical-align:middle; } .wf-source--global { background:var(--accent-soft); color:var(--accent); } .wf-source--project { background:#e8f5e9; color:#2e7d32; }
+.wf-source-tag { display:inline-block; margin-left:6px; padding:1px 6px; border-radius:99px; font-size:10px; font-weight:500; vertical-align:middle; } .wf-source--global { background:var(--accent-soft); color:var(--accent); } .wf-source--private { background:#e8f5e9; color:#2e7d32; }
 .wf-new-btn:hover {
   border-color: var(--accent) !important;
   background: var(--accent-soft) !important;
