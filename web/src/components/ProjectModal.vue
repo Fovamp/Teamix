@@ -7,14 +7,17 @@ const emit = defineEmits<{ (e: "close"): void; (e: "selected"): void }>()
 
 const projects = ref<any[]>([])
 const currentProject = ref("")
-const currentService = ref("")
 const loading = ref(false)
 const err = ref("")
 const working = ref(false)
 
-// 模块选择（为资源池预留，仅记录，不影响任何行为）
-const expandedProj = ref("")
-const projServices = ref<any[]>([])
+// 模块选择（假选择，为资源池预留）：按项目多选，点项目卡片才真正选择项目。
+const selectedByProject = ref<Record<string, string[]>>({})
+const showModule = ref(false)
+const moduleProject = ref("")
+const moduleServices = ref<any[]>([])
+const moduleLoading = ref(false)
+const moduleSel = ref<string[]>([])
 
 // 凭证步骤
 const credStep = ref(false)
@@ -37,7 +40,11 @@ async function load() {
     ])
     projects.value = ps || []
     currentProject.value = (st && st.selectedProject) || ""
-    currentService.value = localStorage.getItem("teamix_selected_service") || ""
+    try {
+      selectedByProject.value = JSON.parse(localStorage.getItem("teamix_selected_services") || "{}")
+    } catch {
+      selectedByProject.value = {}
+    }
     if (creds) {
       configured.value = !!creds.configured
       sshKeyPath.value = creds.sshKeyPath || ""
@@ -115,14 +122,10 @@ function close() {
   emit("close")
 }
 
-// 模块选择（独立二级模态窗，仅记录选择，不影响任何行为，为资源池预留）
-const showModule = ref(false)
-const moduleProject = ref("")
-const moduleServices = ref<any[]>([])
-const moduleLoading = ref(false)
-
+// 模块选择（独立二级模态窗，多选假选择，为资源池预留）
 async function openModuleModal(project: string) {
   moduleProject.value = project
+  moduleSel.value = [...(selectedByProject.value[project] || [])]
   showModule.value = true
   moduleLoading.value = true
   moduleServices.value = []
@@ -133,17 +136,26 @@ async function openModuleModal(project: string) {
   }
 }
 
+function toggleModule(name: string) {
+  const i = moduleSel.value.indexOf(name)
+  if (i >= 0) moduleSel.value.splice(i, 1)
+  else moduleSel.value.push(name)
+}
+
 function closeModule() {
   if (moduleLoading.value) return
   showModule.value = false
 }
 
-function chooseService(name: string) {
-  currentService.value = name
-  localStorage.setItem("teamix_selected_service", name)
+// 确定：保存该项目的多选模块到 localStorage（假选择，点项目卡片才真正选项目）
+function confirmModule() {
+  selectedByProject.value[moduleProject.value] = [...moduleSel.value]
+  localStorage.setItem("teamix_selected_services", JSON.stringify(selectedByProject.value))
   showModule.value = false
-  emit("selected")
-  emit("close")
+}
+
+function projectSelected(name: string) {
+  return selectedByProject.value[name] || []
 }
 </script>
 
@@ -176,7 +188,13 @@ function chooseService(name: string) {
             <div class="proj-card__meta">
               <span>{{ p.serviceCount }} 个服务</span>
               <span v-if="p.git" class="proj-card__git">{{ p.git }}</span>
-              <button class="proj-card__expand" @click.stop="openModuleModal(p.name)">选模块</button>
+              <button class="proj-card__expand" @click.stop="openModuleModal(p.name)">
+                选模块<span v-if="projectSelected(p.name).length" class="proj-card__sel-n">({{ projectSelected(p.name).length }})</span>
+              </button>
+            </div>
+            <div v-if="projectSelected(p.name).length" class="proj-card__chips">
+              <span v-for="s in projectSelected(p.name).slice(0, 3)" :key="s" class="proj-card__chip">{{ s }}</span>
+              <span v-if="projectSelected(p.name).length > 3" class="proj-card__chip proj-card__chip--more">+{{ projectSelected(p.name).length - 3 }}</span>
             </div>
           </div>
         </template>
@@ -228,14 +246,18 @@ function chooseService(name: string) {
         <div v-if="moduleLoading" style="color:var(--muted-2);text-align:center;padding:24px;font-size:13px">加载模块...</div>
         <template v-else>
           <div v-if="moduleServices.length === 0" style="color:var(--muted-2);text-align:center;padding:24px;font-size:13px">该项目未配置模块</div>
-          <div v-for="s in moduleServices" :key="s.name" class="proj-card__svc" @click="chooseService(s.name)">
+          <div v-for="s in moduleServices" :key="s.name" class="proj-card__svc"
+            :class="{ 'proj-card__svc--sel': moduleSel.includes(s.name) }" @click="toggleModule(s.name)">
+            <span class="proj-card__svc-check">{{ moduleSel.includes(s.name) ? "✓" : "" }}</span>
             <span class="proj-card__svc-name">{{ s.name }}</span>
             <span class="proj-card__svc-type">{{ s.type }}</span>
             <span v-if="s.port" class="proj-card__svc-port">:{{ s.port }}</span>
-            <span v-if="currentService === s.name && currentProject === moduleProject" class="proj-card__cur" style="font-size:10px">已选</span>
           </div>
-          <div style="margin-top:12px;text-align:center">
-            <button class="btn" @click="closeModule">选整个项目（跳过模块）</button>
+          <div style="margin-top:12px;display:flex;gap:8px;justify-content:center">
+            <button class="btn" @click="closeModule">跳过（选整个项目）</button>
+            <button class="btn primary" :disabled="moduleSel.length === 0" @click="confirmModule">
+              确定选择（{{ moduleSel.length }}）
+            </button>
           </div>
         </template>
       </div>
@@ -277,11 +299,16 @@ function chooseService(name: string) {
 .cred-box__actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
 .proj-card__expand { margin-top: 4px; font-size: 11px; padding: 2px 10px; border: 1px solid var(--border); border-radius: 99px; background: var(--bg-2); color: var(--muted); cursor: pointer; }
 .proj-card__expand:hover { border-color: var(--accent); color: var(--accent); }
-.proj-card__services { grid-column: 1 / -1; margin-top: 6px; padding: 8px; border: 1px dashed var(--border); border-radius: 6px; background: var(--bg-2); display: flex; flex-direction: column; gap: 4px; }
-.proj-card__svc-empty { font-size: 12px; color: var(--muted-2); padding: 4px; }
-.proj-card__svc { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.proj-card__sel-n { margin-left: 3px; font-weight: 700; color: var(--accent); }
+.proj-card__chips { grid-column: 1 / -1; display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
+.proj-card__chip { font-size: 10px; padding: 1px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-card__chip--more { background: var(--bg-2); color: var(--muted-2); }
+.proj-card__svc { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; border: 1px solid transparent; margin-bottom: 4px; }
 .proj-card__svc:hover { background: var(--card-hover); }
+.proj-card__svc--sel { border-color: var(--accent); background: var(--accent-soft); }
+.proj-card__svc-check { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border); background: var(--bg); display: inline-flex; align-items: center; justify-content: center; font-size: 10px; color: #000; flex-shrink: 0; }
+.proj-card__svc--sel .proj-card__svc-check { background: var(--accent); border-color: var(--accent); }
 .proj-card__svc-name { font-weight: 600; }
-.proj-card__svc-type { font-size: 10px; padding: 0 6px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+.proj-card__svc-type { font-size: 10px; padding: 0 6px; border-radius: 99px; background: var(--bg-2); color: var(--muted-2); }
 .proj-card__svc-port { font-size: 11px; color: var(--muted-2); font-family: var(--mono); }
 </style>

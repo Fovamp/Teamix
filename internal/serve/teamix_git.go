@@ -115,12 +115,22 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 
 	// If project directory does not exist, clone it
 	if _, err := os.Stat(projPath); os.IsNotExist(err) {
-		if !uc.HasGitCredentials() {
-			writeJSON(w, map[string]any{"ok": false, "needCredentials": true, "error": "git credentials not configured"})
+		// 按链接类型校验凭证：SSH 链接需 SSH Key，HTTPS 需账号，本地路径无需凭证
+		var needCred string
+		switch {
+		case isSSHURL(proj.Git) && uc.Git.SSHKeyPath == "":
+			needCred = "该项目的 git 链接是 SSH 格式，请先配置 SSH Key"
+		case isHTTPSURL(proj.Git) && uc.Git.HTTPSUsername == "":
+			needCred = "该项目的 git 链接是 HTTPS 格式，请先配置账号密码"
+		case !uc.HasGitCredentials() && !isLocalURL(proj.Git):
+			needCred = "git credentials not configured"
+		}
+		if needCred != "" {
+			writeJSON(w, map[string]any{"ok": false, "needCredentials": true, "error": needCred})
 			return
 		}
 		if err := ts.cloneProject(proj.Git, projPath, uc); err != nil {
-			writeJSON(w, map[string]any{"ok": false, "error": "clone failed: " + err.Error()})
+			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 			return
 		}
 		cloned = true
@@ -149,15 +159,16 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig.UserConfig) error {	cmd := exec.Command("git", "clone", gitURL, targetPath)
+func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig.UserConfig) error {
+	cmd := exec.Command("git", "clone", gitURL, targetPath)
 
-	// Set up git credentials via environment
-	if uc.Git.SSHKeyPath != "" {
+	// 按链接类型匹配凭证：SSH 链接用 SSH Key，HTTPS 链接用账号密码。
+	switch {
+	case isSSHURL(gitURL) && uc.Git.SSHKeyPath != "":
 		cmd.Env = append(os.Environ(),
 			fmt.Sprintf("GIT_SSH_COMMAND=ssh -i %q -o StrictHostKeyChecking=accept-new", uc.Git.SSHKeyPath),
 		)
-	} else if uc.Git.HTTPSUsername != "" {
-		// For HTTPS, embed credentials in the URL safely (password with @ / % won't break it).
+	case isHTTPSURL(gitURL) && uc.Git.HTTPSUsername != "":
 		if u, err := url.Parse(gitURL); err == nil && u.Scheme == "https" {
 			u.User = url.UserPassword(uc.Git.HTTPSUsername, uc.Git.HTTPSPassword)
 			cmd = exec.Command("git", "clone", u.String(), targetPath)
@@ -166,9 +177,42 @@ func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return &gitError{msg: strings.TrimSpace(string(output)), err: err}
+		msg := strings.TrimSpace(string(output))
+		if msg == "" {
+			msg = err.Error()
+		}
+		// 凭证缺失/错误时给出中文提示（git 原始错误可能很长，保留首行要点）
+		if isSSHURL(gitURL) {
+			return &gitError{msg: "克隆失败（SSH 链接）：" + firstLine(msg) + "。请确认已配置正确的 SSH Key", err: err}
+		}
+		return &gitError{msg: "克隆失败：" + firstLine(msg), err: err}
 	}
 	return nil
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return strings.TrimSpace(s)
+}
+
+// isSSHURL 判断 git 链接是否为 SSH 格式（git@host:path 或 ssh://）。
+func isSSHURL(u string) bool {
+	return strings.HasPrefix(u, "git@") || strings.HasPrefix(u, "ssh://")
+}
+
+// isHTTPSURL 判断 git 链接是否为 HTTPS 格式。
+func isHTTPSURL(u string) bool {
+	return strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://")
+}
+
+// isLocalURL 判断 git 链接是否为本地路径（无需凭证）。
+func isLocalURL(u string) bool {
+	if isSSHURL(u) || isHTTPSURL(u) || strings.HasPrefix(u, "file://") || strings.HasPrefix(u, "git://") {
+		return false
+	}
+	return true
 }
 
 type gitError struct {
