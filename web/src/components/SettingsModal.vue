@@ -608,25 +608,23 @@ function toggleProjectServices(name: string, btn: HTMLElement) {
     box.style.display = "block"
     btn.textContent = "收起"
     if (box.innerHTML === "") {
-      const t = localStorage.getItem("teamix_token")
-      fetch("/teamix/projects/" + encodeURIComponent(name) + "/services" + (t ? "?token=" + encodeURIComponent(t) : ""))
-        .then(r => r.json()).then((list: any[]) => {
-          if (!Array.isArray(list) || list.length === 0) {
-            box.innerHTML = '<div class="cfg-svc-empty">该项目未配置服务（可点\u201c重新扫描\u201d识别模块）</div>'
-            return
-          }
-          let h = '<div class="cfg-svc-head">共 ' + list.length + ' 个服务</div>'
-          list.forEach((s: any) => {
-            h += '<div class="cfg-svc-row"><span class="cfg-svc-name">' + escH(s.name) + '</span>'
-            h += '<span class="cfg-svc-type">' + escH(s.type || "-") + '</span>'
-            h += '<span class="cfg-svc-port">' + (s.port ? ":" + s.port : "") + '</span>'
-            h += '<span class="cfg-svc-dir">' + escH(s.dir || "") + '</span>'
-            h += '<span class="cfg-svc-startup">' + escH(s.startup || "") + '</span></div>'
-          })
-          box.innerHTML = h
-        }).catch(() => {
-          box.innerHTML = '<div class="cfg-svc-empty">加载失败</div>'
+      api.projectServices(name).then((list: any[]) => {
+        if (!Array.isArray(list) || list.length === 0) {
+          box.innerHTML = '<div class="cfg-svc-empty">该项目未配置服务（可点\u201c重新扫描\u201d识别模块）</div>'
+          return
+        }
+        let h = '<div class="cfg-svc-head">共 ' + list.length + ' 个服务</div>'
+        list.forEach((s: any) => {
+          h += '<div class="cfg-svc-row"><span class="cfg-svc-name">' + escH(s.name) + '</span>'
+          h += '<span class="cfg-svc-type">' + escH(s.type || "-") + '</span>'
+          h += '<span class="cfg-svc-port">' + (s.port ? ":" + s.port : "") + '</span>'
+          h += '<span class="cfg-svc-dir">' + escH(s.dir || "") + '</span>'
+          h += '<span class="cfg-svc-startup">' + escH(s.startup || "") + '</span></div>'
         })
+        box.innerHTML = h
+      }).catch(() => {
+        box.innerHTML = '<div class="cfg-svc-empty">加载失败</div>'
+      })
     }
   } else {
     box.style.display = "none"
