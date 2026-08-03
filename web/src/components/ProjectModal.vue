@@ -115,24 +115,33 @@ function close() {
   emit("close")
 }
 
-// 展开项目查看模块列表（仅记录选择，不影响任何行为，为资源池预留）。
-async function toggleExpand(project: string) {
-  if (expandedProj.value === project) {
-    expandedProj.value = ""
-    projServices.value = []
-    return
-  }
-  expandedProj.value = project
+// 模块选择（独立二级模态窗，仅记录选择，不影响任何行为，为资源池预留）
+const showModule = ref(false)
+const moduleProject = ref("")
+const moduleServices = ref<any[]>([])
+const moduleLoading = ref(false)
+
+async function openModuleModal(project: string) {
+  moduleProject.value = project
+  showModule.value = true
+  moduleLoading.value = true
+  moduleServices.value = []
   try {
-    projServices.value = await api.projectServices(project).catch(() => [])
-  } catch {
-    projServices.value = []
+    moduleServices.value = await api.projectServices(project).catch(() => [])
+  } finally {
+    moduleLoading.value = false
   }
+}
+
+function closeModule() {
+  if (moduleLoading.value) return
+  showModule.value = false
 }
 
 function chooseService(name: string) {
   currentService.value = name
   localStorage.setItem("teamix_selected_service", name)
+  showModule.value = false
   emit("selected")
   emit("close")
 }
@@ -167,18 +176,7 @@ function chooseService(name: string) {
             <div class="proj-card__meta">
               <span>{{ p.serviceCount }} 个服务</span>
               <span v-if="p.git" class="proj-card__git">{{ p.git }}</span>
-              <button class="proj-card__expand" @click.stop="toggleExpand(p.name)">
-                {{ expandedProj === p.name ? "收起模块" : "选模块" }}
-              </button>
-            </div>
-            <div v-if="expandedProj === p.name" class="proj-card__services" @click.stop>
-              <div v-if="projServices.length === 0" class="proj-card__svc-empty">该项目未配置模块</div>
-              <div v-for="s in projServices" :key="s.name" class="proj-card__svc" @click="chooseService(s.name)">
-                <span class="proj-card__svc-name">{{ s.name }}</span>
-                <span class="proj-card__svc-type">{{ s.type }}</span>
-                <span v-if="s.port" class="proj-card__svc-port">:{{ s.port }}</span>
-                <span v-if="currentService === s.name && currentProject === p.name" class="proj-card__cur" style="font-size:10px">已选</span>
-              </div>
+              <button class="proj-card__expand" @click.stop="openModuleModal(p.name)">选模块</button>
             </div>
           </div>
         </template>
@@ -214,6 +212,32 @@ function chooseService(name: string) {
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 二级模态窗：选择模块 -->
+  <div class="modal-overlay" v-if="showModule" @click.self="closeModule" style="z-index:300">
+    <div class="modal" style="width:min(520px,90vw);max-height:70vh;display:flex;flex-direction:column">
+      <div class="modal__head" style="flex-shrink:0">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        <span>选择模块 - {{ moduleProject }}</span>
+        <span class="modal__close" @click="closeModule">&times;</span>
+      </div>
+      <div style="flex:1;min-height:0;overflow-y:auto;padding:12px">
+        <div v-if="moduleLoading" style="color:var(--muted-2);text-align:center;padding:24px;font-size:13px">加载模块...</div>
+        <template v-else>
+          <div v-if="moduleServices.length === 0" style="color:var(--muted-2);text-align:center;padding:24px;font-size:13px">该项目未配置模块</div>
+          <div v-for="s in moduleServices" :key="s.name" class="proj-card__svc" @click="chooseService(s.name)">
+            <span class="proj-card__svc-name">{{ s.name }}</span>
+            <span class="proj-card__svc-type">{{ s.type }}</span>
+            <span v-if="s.port" class="proj-card__svc-port">:{{ s.port }}</span>
+            <span v-if="currentService === s.name && currentProject === moduleProject" class="proj-card__cur" style="font-size:10px">已选</span>
+          </div>
+          <div style="margin-top:12px;text-align:center">
+            <button class="btn" @click="closeModule">选整个项目（跳过模块）</button>
+          </div>
+        </template>
       </div>
     </div>
   </div>
