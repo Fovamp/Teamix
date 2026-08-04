@@ -23,6 +23,17 @@ type Config struct {
 	Project  ProjectConfig  `yaml:"project,omitempty"`
 	Modules  []ModuleConfig `yaml:"modules,omitempty"`
 	Workflow WorkflowConfig `yaml:"workflow,omitempty"`
+	Headroom HeadroomConfig `yaml:"headroom,omitempty"`
+}
+
+// HeadroomConfig 是 headroom 上下文压缩层配置（.teamix/config.yaml 的 headroom 段）。
+// 压缩只作用于发给 LLM 的 tool 结果消息，system/用户输入保持原样（前缀缓存稳定）。
+type HeadroomConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	URL      string `yaml:"url"`
+	Model    string `yaml:"model,omitempty"`
+	MinChars int    `yaml:"min_content_chars,omitempty"`
+	TimeoutMs int   `yaml:"timeout_ms,omitempty"`
 }
 
 type ProjectConfig struct {

@@ -17,11 +17,13 @@ import (
 
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
-	"reasonix/internal/teamixconfig"
-	"reasonix/internal/workflow"
 	"reasonix/internal/control"
+	"reasonix/internal/headroom"
 	"reasonix/internal/keypool"
 	"reasonix/internal/plugin"
+	"reasonix/internal/provider"
+	"reasonix/internal/teamixconfig"
+	"reasonix/internal/workflow"
 )
 
 type userSession struct {
@@ -51,6 +53,9 @@ type TeamixServer struct {
 	// clone 进度追踪：key = "user/project" → 当前传输进度（供前端进度条轮询）
 	cloneMu   sync.Mutex
 	cloneProg map[string]string
+
+	// headroomHook 非 nil 时注入每个 boot.Build 的 WrapProvider（上下文压缩层）。
+	headroomHook func(provider.Provider) (provider.Provider, error)
 }
 
 func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *TeamixServer {
@@ -64,6 +69,7 @@ func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *Tea
 		cloneProg:  make(map[string]string),
 	}
 	ts.globalCfg = ts.loadGlobalConfig()
+	ts.headroomHook = ts.buildHeadroomHook()
 	ts.keyPool = keypool.NewPool("DEEPSEEK_API_KEY")
 	ts.keyPool.Load(ts.workspaceRoot)
 	ts.mux = ts.buildHandler()
@@ -80,6 +86,33 @@ func teamixGenerateToken() string {
 
 func (ts *TeamixServer) UsersRoot() string {
 	return filepath.Join(ts.workspaceRoot, "users")
+}
+
+// buildHeadroomHook 根据 .teamix/config.yaml 的 headroom 段构建 provider 包装器。
+// 未启用时返回 nil（boot 不包装）。hook 内任何失败都由 wrapper fail-open。
+func (ts *TeamixServer) buildHeadroomHook() func(provider.Provider) (provider.Provider, error) {
+	if ts.globalCfg == nil || ts.globalCfg.Config == nil || !ts.globalCfg.Config.Headroom.Enabled {
+		return nil
+	}
+	h := ts.globalCfg.Config.Headroom
+	if h.URL == "" {
+		h.URL = "http://127.0.0.1:8788"
+	}
+	client := headroom.New(headroom.Config{
+		URL:      h.URL,
+		Model:    h.Model,
+		MinChars: h.MinChars,
+		Timeout:  time.Duration(h.TimeoutMs) * time.Millisecond,
+	})
+	return func(p provider.Provider) (provider.Provider, error) {
+		return headroom.Wrap(p, client, func(s headroom.Stats) {
+			slog.Info("teamix: headroom compressed",
+				"provider", p.Name(),
+				"messages", s.Compressed,
+				"bytes_before", s.BeforeBytes, "bytes_after", s.AfterBytes,
+				"tokens_before", s.TokensBefore, "tokens_after", s.TokensAfter)
+		}), nil
+	}
 }
 
 func (ts *TeamixServer) UserRoot(name string) string {
@@ -215,6 +248,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		ExcludedPluginNames: ts.excludedMachineMCPNames(),
 		MemoryUserDir:       filepath.Join(userRoot, ".teamix"),
 		ExcludeHomeSkills:   true,
+		WrapProvider:        ts.headroomHook,
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("build controller for %q: %w", name, err)

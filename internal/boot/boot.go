@@ -160,6 +160,10 @@ type Options struct {
 	// schemas stay byte-identical, so the provider-visible surface is unchanged.
 	FileOverlay    builtin.FileOverlay
 	TerminalRunner builtin.TerminalRunner
+	// WrapProvider 可选地对每个构建出的 provider 做包装（如 Teamix 的 headroom
+	// 上下文压缩层）。nil 时不包装。包装器必须保持 provider.Provider 语义
+	// （Name/Stream），任何额外失败都应 fail-open 到原始 provider。
+	WrapProvider func(provider.Provider) (provider.Provider, error)
 }
 
 // Build loads config, resolves the model(s), and returns a Controller wrapping a
@@ -285,12 +289,22 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if err := netclient.Validate(proxySpec); err != nil {
 		return nil, err
 	}
+	// buildProv 是 Build 内统一的 provider 构建入口：NewProviderWithProxy +
+	// 可选的 WrapProvider 包装（Teamix headroom 压缩层等）。所有模型调用
+	// （执行/subagent/分类/规划/守护）都经它，包装语义一致。
+	buildProv := func(e *config.ProviderEntry) (provider.Provider, error) {
+		p, err := NewProviderWithProxy(e, proxySpec)
+		if err != nil || opts.WrapProvider == nil {
+			return p, err
+		}
+		return opts.WrapProvider(p)
+	}
 	balanceClient, err := netclient.NewHTTPClient(proxySpec, netclient.TransportOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	execProv, err := NewProviderWithProxy(entry, proxySpec)
+	execProv, err := buildProv(entry)
 	if err != nil {
 		return nil, err
 	}
@@ -689,7 +703,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				me.Thinking = "adaptive"
 			}
 		}
-		p, err := NewProviderWithProxy(&me, proxySpec)
+		p, err := buildProv(&me)
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -1267,7 +1281,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		if !ok {
 			return nil, fmt.Errorf("auto_plan_classifier %q is not a configured provider", cm)
 		}
-		classifierProv, err := NewProviderWithProxy(ce, proxySpec)
+		classifierProv, err := buildProv(ce)
 		if err != nil {
 			return nil, fmt.Errorf("auto_plan_classifier %q: %w", cm, err)
 		}
@@ -1284,7 +1298,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			return nil, fmt.Errorf("planner_model %q is not a configured provider", pm)
 		}
 		if pe.Model != entry.Model {
-			plannerProv, err := NewProviderWithProxy(pe, proxySpec)
+			plannerProv, err := buildProv(pe)
 			if err != nil {
 				return nil, fmt.Errorf("planner %q: %w", pm, err)
 			}
@@ -1368,7 +1382,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			slog.Warn("guardian model is not a configured provider — guardian disabled", "model", guardianModel)
 			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Guardian was disabled because its model was not found.", Detail: fmt.Sprintf("guardian_model %q not found — guardian disabled", guardianModel)})
 		} else {
-			pProv, err := NewProviderWithProxy(ge, proxySpec)
+			pProv, err := buildProv(ge)
 			if err != nil {
 				slog.Warn("guardian provider construction failed — guardian disabled", "model", guardianModel, "err", err)
 				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Guardian was disabled because it could not start.", Detail: fmt.Sprintf("guardian construction failed: %v — guardian disabled", err)})
