@@ -42,7 +42,9 @@ function updatePercent() {
 watch(cloneProgress, updatePercent)
 
 // 模块选择（假选择，为资源池预留）：按项目多选，点项目卡片才真正选择项目。
+// 缓存按用户隔离，避免 admin 勾选的模块泄漏到其他用户。
 const selectedByProject = ref<Record<string, string[]>>({})
+const svcStoreKey = () => "teamix_selected_services_" + (api.currentUser() || "default")
 const showModule = ref(false)
 const moduleProject = ref("")
 const moduleServices = ref<any[]>([])
@@ -71,7 +73,7 @@ async function load() {
     projects.value = ps || []
     // 不回显上次选中的项目（每次打开都是初始状态）
     try {
-      selectedByProject.value = JSON.parse(localStorage.getItem("teamix_selected_services") || "{}")
+      selectedByProject.value = JSON.parse(localStorage.getItem(svcStoreKey()) || "{}")
     } catch {
       selectedByProject.value = {}
     }
@@ -120,11 +122,18 @@ async function doSelect(project: string) {
   working.value = true
   credErr.value = ""
   err.value = ""
-  cloneActive.value = true
-  cloneProgress.value = ""
-  startPolling(project)
-  // 大仓库克隆可能较慢：明确告知进行中
-  toast("正在拉取项目代码（大仓库可能需要几分钟）...", "info", 60000)
+  // 本地已有（已 clone）→ 直接连接，不弹拉取提示；否则进 clone 进度流程。
+  const proj = projects.value.find((x: any) => x.name === project)
+  const needClone = !(proj && proj.cloned)
+  if (needClone) {
+    cloneActive.value = true
+    cloneProgress.value = ""
+    startPolling(project)
+    // 大仓库克隆可能较慢：明确告知进行中
+    toast("正在拉取项目代码（大仓库可能需要几分钟）...", "info", 60000)
+  } else {
+    toast("正在连接项目...", "info", 5000)
+  }
   try {
     const r = await api.projectSelect(project)
     stopPolling()
@@ -159,6 +168,11 @@ async function saveCredentials() {
   working.value = true
   credErr.value = ""
   try {
+    // 前端先校验，避免"只填令牌没填用户名"导致保存静默失败后再弹表单
+    if (credMode.value === "https" && !httpsUser.value.trim()) {
+      credErr.value = "请填写用户名（令牌填在密码/Token 栏；用户名可填 oauth2 或任意非空值）"
+      return
+    }
     const body = credMode.value === "ssh"
       ? { sshKeyPath: sshKeyPath.value.trim() }
       : { httpsUsername: httpsUser.value.trim(), httpsPassword: httpsPass.value }
@@ -215,7 +229,7 @@ function closeModule() {
 // 确定：保存该项目的多选模块到 localStorage（假选择，点项目卡片才真正选项目）
 function confirmModule() {
   selectedByProject.value[moduleProject.value] = [...moduleSel.value]
-  localStorage.setItem("teamix_selected_services", JSON.stringify(selectedByProject.value))
+  localStorage.setItem(svcStoreKey(), JSON.stringify(selectedByProject.value))
   showModule.value = false
 }
 

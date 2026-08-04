@@ -199,7 +199,8 @@ function rn(n: any, d: number): HTMLElement {
     wrap.ondragstart = (e) => {
       const el = (e.target as HTMLElement).closest('[data-p]')
       const p = el ? el.getAttribute('data-p') : _rp
-      ;(window as any)._dragPath = '@' + p
+      // agent 工作区 = 用户根，拖拽引用带项目前缀（树路径相对项目根）。
+      ;(window as any)._dragPath = '@' + (currentProject.value ? currentProject.value + '/' : '') + p
       e.dataTransfer!.setData('text/plain', (window as any)._dragPath)
       e.dataTransfer!.effectAllowed = 'copy'
     }
@@ -243,9 +244,14 @@ function openFilePreview(path: string) {
   const token = localStorage.getItem('teamix_token')
   const url = '/teamix/file?path=' + encodeURIComponent(path) + (token ? '&token=' + encodeURIComponent(token) : '')
   fetch(url)
-    .then(r => r.json())
-    .then(data => { document.getElementById('pv-body')!.textContent = data.body || 'Empty file' })
-    .catch(() => { document.getElementById('pv-body')!.textContent = 'Error loading file' })
+    .then(async r => {
+      const txt = await r.text()
+      let data: any = null
+      try { data = JSON.parse(txt) } catch { /* 非 JSON 响应体（如 4xx 纯文本） */ }
+      if (!r.ok || !data) throw new Error('HTTP ' + r.status + (txt ? ' · ' + txt.slice(0, 160) : ''))
+      document.getElementById('pv-body')!.textContent = data.body || 'Empty file'
+    })
+    .catch((e: Error) => { document.getElementById('pv-body')!.textContent = 'Error loading file: ' + e.message })
 }
 </script>
 

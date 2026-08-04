@@ -103,7 +103,7 @@ export const api = {
   mcpRemove: (name: string): Promise<any> => post("/teamix/mcp/remove", { name }),
 
   // Projects (selection + git credentials)
-  projects: (): Promise<Array<{ name: string; git: string; description: string; serviceCount: number }>> => get("/teamix/projects"),
+  projects: (): Promise<Array<{ name: string; git: string; description: string; serviceCount: number; cloned: boolean }>> => get("/teamix/projects"),
   projectServices: async (name: string): Promise<any> => {
     const data = await get("/teamix/projects/" + encodeURIComponent(name) + "/services")
     return (data && data.services) || []

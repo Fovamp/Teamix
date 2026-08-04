@@ -33,10 +33,12 @@ const wfStages = ref<any[]>([])
 const wfVisible = ref(false)
 let activeStageIdx = -1
 const statusModel = ref("-")
+const selectedProject = ref("")
 const showRewind = ref(false)
 const showTodoPanel = ref(false)
 
-// cumulative stats
+// 工作流名缓存按用户隔离（teamix_user 是登录用户），避免跨用户读到上一个人的工作流。
+const wfStoreKey = () => "teamix_wf_name_" + (localStorage.getItem('teamix_user') || "default")
 let cumulativeCost = 0
 let cumulativeCacheHit = 0
 let cumulativeCacheMiss = 0
@@ -126,8 +128,8 @@ onMounted(() => {
     const name = e.detail || ""
     wfName.value = name || "-"
     // Persist to localStorage for page refresh
-    if (name) { localStorage.setItem('teamix_wf_name', name) }
-    else { localStorage.removeItem('teamix_wf_name') }
+    if (name) { localStorage.setItem(wfStoreKey(), name) }
+    else { localStorage.removeItem(wfStoreKey()) }
     const el = document.getElementById('welcome-wf')
     if (el) el.textContent = name || ""
   }) as any)
@@ -486,7 +488,7 @@ async function loadWorkflow() {
       }
       // Restore workflow name from localStorage on page refresh
       if (!wfName.value || wfName.value === '-') {
-        const saved = localStorage.getItem('teamix_wf_name')
+        const saved = localStorage.getItem(wfStoreKey())
         if (saved) {
           wfName.value = saved
           const el = document.getElementById('welcome-wf')
@@ -672,6 +674,7 @@ function fetchStatus() {
   api.status().then(s => {
     if (!s) return
     statusModel.value = s.label || '-'
+    selectedProject.value = s.selectedProject || ""
     const wm = document.getElementById('welcome-model'); if (wm) wm.textContent = s.label || '-'
     if (s.window && s.used !== undefined) {
       window.dispatchEvent(new CustomEvent('status-update', { detail: s }))
@@ -930,14 +933,16 @@ function handleFileDrop(e: DragEvent) {
 function uploadFile(file: File, relPath: string, callback: (path: string | null) => void) {
   const t = localStorage.getItem('teamix_token')
   if (!t) { callback(null); return }
+  // 上传进当前项目目录（agent 工作区 = 用户根，@引用带项目前缀后 agent 才能定位到项目内文件）。
+  const target = (selectedProject.value ? selectedProject.value + '/' : '') + (relPath || file.name)
   const fd = new FormData()
   fd.append('file', file)
-  fd.append('path', relPath || file.name)
+  fd.append('path', target)
   const xhr = new XMLHttpRequest()
   xhr.open('POST', '/teamix/upload?token=' + encodeURIComponent(t), true)
   xhr.onload = () => {
     if (xhr.status === 200) {
-      try { const resp = JSON.parse(xhr.responseText); callback(resp.path || relPath || file.name) }
+      try { const resp = JSON.parse(xhr.responseText); callback(resp.path || target) }
       catch (e) { callback(file.name) }
     } else { callback(file.name) }
   }

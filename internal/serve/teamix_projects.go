@@ -2,7 +2,15 @@
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 )
+
+// hasGitDir 报告用户本地是否已有该项目（与 projectSelect 跳过克隆的判定一致：.git 存在）。
+func hasGitDir(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
+}
 
 func (ts *TeamixServer) handleProjects(w http.ResponseWriter, r *http.Request, u *userSession) {
 	if ts.globalCfg == nil || ts.globalCfg.Projects == nil {
@@ -14,6 +22,7 @@ func (ts *TeamixServer) handleProjects(w http.ResponseWriter, r *http.Request, u
 		Git          string `json:"git"`
 		Description  string `json:"description"`
 		ServiceCount int    `json:"serviceCount"`
+		Cloned       bool   `json:"cloned"` // 该用户本地是否已 clone（前端据此决定是否显示拉取提示）
 	}
 	out := make([]projJSON, 0, len(ts.globalCfg.Projects.Projects))
 	for _, p := range ts.globalCfg.Projects.Projects {
@@ -22,6 +31,7 @@ func (ts *TeamixServer) handleProjects(w http.ResponseWriter, r *http.Request, u
 			Git:          p.Git,
 			Description:  p.Description,
 			ServiceCount: len(p.Services),
+			Cloned:       hasGitDir(filepath.Join(u.userRoot, p.Name)),
 		})
 	}
 	writeJSON(w, out)

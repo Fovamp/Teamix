@@ -532,6 +532,8 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 
 func (ts *TeamixServer) handleV3Index(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// index.html 引用 hash 命名的 assets，必须每次重新验证，避免替换二进制后浏览器加载旧前端。
+	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(v3IndexHTML)
 }
 
@@ -552,6 +554,8 @@ func (ts *TeamixServer) handleV3Assets(w http.ResponseWriter, r *http.Request) {
 		ct = "image/svg+xml"
 	}
 	w.Header().Set("Content-Type", ct)
+	// hash 文件名不可变，可长期缓存。
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	w.Write(data)
 }
 

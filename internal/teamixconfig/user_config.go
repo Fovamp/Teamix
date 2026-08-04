@@ -93,7 +93,7 @@ func (uc *UserConfig) HasGitCredentials() bool {
 func (uc *UserConfig) ValidateGitCredentials() error {
 	if uc.Git.SSHKeyPath != "" {
 		if _, err := os.Stat(uc.Git.SSHKeyPath); err != nil {
-			return fmt.Errorf("SSH key not found at %s: %w", uc.Git.SSHKeyPath, err)
+			return fmt.Errorf("SSH key not found at %s（注意：SSH key 路径是 Teamix 服务器上的路径，不是浏览器所在电脑的路径）: %w", uc.Git.SSHKeyPath, err)
 		}
 		return nil
 	}
@@ -102,6 +102,9 @@ func (uc *UserConfig) ValidateGitCredentials() error {
 			return fmt.Errorf("HTTPS password is required when username is set")
 		}
 		return nil
+	}
+	if uc.Git.HTTPSPassword != "" {
+		return fmt.Errorf("已填写令牌但缺少用户名：HTTPS 凭证需要「用户名 + 令牌（密码栏）」两个字段。用户名可填 oauth2 或任意非空值")
 	}
 	return fmt.Errorf("no git credentials configured (set ssh_key_path or https_username)")
 }

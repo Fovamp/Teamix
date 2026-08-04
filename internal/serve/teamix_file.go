@@ -70,7 +70,8 @@ func (ts *TeamixServer) handleFile(w http.ResponseWriter, r *http.Request, u *us
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	fullPath := filepath.Join(u.userRoot, filepath.FromSlash(path))
+	// 文件树以 userRoot/<selectedProject>/ 为根（handleTree），读取时同样补上项目段。
+	fullPath := filepath.Join(u.userRoot, u.selectedProject, filepath.FromSlash(path))
 	absRoot, _ := filepath.Abs(u.userRoot)
 	absPath, _ := filepath.Abs(fullPath)
 	if !strings.HasPrefix(absPath, absRoot) {
