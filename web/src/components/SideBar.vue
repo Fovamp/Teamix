@@ -221,7 +221,7 @@ async function resumeSession(s: any, e?: Event) {
         <div class="sm-item"><span class="sm-val" id="sm-cost">{{ smCost }}</span><span>费用</span></div>
         <div class="sm-item"><span class="sm-val acc" id="sm-balance">{{ smBalance }}</span><span>余额</span></div>
       </div>
-      <div style="padding:4px 10px"><div class="status"><span class="status__dot" :class="{ 'status__dot--busy': running }"></span><span>{{ running ? "思考中..." : statusModel }}</span></div></div>
+      <div style="padding:4px 10px"><div class="status"><span class="status__dot" :class="{ 'status__dot--busy': running }"></span><span>{{ statusModel }}</span></div></div>
       <div style="padding:0 10px 6px"><button id="teamix-logout-btn" @click="lgout()" style="width:100%;padding:5px 0;border:1px solid var(--border);border-radius:6px;background:var(--bg-2);color:var(--muted-2);font-size:11px;cursor:pointer">{{ token ? "Logout" : "Login" }}</button></div>
     </div>
   </aside>

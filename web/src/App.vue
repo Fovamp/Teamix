@@ -98,7 +98,7 @@ onUnmounted(() => {
 #app-divider-right { left: calc(100% - var(--right-w, 220px) - 2px); }
 .sidebar { grid-column: 1; grid-row: 1 / 4; }
 .transcript { grid-column: 2; grid-row: 2; }
-.footer { grid-column: 2; grid-row: 3; }
+.footer { grid-column: 2; grid-row: 3; position: relative; }
 .right-panel { grid-column: 3; grid-row: 1 / 4; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--border); }
 .sidebar-overlay { display: none; position: fixed; inset: 0; background: oklch(0% 0 0/.5); z-index: 40; }
 .sidebar-overlay--visible { display: block; }

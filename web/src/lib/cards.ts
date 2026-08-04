@@ -44,22 +44,17 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 export function createCards(ctx: CardsContext) {
-  // insertCard inserts a DOM element into #log before the todo panel (if present),
-  // so tool/ask/compaction cards stay interleaved with messages instead of stacking at bottom.
+  // insertCard 把卡片插入 #log 末尾（todo 面板已独立于会话流，不再作为锚点）。
   function insertCard(el: HTMLElement) {
     const log = ctx.log()
     if (!log) return
-    // Insert after the last element that is part of the conversation flow:
-    // tool cards, usage strips, approvals, asks, compaction, errors, or the last assistant message.
     const flowSelectors = '.card, .metric-strip, .approval, .ask, .compaction, .msg--error, .msg--assistant, .msg--user'
     const allFlow = log.querySelectorAll(flowSelectors)
     const anchor = allFlow.length > 0 ? allFlow[allFlow.length - 1] : null
     if (anchor && anchor.nextSibling) {
       log.insertBefore(el, anchor.nextSibling)
     } else {
-      const todo = document.getElementById('todo-panel')
-      if (todo) log.insertBefore(el, todo)
-      else log.appendChild(el)
+      log.appendChild(el)
     }
   }
   // ── Tool cards ──
@@ -280,8 +275,13 @@ export function createCards(ctx: CardsContext) {
             const input = el('textarea', 'ask__free') as HTMLTextAreaElement
             input.placeholder = '输入自定义回答...'
             input.value = custom[cur.id] || ''
-            input.style.cssText = 'width:100%;min-height:50px;margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:13px;resize:vertical;font-family:inherit'
-            input.oninput = () => { setCustom(cur.id, input.value); render() }
+            input.oninput = () => {
+                setCustom(cur.id, input.value)
+                // 不重建 DOM：重建会替换输入框节点、中断中文输入法组合（候选框闪没），
+                // 只同步提交按钮的禁用态
+                const submit = d.querySelector('.ask__submit') as HTMLButtonElement | null
+                if (submit) submit.disabled = !canConfirm()
+            }
             input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && custom[cur.id] && custom[cur.id].trim()) { e.preventDefault(); confirmOrAdvance() } }
             body.appendChild(input)
         }
@@ -289,17 +289,22 @@ export function createCards(ctx: CardsContext) {
         // Footer buttons
         const footer = el('div', 'ask__footer')
         if (active > 0) {
-            const back = el('button', 'ask__back', '\u2190 上一题')
+            const back = el('button', 'ask__back', '← 上一问')
             back.onclick = () => { if (!submitting) { active = Math.max(0, active - 1); customOpen = false; render() } }
             footer.appendChild(back)
         }
-        const btn = el('button', 'ask__submit', isLast() ? '提交' : '下一题 \u2192')
+        const btn = el('button', 'ask__submit', isLast() ? '提交' : '下一问 →')
         btn.disabled = !canConfirm()
         btn.onclick = confirmOrAdvance
         footer.appendChild(btn)
         body.appendChild(footer)
 
         d.appendChild(body)
+        // render() 重建 body 会替换输入框节点，输入时立即恢复焦点避免失焦
+        if (customOpen) {
+            const inp = body.querySelector('.ask__free') as HTMLTextAreaElement | null
+            if (inp) inp.focus()
+        }
     }
 
     insertCard(d)
@@ -360,6 +365,23 @@ export function createCards(ctx: CardsContext) {
   // ── Notice / Phase / Error ──
   function showNotice(text: string, tone?: string) {
     ctx.hideWelcome()
+    // 系统级过程通知（会话冲突副本 / 后台 bash 启停）不占会话卡片，避免堆积
+    if (/^(session changed on disk|background bash (started|killed):)/.test(text)) return
+    // 工具输出截断提示：不占独立卡片（避免大输出堆积在会话流底部），
+    // 附加到最近的 tool 卡片元信息上；无对应卡片时弱化为小字提示。
+    if (/^tool output truncated:/.test(text)) {
+      const cards = Object.values(ctx.toolCards)
+      if (cards.length > 0) {
+        const last = cards[cards.length - 1]
+        const meta = last.querySelector('.card-meta')
+        if (meta) meta.textContent += ' · 输出已截断'
+        return
+      }
+      const muted = el('div', 'notice notice--muted', text)
+      insertCard(muted)
+      ctx.scrollDown(true)
+      return
+    }
     const n = el('div', 'notice' + (tone === 'warn' ? ' notice--warn' : ''), text)
     insertCard(n)
     ctx.scrollDown(true)

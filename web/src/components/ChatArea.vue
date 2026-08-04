@@ -90,6 +90,7 @@ let pendingPages: { url: string; label: string }[] = []
 // todos
 let todosState: any[] = []
 let todosDismissed = false
+const todosCollapsed = ref(false)
 
 // SSE
 let escTimer: ReturnType<typeof setTimeout> | null = null
@@ -123,7 +124,14 @@ onMounted(() => {
     showTodoPanel.value = false
   })
   window.addEventListener("workflow-changed", loadWorkflow)
-  window.addEventListener("teamix-project-selected", () => { fetchNotifications(); fetchStatus() })
+  window.addEventListener("teamix-project-selected", () => {
+    fetchNotifications()
+    fetchStatus()
+    // 选项目后会话目录切到项目 .teamix/sessions，立即刷新会话列表（无需刷新页面）
+    api.sessions().then(ss => {
+      window.dispatchEvent(new CustomEvent('sessions-update', { detail: ss }))
+    }).catch(() => {})
+  })
   window.addEventListener("workflow-selected", ((e: CustomEvent) => {
     const name = e.detail || ""
     wfName.value = name || "-"
@@ -146,6 +154,14 @@ onMounted(() => {
     log.addEventListener('wheel', (e: WheelEvent) => {
       if (e.deltaY < 0 && log.scrollHeight > log.clientHeight) pinnedToBottom = false
     }, { passive: true })
+    // 内容变化监听：贴底时自动滚到底（对齐 desktop 的 stick-to-bottom，无 rAF 滞后）
+    if ('MutationObserver' in window) {
+      const mo = new MutationObserver(() => {
+        if (pinnedToBottom) log.scrollTop = log.scrollHeight
+      })
+      mo.observe(log, { childList: true, subtree: true, characterData: true })
+      ;(log as any)._teamixMutObserver = mo
+    }
   }
 
   // Drag-drop on input
@@ -161,6 +177,8 @@ onUnmounted(() => {
   if (tickTimer) clearInterval(tickTimer)
   window.removeEventListener("workflow-changed", loadWorkflow)
   document.removeEventListener('keydown', onGlobalKeydown)
+  const log = document.getElementById('log')
+  if (log) (log as any)._teamixMutObserver?.disconnect()
 })
 
 // ── history load ──
@@ -770,10 +788,8 @@ function scrollDown(force?: boolean) {
   if (!log) return
   if (force) pinnedToBottom = true
   if (!pinnedToBottom) return
-  requestAnimationFrame(() => {
-    if (!pinnedToBottom && !force) return
-    log.scrollTo({ top: log.scrollHeight, behavior: 'instant' })
-  })
+  // 同步赋值：内容已渲染时立即贴底；若 Vue 异步渲染未完成，ResizeObserver 兜底
+  log.scrollTop = log.scrollHeight
 }
 
 // ── Global keydown ──
@@ -1077,14 +1093,23 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
     <MessageItem v-for="(m, i) in messages" :key="i" :m="m" />
     <MessageItem v-if="streamingMsg" :m="streamingMsg" />
 
-    <!-- Todo Panel -->
-    <div class="todos" :class="{ 'todos--visible': showTodoPanel }" id="todo-panel">
-      <div class="todos__head" id="todos-head">
+    <!-- Goal active bar -->
+    <div class="goal-chip" v-if="goalActive" @click="toggleGoalMode()" style="max-width:760px;margin:0 auto 8px">
+      <svg class="goal-chip__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/></svg>
+      <span class="goal-chip__text" v-text="goalText"></span>
+      <span class="goal-chip__close">&times;</span>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <!-- Todo Panel：悬浮在输入框上方，不占会话空间；点击头部展开/收回 -->
+    <div class="todos" :class="{ 'todos--visible': showTodoPanel, 'todos--collapsed': todosCollapsed }" id="todo-panel">
+      <div class="todos__head" id="todos-head" @click="todosCollapsed = !todosCollapsed">
         <span class="todos__title">任务列表</span>
         <span class="todos__badge" id="todos-badge">{{ todosState.filter(t => t.status === 'completed').length }}/{{ todosState.length }}</span>
         <span class="todos__summary" id="todos-summary">{{ todosState.find(t => t.status === 'in_progress')?.activeForm || todosState[todosState.length - 1]?.content || '' }}</span>
         <span class="todos__chev" style="margin-left:auto">▼</span>
-        <span class="todos__dismiss" id="todos-dismiss" @click="todosDismissed = true; showTodoPanel = false">&times;</span>
+        <span class="todos__dismiss" id="todos-dismiss" @click.stop="todosDismissed = true; showTodoPanel = false">&times;</span>
       </div>
       <ul class="todos__list" id="todos-list">
         <li v-for="(t, i) in todosState" :key="i"
@@ -1098,16 +1123,6 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
         </li>
       </ul>
     </div>
-
-    <!-- Goal active bar -->
-    <div class="goal-chip" v-if="goalActive" @click="toggleGoalMode()" style="max-width:760px;margin:0 auto 8px">
-      <svg class="goal-chip__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/></svg>
-      <span class="goal-chip__text" v-text="goalText"></span>
-      <span class="goal-chip__close">&times;</span>
-    </div>
-  </section>
-
-  <footer class="footer">
     <div class="toolbar">
       <button class="toolbar__btn" :class="{ 'toolbar__btn--ok': !bypassMode && !planMode }" id="btn-auto" title="自动模式" @click="setToolApprovalMode('auto'); setPlan(false)">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12l2 2 4-4"/></svg> 自动
