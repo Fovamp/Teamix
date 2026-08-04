@@ -8,7 +8,7 @@ const { toast } = useToast()
 const isArch = ref(false)
 const tab = ref("keys")
 const allTabs = ["users", "projects", "keys", "mcp", "soul", "skills", "memory"]
-// 普通用户只可见自己私有相关的配置（MCP/Skills/记忆），用户/项目/密钥池/AI 人格为架构师专属
+// 普通用户可见：MCP/Skills/记忆/人格（人格=全局只读可选 + 私有可编辑）；用户/项目/密钥池为架构师专属
 const visibleTabs = ref<string[]>(allTabs)
 const tabLbl: Record<string, string> = { users: "\u7528\u6237", projects: "\u9879\u76ee", keys: "\u5bc6\u94a5\u6c60", mcp: "MCP", soul: "AI \u4eba\u683c", skills: "Skills", memory: "\u8bb0\u5fc6" }
 const tabIcon: Record<string, string> = { users: "\ud83d\udc65", projects: "\ud83d\udce6", keys: "\ud83d\udd11", mcp: "\ud83d\udd27", soul: "\ud83e\udde0", skills: "\ud83d\udcdc", memory: "\ud83e\udde0" }
@@ -18,7 +18,7 @@ onMounted(async () => {
     const r = await api.userRole()
     isArch.value = r.role === "architect"
   } catch {}
-  visibleTabs.value = isArch.value ? allTabs : ["mcp", "skills", "memory"]
+  visibleTabs.value = isArch.value ? allTabs : ["mcp", "soul", "skills", "memory"]
   // 打开设置默认显示第一个可见页面（架构师=用户，普通用户=MCP）
   tab.value = visibleTabs.value[0] || "keys"
 })
@@ -43,7 +43,7 @@ async function switchTab(t: string) {
     else if (t === "mcp") { await renderMCP() }
     else if (t === "skills") { await renderSkills() }
     else if (t === "memory") { await renderMemory() }
-    else { await renderCapability(t) }
+    else { await renderSoul() }
   } catch (e: any) {
     contentHtml.value = `<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25: ${e.message}</div>`
   }
@@ -326,20 +326,75 @@ async function renderMemory() {
   contentHtml.value = h
 }
 
-async function renderCapability(kind: string) {
+function personaCard(p: any, canEdit: boolean) {
+  const scope = p.scope
+  const activeBadge = p.effective
+    ? '<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(76,175,80,.15);color:#4caf50">\u5f53\u524d\u751f\u6548</span>'
+    : ''
+  const scopeBadge = scope === "global"
+    ? '<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(76,175,80,.15);color:#4caf50">\u5168\u5c40</span>'
+    : '<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(150,150,150,.15);color:var(--muted-2)">\u79c1\u6709</span>'
+  const preview = p.systemPrompt ? p.systemPrompt.slice(0, 60).replace(/</g, "&lt;") : '<span style="color:var(--muted-2)">\u6682\u65e0\u5185\u5bb9</span>'
+  let btns = ''
+  if (!p.effective) {
+    // "设为当前"只对个人生效：点全局=自己选全局人格（写 useGlobal），点私有=激活私有
+    btns += '<button class="btn sm" data-soul-set="' + escAttr(p.name) + '" data-soul-scope="' + scope + '" style="padding:3px 10px;border:1px solid var(--accent);border-radius:4px;background:var(--accent-soft);color:var(--accent);font-size:11px;cursor:pointer">\u8bbe\u4e3a\u5f53\u524d</button>'
+  }
+  if (canEdit) {
+    btns += '<button class="btn sm" data-soul-act="' + escAttr(p.name) + '" data-soul-scope="' + scope + '" style="padding:3px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:11px;cursor:pointer">\u7f16\u8f91</button>'
+    btns += '<button class="btn danger sm" data-soul-del="' + escAttr(p.name) + '" data-soul-scope="' + scope + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>'
+  }
+  return '<div class="card" style="flex-direction:column;align-items:stretch" data-open="false">'
+    + '<div class="card-head" onclick="const c=this.closest(\'.card\');const b=c.querySelector(\'.card-body\');const o=c.dataset.open===\'true\';c.dataset.open=o?\'false\':\'true\';b.style.display=o?\'none\':\'\'">'
+    + '<span class="chev" style="color:var(--muted-2);transition:transform .15s;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>'
+    + '<div class="card-main"><div class="card-title"><span class="name">' + escH(p.name) + '</span>' + scopeBadge + activeBadge + '</div>'
+    + '<span class="subject">' + preview + '</span></div>'
+    + '<div class="card-actions" style="display:flex;gap:6px;flex-shrink:0;align-items:center;flex-wrap:nowrap">' + btns + '</div>'
+    + '</div>'
+    + '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2);white-space:pre-wrap">' + (p.systemPrompt ? escH(p.systemPrompt) : '<span style="color:var(--muted-2)">\u6682\u65e0\u5185\u5bb9</span>') + '</div>'
+    + '</div>'
+}
+
+async function renderSoul() {
   const q = tokenQuery()
-  const labels: Record<string, string> = { mcp: "MCP \u670d\u52a1\u5668", soul: "AI \u4eba\u683c", skills: "Skills" }
-  const descs: Record<string, string> = { mcp: "\u914d\u7f6e MCP \u670d\u52a1\u5668\u6765\u6269\u5c55 Agent \u7684\u5de5\u5177\u80fd\u529b\u3002", soul: "\u5b9a\u5236 AI \u7684\u7cfb\u7edf\u63d0\u793a\u8bcd\u548c\u884c\u4e3a\u98ce\u683c\u3002", skills: "\u7ba1\u7406\u9879\u76ee\u7ea7\u7684\u53ef\u590d\u7528\u811a\u672c\u548c\u81ea\u52a8\u5316\u6d41\u7a0b\u3002" }
-  const icons: Record<string, string> = { mcp: "\ud83d\udd27", soul: "\ud83e\udde0", skills: "\ud83d\udcdc" }
-  let h = '<div class="section"><h3>' + (icons[kind] || "") + " " + (labels[kind] || kind) + '</h3><p class="desc">' + (descs[kind] || "") + '</p></div>'
+  let h = '<div class="section"><h3>\ud83e\udde0 AI \u4eba\u683c</h3><p class="desc">\u4eba\u683c\u662f\u53ef\u547d\u540d\u7684\u7cfb\u7edf\u63d0\u793a\u8bcd\u6a21\u677f\u3002\u5168\u5c40\u4eba\u683c\u7531\u67b6\u6784\u5e08\u7ef4\u62a4\uff0c\u79c1\u6709\u4eba\u683c\u53ea\u5bf9\u81ea\u5df1\u53ef\u89c1\u3002\u540c\u65f6\u53ea\u80fd\u6709\u4e00\u4e2a\u751f\u6548\uff0c\u7528\u201c\u8bbe\u4e3a\u5f53\u524d\u201d\u9009\u62e9\u3002</p></div>'
   try {
-    const resp = await fetch("/teamix/capabilities" + q)
+    let role = ""
+    try {
+      const rr = await fetch("/teamix/user/role" + q)
+      role = ((await rr.json()).role || "") as string
+    } catch (e) { }
+    const isArch = role === "architect"
+    const resp = await fetch("/teamix/soul" + q)
     const data = await resp.json()
-    const cfg = data[kind] || {}
-    h += '<div class="section"><div class="section-title">\u5f53\u524d\u914d\u7f6e</div>'
-    h += '<div style="color:var(--muted-2);font-size:12px;margin-bottom:8px">\u4fdd\u5b58\u5230 .reasonix/capabilities/' + kind + '.yaml</div>'
-    h += '<textarea id="' + kind + '-raw" style="min-height:180px;width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)">' + escH(JSON.stringify(cfg, null, 2)) + '</textarea>'
-    h += '<div style="margin-top:8px;display:flex;gap:8px"><button class="btn primary" onclick="saveCapability(\'' + kind + '\')" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58\u914d\u7f6e</button><button class="btn" onclick="switchSettingsTab(\'' + kind + '\')" style="padding:6px 16px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:12px;cursor:pointer">\u8fd8\u539f</button></div></div>'
+    const gps = (data && data.global && data.global.personas) || []
+    const pps = (data && data.private && data.private.personas) || []
+    const myGlobal = (data && data.private && data.private.useGlobal) || ""
+    // 计算唯一生效人格（均为个人选择，无全局强制）：1) 私有人格 active 2) useGlobal 指定的全局人格
+    let effKey = "" // "global:名字" 或 "private:名字"
+    const privActive = pps.find((p: any) => p.active)
+    if (privActive) effKey = "private:" + privActive.name
+    else if (myGlobal) effKey = "global:" + myGlobal
+    const all = (gps.map((p: any) => ({ ...p, scope: "global" })) as any[])
+      .concat(pps.map((p: any) => ({ ...p, scope: "private" })))
+      .map((p: any) => ({ ...p, effective: (p.scope + ":" + p.name) === effKey }))
+    h += '<div class="section"><div class="section-title">\u4eba\u683c\u5217\u8868 (' + all.length + ') <span style="font-size:11px;color:var(--muted-2)">\u5168\u5c40\u4eba\u683c\u7531\u67b6\u6784\u5e08\u63d0\u4f9b\uff0c\u201c\u8bbe\u4e3a\u5f53\u524d\u201d\u53ea\u5bf9\u81ea\u5df1\u751f\u6548</span></div>'
+    if (all.length === 0) h += '<div style="color:var(--muted-2);text-align:center;padding:12px;font-size:13px">\u5c1a\u65e0\u4eba\u683c\uff0c\u4e0b\u9762\u6dfb\u52a0\u4e00\u4e2a</div>'
+    all.forEach((p: any) => {
+      // 架构师：全局/私有都可编辑；普通用户：全局只读（可设当前）、私有可编辑
+      const canEdit = isArch || p.scope === "private"
+      h += personaCard(p, canEdit)
+    })
+    // 添加表单（合并）：scope 下拉 —— 架构师可选全局/私有，普通用户固定私有
+    h += '<div class="section-title" style="margin-top:10px">\u65b0\u5efa\u4eba\u683c</div>'
+    if (isArch) {
+      h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u8303\u56f4</label><select id="soul-scope" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="private">\u79c1\u6709\uff08\u4ec5\u81ea\u5df1\u53ef\u89c1\uff09</option><option value="global">\u5168\u5c40\uff08\u5168\u5458\u53ef\u89c1\uff09</option></select></div>'
+    } else {
+      h += '<input type="hidden" id="soul-scope" value="private">'
+    }
+    h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u540d\u79f0</label><input id="soul-name" type="text" placeholder="\u5982\uff1a\u6211\u7684\u5f00\u53d1\u98ce\u683c" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+    h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u7cfb\u7edf\u63d0\u793a\u8bcd</label><textarea id="soul-prompt" style="min-height:120px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)"></textarea></div>'
+    h += '<button class="btn primary" onclick="saveSoul()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58\u4eba\u683c</button></div>'
   } catch (e) {
     h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
   }
@@ -473,6 +528,43 @@ document.addEventListener("click", (ev) => {
     if (name) {
       postJSON("/teamix/memory/delete", { name, scope: "global" }).then(() => { refreshTab("memory") })
     }
+    return
+  }
+  const soulDelBtn = target.closest("[data-soul-del]") as HTMLElement | null
+  if (soulDelBtn) {
+    ev.preventDefault()
+    const name = soulDelBtn.getAttribute("data-soul-del")
+    const scope = soulDelBtn.getAttribute("data-soul-scope") || "private"
+    if (name) {
+      postJSON("/teamix/soul/delete", { name, scope }).then(() => { refreshTab("soul") })
+    }
+    return
+  }
+  const soulSetBtn = target.closest("[data-soul-set]") as HTMLElement | null
+  if (soulSetBtn) {
+    ev.preventDefault()
+    const name = soulSetBtn.getAttribute("data-soul-set")
+    const scope = soulSetBtn.getAttribute("data-soul-scope") || "private"
+    if (name) {
+      // "设为当前"只对个人生效：全局→写自己 useGlobal，私有→激活私有（后端已互斥处理）
+      postJSON("/teamix/soul/activate", { name, scope }).then(() => { refreshTab("soul") })
+    }
+    return
+  }
+  const soulUseBtn = target.closest("[data-soul-use]") as HTMLElement | null
+  if (soulUseBtn) {
+    ev.preventDefault()
+    const name = soulUseBtn.getAttribute("data-soul-use") || ""
+    // 空 name = 取消选择（恢复全局默认）；非空 = 使用该全局人格（只影响自己）
+    postJSON("/teamix/soul/use", { name }).then(() => { refreshTab("soul") })
+    return
+  }
+  const soulActBtn = target.closest("[data-soul-act]") as HTMLElement | null
+  if (soulActBtn) {
+    ev.preventDefault()
+    const name = soulActBtn.getAttribute("data-soul-act")
+    const scope = soulActBtn.getAttribute("data-soul-scope") || "private"
+    if (name) editSoul(name, scope)
     return
   }
   const userBtn = target.closest("[data-user-del]") as HTMLElement | null
@@ -726,15 +818,54 @@ w.addSkill = async function() {
   tab.value = "skills"
   await refreshTab("skills")
 }
-w.saveCapability = async function(kind: string) {
-  const el = document.getElementById(kind + "-raw") as HTMLTextAreaElement
-  if (!el) return
+w.saveSoul = async function() {
+  const scopeEl = document.getElementById("soul-scope") as HTMLSelectElement
+  const nameEl = document.getElementById("soul-name") as HTMLInputElement
+  const prEl = document.getElementById("soul-prompt") as HTMLTextAreaElement
+  if (!nameEl || !prEl) return
+  const s = scopeEl ? scopeEl.value : "private"
+  const name = nameEl.value.trim()
+  if (!name) { toast("\u8bf7\u8f93\u5165\u4eba\u683c\u540d\u79f0"); return }
   const t = localStorage.getItem("teamix_token")
   if (!t) return
-  await fetch("/teamix/capabilities/save?token=" + encodeURIComponent(t), {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ kind, data: el.value })
-  })
+  try {
+    const resp = await fetch("/teamix/soul/save?token=" + encodeURIComponent(t), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: s, name, systemPrompt: prEl.value, activate: false })
+    })
+    if (!resp.ok) {
+      let msg = "HTTP " + resp.status
+      try { msg = ((await resp.json()).error) || msg } catch (e) { }
+      toast("\u4fdd\u5b58\u4eba\u683c\u5931\u8d25: " + msg)
+      return
+    }
+    toast((s === "global" ? "\u5168\u5c40" : "\u79c1\u6709") + "\u4eba\u683c\u300c" + name + "\u300d\u5df2\u4fdd\u5b58\uff08\u672a\u751f\u6548\uff0c\u53ef\u70b9\u201c\u8bbe\u4e3a\u5f53\u524d\u201d\uff09", "success")
+    tab.value = "soul"
+    await refreshTab("soul")
+  } catch (e: any) {
+    toast("\u4fdd\u5b58\u4eba\u683c\u5931\u8d25: " + (e.message || e))
+  }
+}
+
+// editSoul 将指定人格回填到添加表单，供修改后保存（同名覆盖更新）。
+async function editSoul(name: string, scope: string) {
+  const q = tokenQuery()
+  try {
+    const resp = await fetch("/teamix/soul" + q)
+    const data = await resp.json()
+    const list = (scope === "global" ? data.global : data.private) || { personas: [] }
+    const p = (list.personas || []).find((x: any) => x.name === name)
+    if (!p) return
+    const scopeEl = document.getElementById("soul-scope") as HTMLSelectElement
+    const nameEl = document.getElementById("soul-name") as HTMLInputElement
+    const prEl = document.getElementById("soul-prompt") as HTMLTextAreaElement
+    if (scopeEl) scopeEl.value = scope
+    if (nameEl && prEl) {
+      nameEl.value = p.name
+      prEl.value = p.systemPrompt || ""
+      nameEl.scrollIntoView({ behavior: "smooth", block: "center" })
+    }
+  } catch (e) { }
 }
 w.switchSettingsTab = function(t: string) { tab.value = t }
 </script>

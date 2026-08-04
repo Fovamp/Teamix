@@ -135,8 +135,11 @@ export const api = {
   memorySave: (m: import("../types").Memory): Promise<any> => post("/teamix/memory/save", m),
 
   // Config
-  capabilities: (): Promise<any> => get("/teamix/capabilities"),
-  capabilitiesSave: (kind: string, data: any): Promise<any> => post("/teamix/capabilities/save", { kind, data }),
+  soul: (): Promise<any> => get("/teamix/soul"),
+  soulSave: (s: { scope: string; name: string; systemPrompt: string; activate?: boolean }): Promise<any> => post("/teamix/soul/save", s),
+  soulDelete: (s: { scope: string; name: string }): Promise<any> => post("/teamix/soul/delete", s),
+  soulActivate: (s: { scope: string; name: string }): Promise<any> => post("/teamix/soul/activate", s),
+  soulUse: (s: { name: string }): Promise<any> => post("/teamix/soul/use", s),
 
   // Secrets
   secretsStatus: (): Promise<any> => get("/teamix/secrets/status"),

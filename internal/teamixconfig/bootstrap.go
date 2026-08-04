@@ -57,9 +57,8 @@ func EnsureGlobalWorkspace(root string) error {
 		filepath.Join(root, ".teamix"),
 		filepath.Join(root, ".teamix", "notifications"),
 		filepath.Join(root, ".teamix", "workflows"),
-		// Reasonix 侧 Agent 基础设施：skills/mcp/capabilities/secrets/commands
+		// Reasonix 侧 Agent 基础设施：skills/mcp/secrets/soul
 		filepath.Join(root, ".reasonix"),
-		filepath.Join(root, ".reasonix", "capabilities"),
 		filepath.Join(root, ".reasonix", "secrets"),
 		filepath.Join(root, ".reasonix", "skills"),
 	}
