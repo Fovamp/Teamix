@@ -28,10 +28,32 @@ function branchValue(b: any, ...keys: string[]) {
 function branchTitle(b: any) {
   return branchValue(b, 'custom_title', 'CustomTitle', 'name', 'Name', 'topic_title', 'TopicTitle', 'id', 'ID') || 'branch'
 }
+// 分叉点标注：分支有 fork_turn/parent_id 时显示"分叉自 <父分支> · 第 N 轮"；主线分支返回空
+function forkLabel(b: any): string {
+  const ft = branchValue(b, 'fork_turn', 'ForkTurn')
+  if (ft === '' && ft !== 0) return ''
+  const pid = branchValue(b, 'parent_id', 'ParentID')
+  const parent = pid ? String(pid).slice(0, 8) : '未知'
+  return `分叉自 ${parent} · 第 ${ft} 轮`
+}
+function isFork(b: any): boolean {
+  const ft = branchValue(b, 'fork_turn', 'ForkTurn')
+  return ft !== '' && ft !== 0
+}
 async function switchBranch(id: string) {
   if (!id) return
   emit("close")
-  try { await api.submit('/switch ' + id) } catch {}
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  try {
+    const r = await fetch("/teamix/branch/switch?token=" + encodeURIComponent(t), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ref: id }),
+    })
+    // 切换成功后：ChatArea 监听该事件重新加载该分支历史 + 刷新会话列表
+    if (r.ok) window.dispatchEvent(new CustomEvent("teamix-session-changed"))
+  } catch { /* ignore */ }
 }
 </script>
 
@@ -50,8 +72,8 @@ async function switchBranch(id: string) {
       <div v-if="branches.length === 0 && !loading" class="empty-note" style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">暂无会话分支</div>
       <div v-for="b in branches" :key="branchValue(b, 'id', 'ID')" class="branch-item" :title="branchTitle(b) + ' — ' + [branchValue(b, 'turns', 'Turns') ? branchValue(b, 'turns', 'Turns') + ' turns' : '', branchValue(b, 'model', 'Model'), branchValue(b, 'preview', 'Preview')].filter(Boolean).join(' · ')">
         <div style="min-width:0;overflow:hidden">
-          <div class="branch-item__title">{{ branchTitle(b) }}</div>
-          <div class="branch-item__meta">{{ [branchValue(b, 'turns', 'Turns') ? branchValue(b, 'turns', 'Turns') + ' turns' : '', branchValue(b, 'model', 'Model'), branchValue(b, 'preview', 'Preview')].filter(Boolean).join(' · ') || branchValue(b, 'id', 'ID') }}</div>
+          <div class="branch-item__title">{{ isFork(b) ? '🔀 ' : '' }}{{ branchTitle(b) }}</div>
+          <div class="branch-item__meta">{{ forkLabel(b) || [branchValue(b, 'turns', 'Turns') ? branchValue(b, 'turns', 'Turns') + ' turns' : '', branchValue(b, 'model', 'Model'), branchValue(b, 'preview', 'Preview')].filter(Boolean).join(' · ') || branchValue(b, 'id', 'ID') }}</div>
         </div>
         <button class="branch-item__btn" @click="switchBranch(branchValue(b, 'id', 'ID'))">切换</button>
       </div>

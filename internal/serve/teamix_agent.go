@@ -282,14 +282,22 @@ func (ts *TeamixServer) handleRewind(w http.ResponseWriter, r *http.Request, u *
 
 func (ts *TeamixServer) handleFork(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
-		Turn int `json:"turn"`
+		Turn int    `json:"turn"`
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	path, err := u.ctrl.Fork(body.Turn)
+	// 对齐 desktop 分叉语义：分叉后自动切换到新会话，新会话继承分叉轮的完整上下文。
+	// 未指定名字时继承当前会话的标题（新分支看起来与原会话一致）。
+	name := body.Name
+	if name == "" {
+		if meta, ok, _ := reasonixAgent.LoadBranchMeta(u.ctrl.SessionPath()); ok && meta.Name != "" {
+			name = meta.Name
+		}
+	}
+	path, err := u.ctrl.ForkNamed(body.Turn, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -300,11 +308,21 @@ func (ts *TeamixServer) handleFork(w http.ResponseWriter, r *http.Request, u *us
 
 func (ts *TeamixServer) handleSummarize(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
-		Turn *int `json:"turn"`
+		Turn *int   `json:"turn"`
+		Mode string `json:"mode"` // "from"（从此轮起总结）| "upto"（总结到此轮）
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.Turn != nil {
-		u.ctrl.SummarizeFrom(r.Context(), *body.Turn)
+		var err error
+		if body.Mode == "upto" {
+			err = u.ctrl.SummarizeUpTo(r.Context(), *body.Turn)
+		} else {
+			err = u.ctrl.SummarizeFrom(r.Context(), *body.Turn)
+		}
+		if err != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
 	} else {
 		u.ctrl.Compact(r.Context(), "")
 	}
@@ -591,6 +609,24 @@ func (ts *TeamixServer) handleBranches(w http.ResponseWriter, _ *http.Request, u
 	}
 	tree := u.ctrl.BranchTreeText()
 	writeJSON(w, map[string]any{"branches": branches, "tree": tree})
+}
+
+// handleBranchSwitch 切换分支：直接调 ctrl.SwitchBranch，不走 agent 对话
+// （避免 "/switch xxx" 被当作用户消息提交、产生 "switched to branch" 通知进会话流）。
+func (ts *TeamixServer) handleBranchSwitch(w http.ResponseWriter, r *http.Request, u *userSession) {
+	var body struct {
+		Ref string `json:"ref"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Ref) == "" {
+		http.Error(w, "bad request: ref required", http.StatusBadRequest)
+		return
+	}
+	info, err := u.ctrl.SwitchBranch(strings.TrimSpace(body.Ref))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "branch": info})
 }
 
 

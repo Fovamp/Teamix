@@ -75,6 +75,11 @@ input,textarea{font:inherit;color:inherit}
 .msg__text{white-space:pre-wrap;word-break:break-word;font-weight:500;line-height:1.65}
 .msg--assistant{color:var(--fg);line-height:1.7}
 .msg--assistant .msg__text{font-weight:400}
+.msg-actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.msg-actions__btn{padding:2px 9px;border:1px solid var(--border);border-radius:5px;background:var(--bg-2);color:var(--muted);font-size:11px;cursor:pointer;transition:all .15s ease}
+.msg-actions__btn:hover{border-color:var(--border-strong);color:var(--fg);background:var(--panel)}
+.msg-actions__btn--confirm{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.msg-actions__btn--danger.msg-actions__btn--confirm{border-color:var(--danger);color:var(--danger);background:var(--danger-soft)}
 .msg--system{font-size:13px;color:var(--fg-2);border-left:2px solid var(--border);padding:4px 12px;margin:8px auto}
 .msg--error{font-size:13px;color:var(--danger);border-left:2px solid var(--danger);padding:6px 12px;margin:8px auto;background:var(--danger-soft);border-radius:0 var(--radius) var(--radius) 0}
 .reasoning{margin-bottom:6px}

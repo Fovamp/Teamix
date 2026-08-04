@@ -483,6 +483,7 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("GET /models", ts.withUser(ts.handleModels))
 	mux.HandleFunc("GET /checkpoints", ts.withUser(ts.handleCheckpoints))
 	mux.HandleFunc("GET /branches", ts.withUser(ts.handleBranches))
+	mux.HandleFunc("POST /teamix/branch/switch", ts.withUser(ts.handleBranchSwitch))
 	mux.HandleFunc("GET /skills", ts.withUser(ts.handleSkills))
 	mux.HandleFunc("GET /todos", ts.withUser(ts.handleTodos))
 	mux.HandleFunc("GET /teamix/modules", ts.handleModules)

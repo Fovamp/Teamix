@@ -2912,7 +2912,23 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 	if boundary > len(src) {
 		boundary = len(src)
 	}
-	forked := append([]provider.Message(nil), src[:boundary]...)
+	// 继承含分叉轮：boundary 是"第 N 轮开始前"的位置，fork 应包含第 N 轮本身
+	// （用户从第 N 轮的回复分叉，期望新分支记住该轮对话）。继承到该轮结束
+	// （下一个有 checkpoint 的 turn 起点；当前轮是最后一轮则到全部消息）。
+	end := boundary
+	if nb, ok := c.checkpoints.nextBoundary(turn); ok {
+		end = nb
+	} else {
+		// 最后一轮（无下一个 checkpoint）：继承到全部消息（含分叉轮）
+		end = len(src)
+	}
+	if end > len(src) {
+		end = len(src)
+	}
+	if end < boundary {
+		end = boundary
+	}
+	forked := append([]provider.Message(nil), src[:end]...)
 	sess := agent.NewSession("")
 	sess.Messages = forked
 
@@ -2925,7 +2941,7 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 		Name:             strings.TrimSpace(name),
 		ParentID:         parentID,
 		ForkTurn:         turn,
-		ForkMessageIndex: boundary,
+		ForkMessageIndex: end,
 		Preview:          forkPreview,
 		Turns:            forkTurns,
 		SchemaVersion:    agent.BranchMetaCountsVersion,

@@ -98,6 +98,24 @@ func (m *checkpointManager) boundary(turn int) (int, bool) {
 	return b, ok
 }
 
+// nextBoundary returns the message index where turn ends (start of the next
+// turn with a checkpoint). Fork uses it to inherit the fork turn's messages
+// (not just everything before it). Absent when turn is the last checkpoint.
+func (m *checkpointManager) nextBoundary(turn int) (int, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	next := -1
+	for t, idx := range m.bound {
+		if t > turn && (next == -1 || idx < next) {
+			next = idx
+		}
+	}
+	if next < 0 {
+		return 0, false
+	}
+	return next, true
+}
+
 // list returns the checkpoint metadata (nil when disabled).
 func (m *checkpointManager) list() []checkpoint.Meta {
 	m.mu.Lock()

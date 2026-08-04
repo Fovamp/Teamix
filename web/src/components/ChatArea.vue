@@ -42,7 +42,19 @@ const wfStoreKey = () => "teamix_wf_name_" + (localStorage.getItem('teamix_user'
 let cumulativeCost = 0
 let cumulativeCacheHit = 0
 let cumulativeCacheMiss = 0
+// 轮次计数（turn_started +1；消息级分叉/总结/回溯用）
+// 与后端 checkpoint turn 对齐：首轮 turn=0，resumed 后从磁盘轮数继续。
+// 前端初始化 turnCounter = 后端 nextTurn - 1，turn_started +1 后即后端 turn。
+let turnCounter = -1
 function resetCumulativeStats() { cumulativeCost = 0; cumulativeCacheHit = 0; cumulativeCacheMiss = 0 }
+
+// 会话内容/分支变化（rewind/fork/switch/总结）后：重新加载历史 + 刷新会话列表
+function onSessionChanged() {
+  loadHistory()
+  api.sessions().then(ss => {
+    window.dispatchEvent(new CustomEvent('sessions-update', { detail: ss }))
+  }).catch(() => {})
+}
 
 // rewind state
 let rewindCheckpoints: any[] = []
@@ -50,6 +62,8 @@ let rewindStage = 0
 let rewindSelected = 0
 let rewindScope = 0
 const rewindKey = ref(0)
+// 当前轮 assistant 消息索引（消息级操作按钮只显示在最新一条上）
+const lastAssistantIdx = ref(-1)
 
 // tool cards
 const toolCards: Record<string, HTMLElement> = {}
@@ -132,6 +146,8 @@ onMounted(() => {
       window.dispatchEvent(new CustomEvent('sessions-update', { detail: ss }))
     }).catch(() => {})
   })
+  // 会话内容/分支变化（rewind/fork/switch/总结）→ 重新加载历史 + 刷新会话列表
+  window.addEventListener('teamix-session-changed', onSessionChanged)
   window.addEventListener("workflow-selected", ((e: CustomEvent) => {
     const name = e.detail || ""
     wfName.value = name || "-"
@@ -176,6 +192,7 @@ onUnmounted(() => {
   if (statusPollTimer) clearInterval(statusPollTimer)
   if (tickTimer) clearInterval(tickTimer)
   window.removeEventListener("workflow-changed", loadWorkflow)
+  window.removeEventListener("teamix-session-changed", onSessionChanged)
   document.removeEventListener('keydown', onGlobalKeydown)
   const log = document.getElementById('log')
   if (log) (log as any)._teamixMutObserver?.disconnect()
@@ -221,7 +238,7 @@ function handleNewSession() {
     todosState = []
     todosDismissed = false
     showTodoPanel.value = false
-    resetCumulativeStats(); try { sessionStorage.removeItem('teamix_last_usage') } catch {}; pastedBlocks.value = []; openPastedLabels.value = []
+    resetCumulativeStats(); try { sessionStorage.removeItem('teamix_last_usage') } catch {}; pastedBlocks.value = []; openPastedLabels.value = []; turnCounter = -1
     // Refresh sessions list so sidebar shows new session
     api.sessions().then(ss => {
       window.dispatchEvent(new CustomEvent('sessions-update', { detail: ss }))
@@ -236,6 +253,8 @@ async function loadHistory() {
     renderHistoryMessages(ms)
     setTimeout(() => scrollDown(true), 100)
   } catch (e) { console.error("loadHistory", e) }
+  // 用后端 checkpoints 校准 turn 基准（首轮 turn=0；resumed/切分支后继续编号）
+  refreshTurnBase()
   try {
     const s = await api.status()
     running.value = s.running
@@ -244,7 +263,28 @@ async function loadHistory() {
   } catch (e) { console.error("loadStatus", e) }
 }
 
+function refreshTurnBase() {
+  api.checkpoints().then((cps: any) => {
+    // checkpoints 为空时不覆盖 turnCounter（避免把有效计数重置成 -1 导致后续 turn 错乱）
+    if (!Array.isArray(cps) || cps.length === 0) return
+    let base = 0
+    for (const c of cps) { const t = Number(c?.turn); if (!isNaN(t) && t >= base) base = t + 1 }
+    turnCounter = base - 1 // turn_started +1 后 = base（后端下一个 checkpoint turn）
+    // 刷新页面后：给最新一条 assistant 历史消息补上 turn（= 当前最后一个 checkpoint turn），
+    // 使操作按钮在刷新后仍然可用（失误刷新也能继续分叉/总结/回溯）
+    const ms = messages.value
+    for (let i = ms.length - 1; i >= 0; i--) {
+      if (ms[i].role === 'assistant') {
+        ms[i].turn = base - 1
+        lastAssistantIdx.value = i
+        break
+      }
+    }
+  }).catch(() => {})
+}
+
 function renderHistoryMessages(ms: any[]) {
+  lastAssistantIdx.value = -1 // 历史消息不显示操作按钮（等下一轮 finalize 再设）
   if (!ms || ms.length === 0) {
     hasVisibleHistory.value = false
     window.dispatchEvent(new CustomEvent('hasVisibleHistory-changed', { detail: false }))
@@ -289,6 +329,7 @@ const sse = useSSE({
       if (e.kind !== 'retrying') clearRetrying()
       switch (e.kind) {
         case 'turn_started':
+          turnCounter++
           setRunning(true)
           clearPendingPrompts()
           finalizeMsg()
@@ -439,14 +480,15 @@ function showWelcome() {
 
 function addUserMsg(text: string) {
   hideWelcome()
-  messages.value.push({ role: 'user', content: text })
+  messages.value.push({ role: 'user', content: text, turn: turnCounter })
   scrollDown(true)
 }
 
 function ensureMsg() {
   if (!streamingMsg.value) {
     hideWelcome()
-    streamingMsg.value = { role: 'assistant', content: '', reasoning: '', _showReasoning: false, streaming: true }
+    // turn 兜底 ≥0：避免 turn_started 事件缺失时把 -1 带进消息导致操作报错
+    streamingMsg.value = { role: 'assistant', content: '', reasoning: '', _showReasoning: false, streaming: true, turn: turnCounter >= 0 ? turnCounter : 0 }
   }
   return streamingMsg.value
 }
@@ -467,6 +509,7 @@ function finalizeMsg() {
   if (streamingMsg.value) {
     streamingMsg.value.streaming = false
     messages.value.push(streamingMsg.value)
+    lastAssistantIdx.value = messages.value.length - 1
     streamingMsg.value = null
   }
 }
@@ -671,14 +714,15 @@ function applyRewind() {
   const t = localStorage.getItem('teamix_token')
   if (!t) return
   const q = '?token=' + encodeURIComponent(t)
+  const done = (r: any) => { if (r && r.ok) window.dispatchEvent(new CustomEvent('teamix-session-changed')) }
   if (sc.scope === 'fork') {
-    fetch('/fork' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, name: '' }) })
+    fetch('/fork' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, name: '' }) }).then(done).catch(() => {})
   } else if (sc.scope === 'sumfrom') {
-    fetch('/summarize' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, mode: 'from' }) })
+    fetch('/summarize' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, mode: 'from' }) }).then(done).catch(() => {})
   } else if (sc.scope === 'sumupto') {
-    fetch('/summarize' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, mode: 'upto' }) })
+    fetch('/summarize' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, mode: 'upto' }) }).then(done).catch(() => {})
   } else {
-    fetch('/rewind' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, scope: sc.scope }) })
+    fetch('/rewind' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, scope: sc.scope }) }).then(done).catch(() => {})
   }
 }
 
@@ -1090,7 +1134,7 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
     </div>
 
     <!-- Rendered messages（历史 + 流式统一由 MessageItem 渲染，顺序 = 到达顺序） -->
-    <MessageItem v-for="(m, i) in messages" :key="i" :m="m" />
+    <MessageItem v-for="(m, i) in messages" :key="i" :m="m" :is-latest="i === lastAssistantIdx && m.role === 'assistant'" />
     <MessageItem v-if="streamingMsg" :m="streamingMsg" />
 
     <!-- Goal active bar -->
