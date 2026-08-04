@@ -207,6 +207,10 @@ type Settings interface {
 	SetMemoryCompilerEnabled(enabled bool)
 	SetMemoryCompilerVerbosity(verbosity string)
 	SetDisplayRecorder(fn func(content, display string))
+	// SetSystemPrompt hot-updates the session system prompt; takes effect on the
+	// next NewSession / session rotation. Used by Teamix persona switching.
+	SetSystemPrompt(prompt string)
+	SystemPrompt() string
 }
 
 // SessionAPI is the full driving port — the composition of every sub-port. A

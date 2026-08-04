@@ -533,6 +533,22 @@ func (c *Controller) SetDisplayRecorder(fn func(content, display string)) {
 	c.displayRecorder = fn
 }
 
+// SetSystemPrompt updates the session system prompt. The change takes effect on
+// the next NewSession / session rotation (existing turns keep their prompt).
+// Used by Teamix to hot-apply a user's persona selection without re-login.
+func (c *Controller) SetSystemPrompt(prompt string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.systemPrompt = prompt
+}
+
+// SystemPrompt returns the current session system prompt.
+func (c *Controller) SystemPrompt() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.systemPrompt
+}
+
 func (c *Controller) recordDisplay(content, display string) {
 	if strings.TrimSpace(display) == "" || content == display {
 		return
@@ -2611,7 +2627,7 @@ func (c *Controller) NewSession() error {
 		c.mu.Unlock()
 	}
 	c.setActiveJobSession(c.SessionPath())
-	c.executor.SetSession(agent.NewSession(c.systemPrompt))
+	c.executor.SetSession(agent.NewSession(c.SystemPrompt()))
 	if c.guardianSess != nil {
 		c.guardianSess.Reset()
 	}
@@ -2677,7 +2693,7 @@ func (c *Controller) ClearSession() error {
 		c.mu.Unlock()
 	}
 	c.setActiveJobSession(c.SessionPath())
-	c.executor.SetSession(agent.NewSession(c.systemPrompt))
+	c.executor.SetSession(agent.NewSession(c.SystemPrompt()))
 	if c.guardianSess != nil {
 		c.guardianSess.Reset()
 	}

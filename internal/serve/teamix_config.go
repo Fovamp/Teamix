@@ -98,6 +98,17 @@ func effectiveSoul(workspaceRoot, userRoot string) *Persona {
 	return nil
 }
 
+// applySoulToSession 将用户当前生效人格的 system_prompt 热更新到其运行中的
+// Controller，使下一次会话（NewSession）立即使用新人格，无需重新登录。
+func (ts *TeamixServer) applySoulToSession(u *userSession) {
+	p := effectiveSoul(ts.workspaceRoot, u.userRoot)
+	prompt := ""
+	if p != nil {
+		prompt = p.SystemPrompt
+	}
+	u.ctrl.SetSystemPrompt(prompt)
+}
+
 // findPersona 在列表中按 name 查找人格。
 func findPersona(cfg SoulConfig, name string) *Persona {
 	for i := range cfg.Personas {
@@ -225,6 +236,7 @@ func (ts *TeamixServer) handleSoulSave(w http.ResponseWriter, r *http.Request, u
 		return
 	}
 	ts.regenerateUserTOML(u.userRoot)
+	ts.applySoulToSession(u)
 	slog.Info("teamix: private soul saved", "user", u.name, "name", name)
 	writeJSON(w, map[string]any{"ok": true, "scope": "private", "name": name})
 }
@@ -255,6 +267,8 @@ func (ts *TeamixServer) handleSoulDelete(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		// 引用该全局人格的用户 useGlobal 仍指向已删条目 → effectiveSoul 返回 nil（回落默认），无需重写 toml
+		// 但运行中的会话要刷新：若当前用户正 useGlobal 指向它，立即回落默认提示词
+		ts.applySoulToSession(u)
 		writeJSON(w, map[string]bool{"ok": true})
 		return
 	}
@@ -265,6 +279,7 @@ func (ts *TeamixServer) handleSoulDelete(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	ts.regenerateUserTOML(u.userRoot)
+	ts.applySoulToSession(u)
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -288,6 +303,7 @@ func (ts *TeamixServer) handleSoulUse(w http.ResponseWriter, r *http.Request, u 
 			return
 		}
 		ts.regenerateUserTOML(u.userRoot)
+		ts.applySoulToSession(u)
 		writeJSON(w, map[string]bool{"ok": true})
 		return
 	}
@@ -305,6 +321,7 @@ func (ts *TeamixServer) handleSoulUse(w http.ResponseWriter, r *http.Request, u 
 		return
 	}
 	ts.regenerateUserTOML(u.userRoot)
+	ts.applySoulToSession(u)
 	slog.Info("teamix: user selects global persona", "user", u.name, "name", name)
 	writeJSON(w, map[string]bool{"ok": true})
 }
@@ -338,6 +355,7 @@ func (ts *TeamixServer) handleSoulActivate(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		ts.regenerateUserTOML(u.userRoot)
+		ts.applySoulToSession(u)
 		writeJSON(w, map[string]bool{"ok": true})
 		return
 	}
@@ -353,6 +371,7 @@ func (ts *TeamixServer) handleSoulActivate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	ts.regenerateUserTOML(u.userRoot)
+	ts.applySoulToSession(u)
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
