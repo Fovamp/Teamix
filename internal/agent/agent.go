@@ -1188,6 +1188,25 @@ func usageSourceOrDefault(source, fallback string) string {
 	return fallback
 }
 
+// purposeFromUsageSource 把 billable usage source 映射为路由用途标签。
+// 主对话与子代理共用 agent 循环，靠 UsageSource 区分路由去向。
+func purposeFromUsageSource(source string) provider.Purpose {
+	switch source {
+	case event.UsageSourcePlanner:
+		return provider.PurposePlan
+	case event.UsageSourceSubagent:
+		return provider.PurposeSubagent
+	case event.UsageSourceCompaction:
+		return provider.PurposeCompress
+	case event.UsageSourceClassifier, event.UsageSourceCapabilityRouter:
+		return provider.PurposeClassify
+	case event.UsageSourceGuard:
+		return provider.PurposeGuard
+	default:
+		return provider.PurposeExecute
+	}
+}
+
 // Run appends the user input and drives the tool loop until the model returns a
 // final answer (no tool calls), the context is cancelled, or the provider errors.
 // With maxSteps <= 0 the loop is unbounded — the natural termination is the model
@@ -2213,6 +2232,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 		Messages:    a.session.Messages,
 		Tools:       a.tools.Schemas(),
 		Temperature: provider.OptionalTemperature(a.temperature),
+		Purpose:     purposeFromUsageSource(a.usageSource),
 	})
 	if err != nil {
 		return "", "", "", nil, nil, false, false, err

@@ -50,6 +50,7 @@ func (c *ProviderAutoPlanClassifier) NeedsPlan(ctx context.Context, input string
 		},
 		Temperature: provider.TemperaturePtr(0),
 		MaxTokens:   80,
+		Purpose:     provider.PurposeClassify,
 	})
 	if err != nil {
 		return false, "", err

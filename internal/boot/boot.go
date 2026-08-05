@@ -43,6 +43,7 @@ import (
 	"reasonix/internal/permission"
 	"reasonix/internal/planmode"
 	"reasonix/internal/plugin"
+	"reasonix/internal/modelrouter"
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
@@ -164,6 +165,10 @@ type Options struct {
 	// 上下文压缩层）。nil 时不包装。包装器必须保持 provider.Provider 语义
 	// （Name/Stream），任何额外失败都应 fail-open 到原始 provider。
 	WrapProvider func(provider.Provider) (provider.Provider, error)
+	// Router 双模型路由网关（Teamix 内外部模型协作）。非 nil 时作为最外层
+	// 包装：WrapProvider 先包外部池（headroom 压缩），Router 再路由到
+	// 内部/外部池。nil 时不启用（保持原有单模型行为）。
+	Router *modelrouter.BootConfig
 }
 
 // Build loads config, resolves the model(s), and returns a Controller wrapping a
@@ -292,12 +297,25 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// buildProv 是 Build 内统一的 provider 构建入口：NewProviderWithProxy +
 	// 可选的 WrapProvider 包装（Teamix headroom 压缩层等）。所有模型调用
 	// （执行/subagent/分类/规划/守护）都经它，包装语义一致。
+	// Router 网关为最外层：WrapProvider 先包外部池（headroom），Router 再
+	// 按用途/敏感级路由到内部或外部池；未配置 Router 时维持原有行为。
 	buildProv := func(e *config.ProviderEntry) (provider.Provider, error) {
 		p, err := NewProviderWithProxy(e, proxySpec)
-		if err != nil || opts.WrapProvider == nil {
+		if err != nil {
 			return p, err
 		}
-		return opts.WrapProvider(p)
+		if opts.Router != nil {
+			if opts.WrapProvider != nil {
+				if wrapped, werr := opts.WrapProvider(p); werr == nil {
+					p = wrapped
+				}
+			}
+			return opts.Router.Wrap(p), nil
+		}
+		if opts.WrapProvider != nil {
+			return opts.WrapProvider(p)
+		}
+		return p, nil
 	}
 	balanceClient, err := netclient.NewHTTPClient(proxySpec, netclient.TransportOptions{})
 	if err != nil {

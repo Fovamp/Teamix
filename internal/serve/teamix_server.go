@@ -13,13 +13,16 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"reasonix/internal/auditlog"
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/headroom"
 	"reasonix/internal/keypool"
+	"reasonix/internal/modelrouter"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
 	"reasonix/internal/teamixconfig"
@@ -56,6 +59,17 @@ type TeamixServer struct {
 
 	// headroomHook 非 nil 时注入每个 boot.Build 的 WrapProvider（上下文压缩层）。
 	headroomHook func(provider.Provider) (provider.Provider, error)
+
+	// 双模型路由（内外部模型协作）：
+	// internalProvider 本地 Qwen（env 配置，nil=不可用）；sensitiveRules 机密
+	// 黑名单（.teamix/config.yaml）；auditWriter AI 调用审计日志（per-user）。
+	internalProvider provider.Provider
+	sensitiveRules   *modelrouter.SensitiveRules
+	auditWriter      *auditlog.Writer
+
+	// offline 仅本地模式：手动"全走 Qwen"唯一入口（运维侧，architect 可切）。
+	// 切换后下次 boot.Build（新会话/切模型）生效；审计记录敏感级便于追溯。
+	offline atomic.Bool
 }
 
 func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *TeamixServer {
@@ -70,6 +84,15 @@ func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *Tea
 	}
 	ts.globalCfg = ts.loadGlobalConfig()
 	ts.headroomHook = ts.buildHeadroomHook()
+	ts.internalProvider = buildInternalProvider()
+	if ts.globalCfg != nil && ts.globalCfg.Config != nil {
+		ts.sensitiveRules = sensitiveRulesFromCfg(ts.globalCfg.Config)
+		auditCfg := ts.globalCfg.Config.Audit
+		if auditCfg.Dir == "" {
+			auditCfg.Dir = ".teamix/logs/ai-audit"
+		}
+		ts.auditWriter = auditlog.New(auditCfg.Dir, auditCfg.RetentionDays)
+	}
 	ts.keyPool = keypool.NewPool("DEEPSEEK_API_KEY")
 	ts.keyPool.Load(ts.workspaceRoot)
 	ts.mux = ts.buildHandler()
@@ -249,6 +272,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		MemoryUserDir:       filepath.Join(userRoot, ".teamix"),
 		ExcludeHomeSkills:   true,
 		WrapProvider:        ts.headroomHook,
+		Router:              ts.routerCfg(name),
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("build controller for %q: %w", name, err)
@@ -480,6 +504,8 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("GET /status", ts.withUser(ts.handleStatus))
 	mux.HandleFunc("GET /sessions", ts.withUser(ts.handleSessions))
 	mux.HandleFunc("GET /models", ts.withUser(ts.handleModels))
+	mux.HandleFunc("GET /teamix/offline", ts.withUser(ts.handleOfflineGet))
+	mux.HandleFunc("POST /teamix/offline", ts.withUser(ts.handleOfflineSet))
 	mux.HandleFunc("GET /checkpoints", ts.withUser(ts.handleCheckpoints))
 	mux.HandleFunc("GET /branches", ts.withUser(ts.handleBranches))
 	mux.HandleFunc("POST /teamix/branch/switch", ts.withUser(ts.handleBranchSwitch))

@@ -19,11 +19,46 @@ type TeamixConfig struct {
 }
 
 type Config struct {
-	Teamix   TeamixConfig   `yaml:"teamix"`
-	Project  ProjectConfig  `yaml:"project,omitempty"`
-	Modules  []ModuleConfig `yaml:"modules,omitempty"`
-	Workflow WorkflowConfig `yaml:"workflow,omitempty"`
-	Headroom HeadroomConfig `yaml:"headroom,omitempty"`
+	Teamix    TeamixConfig    `yaml:"teamix"`
+	Project   ProjectConfig   `yaml:"project,omitempty"`
+	Modules   []ModuleConfig  `yaml:"modules,omitempty"`
+	Workflow  WorkflowConfig  `yaml:"workflow,omitempty"`
+	Headroom  HeadroomConfig  `yaml:"headroom,omitempty"`
+	Models    ModelsConfig    `yaml:"models,omitempty"`
+	Sensitive SensitiveConfig `yaml:"sensitive,omitempty"`
+	Audit     AuditConfig     `yaml:"audit,omitempty"`
+}
+
+// ModelsConfig 是双模型协作的模型池配置（.teamix/config.yaml 的 models 段）。
+// 内部池（本地 Qwen，数据不出内网）与外部池（云端 DeepSeek）按用途角色分工。
+type ModelsConfig struct {
+	Internal []ModelPool `yaml:"internal,omitempty"`
+	External []ModelPool `yaml:"external,omitempty"`
+}
+
+// ModelPool 声明一个模型池条目：ref 引用现有 providers 体系（provider/model），
+// roles 列出该池服务的用途角色，max_input_tokens 用于窗口预检，max_parallel 限并发。
+type ModelPool struct {
+	Ref                string   `yaml:"ref"`
+	Roles              []string `yaml:"roles,omitempty"`
+	MaxInputTokens     int      `yaml:"max_input_tokens,omitempty"`
+	MaxParallel        int      `yaml:"max_parallel,omitempty"`
+	BudgetPerUserPerDay float64  `yaml:"budget_per_user_per_day,omitempty"`
+}
+
+// SensitiveConfig 是机密黑名单（.teamix/config.yaml 的 sensitive 段）。
+// 命中 dirs/files 的内容强制走内部模型（fail-closed），配置层无外部路径。
+type SensitiveConfig struct {
+	Dirs  []string `yaml:"dirs,omitempty"`
+	Files []string `yaml:"files,omitempty"`
+}
+
+// AuditConfig 是 AI 调用审计日志配置（.teamix/config.yaml 的 audit 段）。
+// 日志按 用户×天 落盘，仅 architect 角色可见（泄露审计）。
+type AuditConfig struct {
+	Dir           string   `yaml:"dir,omitempty"`
+	RetentionDays int      `yaml:"retention_days,omitempty"`
+	RolesVisible  []string `yaml:"roles_visible,omitempty"`
 }
 
 // HeadroomConfig 是 headroom 上下文压缩层配置（.teamix/config.yaml 的 headroom 段）。
@@ -59,6 +94,11 @@ func DefaultConfig() *Config {
 		Project: ProjectConfig{},
 		Modules: []ModuleConfig{},
 		Workflow: WorkflowConfig{AutoAdvance: true},
+		Audit: AuditConfig{
+			Dir:           ".teamix/logs/ai-audit",
+			RetentionDays: 30,
+			RolesVisible:  []string{"architect"},
+		},
 	}
 }
 

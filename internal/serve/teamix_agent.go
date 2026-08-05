@@ -598,7 +598,13 @@ func (ts *TeamixServer) handleModels(w http.ResponseWriter, r *http.Request, u *
 	if out == nil {
 		out = []modelEntry{}
 	}
-	writeJSON(w, map[string]any{"current": current, "label": label, "default": cfg.DefaultModel, "models": out})
+	writeJSON(w, map[string]any{
+		"current": current, "label": label, "default": cfg.DefaultModel,
+		"models": out,
+		// 透明化选择：模型列表只含公网模型（内部 Qwen 不在 reasonix.toml，天然不可选）；
+		// offline 为"仅本地模式"开关状态（手动全走 Qwen 唯一入口）。
+		"offline": ts.offline.Load(),
+	})
 }
 
 func (ts *TeamixServer) handleCheckpoints(w http.ResponseWriter, _ *http.Request, u *userSession) {
@@ -702,6 +708,7 @@ func (ts *TeamixServer) switchModel(u *userSession, ref string) error {
 		MemoryUserDir:       filepath.Join(u.userRoot, ".teamix"),
 		ExcludeHomeSkills:   true,
 		WrapProvider:        ts.headroomHook,
+		Router:              ts.routerCfg(u.name),
 	})
 	if err != nil {
 		return fmt.Errorf("switch model: %w", err)

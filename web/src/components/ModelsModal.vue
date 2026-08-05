@@ -5,6 +5,8 @@ const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: "close"): void }>()
 const models = ref<any[]>([])
 const loading = ref(false)
+const offline = ref(false)
+const saving = ref(false)
 
 watch(() => props.visible, async (v) => {
   if (v) {
@@ -12,12 +14,34 @@ watch(() => props.visible, async (v) => {
     try {
       const data = await api.models()
       models.value = Array.isArray(data?.models) ? data.models : []
+      offline.value = !!data?.offline
     } catch {
       models.value = []
     }
     loading.value = false
   }
 })
+
+async function toggleOffline() {
+  saving.value = true
+  try {
+    const t = localStorage.getItem('teamix_token')
+    if (!t) return
+    const resp = await fetch('/teamix/offline?token=' + encodeURIComponent(t), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ offline: !offline.value })
+    })
+    if (resp.ok) {
+      offline.value = !offline.value
+    } else {
+      const text = await resp.text()
+      alert(text || '切换失败（可能仅架构师可操作）')
+    }
+  } catch {
+    alert('切换失败')
+  }
+  saving.value = false
+}
 
 async function useModel(refName: string) {
   if (!refName) return
@@ -46,6 +70,15 @@ async function useModel(refName: string) {
     <div class="model-list" id="models-list" style="padding:8px;max-height:60vh;overflow-y:auto">
       <div v-if="loading" style="color:var(--muted-2);text-align:center;padding:20px;font-size:13px">加载中...</div>
       <div v-else-if="models.length === 0" style="color:var(--muted-2);text-align:center;padding:20px;font-size:13px">加载失败</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 4px;border-bottom:1px solid var(--border, rgba(128,128,128,.2));margin-bottom:6px">
+        <div>
+          <div style="font-size:13px">仅本地模式</div>
+          <div style="font-size:11px;color:var(--muted-2)">全部请求走本地 Qwen，不连接外部模型（架构师可切换）</div>
+        </div>
+        <button class="branch-item__btn" :disabled="saving" @click="toggleOffline">
+          {{ offline ? '关闭仅本地' : '开启仅本地' }}
+        </button>
+      </div>
       <div v-for="m in models" :key="m.ref || m.name"
         class="model-item" :class="{ 'model-item--active': m.active }">
         <div>

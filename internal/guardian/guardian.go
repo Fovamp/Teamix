@@ -87,6 +87,8 @@ func NewSession(prov provider.Provider, readOnlyReg *tool.Registry, policyPrompt
 	ag := agent.New(prov, readOnlyReg, sess, agent.Options{
 		MaxSteps:    6, // guardian reviews: enough for a few read-only tool calls
 		Temperature: temperature,
+		// 安全评审用途：路由网关据此强制内部模型（fail-closed，评审内容绝不出网）
+		UsageSource: event.UsageSourceGuard,
 		// Use the shared context window so the guardian session can compact
 		// itself when it grows too large across many reviews.
 		ContextWindow:       100_000,

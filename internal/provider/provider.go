@@ -94,12 +94,39 @@ type ToolSchema struct {
 	Parameters  json.RawMessage `json:"parameters"`
 }
 
+// Purpose 标记一次模型调用的用途，供模型路由网关（modelrouter）决策使用。
+// 与事件层 UsageSource 一一对应；空值视为 PurposeExecute。
+type Purpose string
+
+const (
+	PurposeExecute  Purpose = "execute"  // 主对话执行
+	PurposePlan     Purpose = "plan"     // 规划
+	PurposeSubagent Purpose = "subagent" // 子代理
+	PurposeClassify Purpose = "classify" // 语义路由/分类
+	PurposeGuard    Purpose = "guard"    // 安全评审（强制内部）
+	PurposeCompress Purpose = "compress" // 会话压缩/总结（强制内部）
+	PurposeCheap    Purpose = "cheap"    // 高频廉价任务
+)
+
+// Sensitivity 标记一次请求的数据敏感级（数据源分类，非内容检测）。
+// 空值 = 未标记（走正常路由）；非 public 由安全层强制走内部池。
+type Sensitivity string
+
+const (
+	SensitivityPublic        Sensitivity = "public"        // 可原文出网（显式声明）
+	SensitivityInternal      Sensitivity = "internal"     // 不出网（默认兜底档）
+	SensitivityRedact        Sensitivity = "redact"       // 假名化后出网（P1 实现假名化）
+	SensitivityConfidential  Sensitivity = "confidential" // 禁止出网 + 审计告警
+)
+
 // Request is a single completion request.
 type Request struct {
 	Messages    []Message
 	Tools       []ToolSchema
 	Temperature *float64 // nil = omit; non-nil = send the value, including 0
 	MaxTokens   int
+	Purpose     Purpose     // 用途标签，路由网关按此分工（空 = PurposeExecute）
+	Sensitivity Sensitivity // 数据敏感级（数据源分类），安全层据此强制内部（空 = 未标记）
 }
 
 // TemperaturePtr wraps v in a pointer so callers that explicitly want a

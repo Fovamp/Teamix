@@ -668,6 +668,7 @@ func (a *Agent) streamSummary(ctx context.Context, sys string, region []provider
 			{Role: provider.RoleUser, Content: renderTranscript(region)},
 		},
 		Temperature: provider.OptionalTemperature(a.temperature),
+		Purpose:     provider.PurposeCompress,
 	})
 	if err != nil {
 		return "", err

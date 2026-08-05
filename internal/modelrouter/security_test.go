@@ -1,0 +1,146 @@
+package modelrouter
+
+import (
+	"testing"
+
+	"reasonix/internal/provider"
+)
+
+func sensitiveRouter() *RouterProvider {
+	internal := pool(KindInternal, "qwen", 0, 0, &fakeProvider{name: "qwen", text: "internal-ok"})
+	external := pool(KindExternal, "deepseek", 0, 0, &fakeProvider{name: "deepseek", text: "external-ok"})
+	return New(Config{
+		Internal: internal,
+		External: external,
+		RoleDefault: map[provider.Purpose]Kind{
+			provider.PurposeExecute: KindExternal,
+		},
+		Sensitive: &SensitiveRules{
+			Dirs:  []string{"tenders/", "data/"},
+			Files: []string{"*.pem"},
+		},
+		InternalPromptMarker: "[INTERNAL]",
+	})
+}
+
+func TestSensitiveMarkForcesInternal(t *testing.T) {
+	r := sensitiveRouter()
+	var got Decision
+	r.OnDecision = func(d Decision) { got = d }
+	text, err := streamText(t, r, provider.Request{
+		Purpose:     provider.PurposeExecute,
+		Sensitivity: provider.SensitivityConfidential,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "internal-ok" {
+		t.Errorf("confidential routed to %q, want internal (forced)", text)
+	}
+	if got.Reason != ReasonSensitiveForcedInternal {
+		t.Errorf("reason = %q, want sensitive_forced_internal", got.Reason)
+	}
+}
+
+func TestSensitivityPublicAllowed(t *testing.T) {
+	r := sensitiveRouter()
+	text, err := streamText(t, r, provider.Request{
+		Purpose:     provider.PurposeExecute,
+		Sensitivity: provider.SensitivityPublic,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "external-ok" {
+		t.Errorf("public routed to %q, want external", text)
+	}
+}
+
+func TestToolArgSensitivePathForcesInternal(t *testing.T) {
+	r := sensitiveRouter()
+	var got Decision
+	r.OnDecision = func(d Decision) { got = d }
+	text, err := streamText(t, r, provider.Request{
+		Purpose: provider.PurposeExecute,
+		Messages: []provider.Message{{
+			Role: provider.RoleAssistant,
+			ToolCalls: []provider.ToolCall{{
+				Name:      "read_file",
+				Arguments: `{"path": "tenders/项目A.docx"}`,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "internal-ok" {
+		t.Errorf("tool arg hit routed to %q, want internal (forced)", text)
+	}
+	if got.Reason != ReasonToolArgSensitive {
+		t.Errorf("reason = %q, want tool_arg_sensitive_confidential", got.Reason)
+	}
+}
+
+func TestInternalPromptMarkerForcesInternal(t *testing.T) {
+	r := sensitiveRouter()
+	text, err := streamText(t, r, provider.Request{
+		Purpose: provider.PurposeExecute,
+		Messages: []provider.Message{{
+			Role:    provider.RoleSystem,
+			Content: "[INTERNAL] 内部架构说明……",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "internal-ok" {
+		t.Errorf("internal prompt routed to %q, want internal", text)
+	}
+}
+
+func TestSensitiveRulesMatchPath(t *testing.T) {
+	rules := &SensitiveRules{
+		Dirs:  []string{"tenders/", "data/"},
+		Files: []string{"*.pem"},
+	}
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"tenders/项目A.docx", true},
+		{"data/test_transactions.csv", true},
+		{"internal/risk/analyzer.go", false},
+		{"secrets/key.pem", true},
+		{"secrets/key.pem.bak", false},
+	}
+	for _, c := range cases {
+		if got := rules.MatchPath(c.path); got != c.want {
+			t.Errorf("MatchPath(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+}
+
+func TestSensitiveDefaultNoConfig(t *testing.T) {
+	// 未配置敏感规则时，入参扫描不触发（默认行为，不误伤）
+	r := New(Config{
+		Internal: pool(KindInternal, "qwen", 0, 0, &fakeProvider{name: "qwen", text: "internal-ok"}),
+		External: pool(KindExternal, "deepseek", 0, 0, &fakeProvider{name: "deepseek", text: "external-ok"}),
+		RoleDefault: map[provider.Purpose]Kind{provider.PurposeExecute: KindExternal},
+	})
+	text, err := streamText(t, r, provider.Request{
+		Purpose: provider.PurposeExecute,
+		Messages: []provider.Message{{
+			Role: provider.RoleAssistant,
+			ToolCalls: []provider.ToolCall{{
+				Name:      "read_file",
+				Arguments: `{"path": "tenders/x.docx"}`,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "external-ok" {
+		t.Errorf("no rules: routed to %q, want external (no forced internal)", text)
+	}
+}

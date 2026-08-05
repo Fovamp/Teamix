@@ -241,6 +241,7 @@ const (
 	UsageSourceClassifier       = "classifier"
 	UsageSourceTitle            = "title"
 	UsageSourceCapabilityRouter = "capability-router"
+	UsageSourceGuard            = "guard"
 )
 
 // Event is one increment in a turn's event stream. Read the field(s) documented

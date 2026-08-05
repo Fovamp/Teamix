@@ -96,6 +96,7 @@ func (c *llmClassifier) IsTask(ctx context.Context, input string) (bool, error) 
 		},
 		MaxTokens:   10,
 		Temperature: provider.TemperaturePtr(0),
+		Purpose:     provider.PurposeClassify,
 	}
 
 	ch, err := c.provider.Stream(ctx, req)

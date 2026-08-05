@@ -156,6 +156,7 @@ func (r *SemanticRouter) callModel(ctx context.Context, input string, candidates
 		}},
 		Temperature: provider.TemperaturePtr(0),
 		MaxTokens:   semanticMaxTokens,
+		Purpose:     provider.PurposeClassify,
 	}
 	if r.Model != "" {
 		// Model override is provider-specific; many providers ignore Request.Model
