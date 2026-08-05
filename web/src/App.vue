@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
 import { ref, onMounted, onUnmounted } from "vue"
 import { api } from "./api"
+import { initGlobalInteraction } from "./lib/longpress"
 import LoginOverlay from "./components/LoginOverlay.vue"
 import SideBar from "./components/SideBar.vue"
 import ChatArea from "./components/ChatArea.vue"
@@ -64,6 +65,7 @@ const onUp = () => {
 }
 
 onMounted(() => {
+  initGlobalInteraction()
   document.addEventListener('mousemove', onMove)
   document.addEventListener('mouseup', onUp)
 })

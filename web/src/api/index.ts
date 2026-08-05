@@ -125,6 +125,8 @@ export const api = {
   summaries: (): Promise<any[]> => get("/teamix/summaries"),
   summarizeSession: (instructions?: string): Promise<any[]> =>
     post("/teamix/summaries", { instructions: instructions || "" }),
+  // 批量删除会话：others=除当前会话外全部，all=全部
+  deleteSessions: (mode: "others" | "all"): Promise<void> => post("/delete-sessions", { mode }),
   // Workflow
   workflow: (): Promise<import("../types").WorkflowState> => get("/teamix/workflow"),
   workflowTemplates: (): Promise<any> => get("/teamix/workflows/templates"),

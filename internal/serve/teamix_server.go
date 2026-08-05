@@ -561,6 +561,7 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("POST /resume", ts.withUser(ts.handleResume))
 	mux.HandleFunc("POST /forget", ts.withUser(ts.handleForget))
 	mux.HandleFunc("POST /delete-session", ts.withUser(ts.handleDeleteSession))
+	mux.HandleFunc("POST /delete-sessions", ts.withUser(ts.handleDeleteSessions))
 	mux.HandleFunc("GET /v3/", ts.handleV3Index)
 	mux.HandleFunc("GET /v3/assets/", ts.handleV3Assets)
 	return logMiddleware(csrfGuard(mux))

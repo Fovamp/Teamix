@@ -41,6 +41,8 @@ function refreshCheckpoints() {
 onMounted(() => {
   refreshCheckpoints()
   setInterval(refreshCheckpoints, 30000)
+  // 点击别处关闭会话右键菜单（菜单自身 @mousedown.stop 阻止冒泡）
+  document.addEventListener('mousedown', closeCtx)
   window.addEventListener('status-update', (e) => {
     const s = (e as CustomEvent).detail;
     checkpointCount.value = s.checkpointCount || 0;
@@ -145,17 +147,42 @@ async function rewind() {
   window.dispatchEvent(new Event('open-rewind-picker'))
 }
 function lgout() { api.logout(); location.reload() }
+const deleteMode = ref<'one' | 'others' | 'all'>('one')
+const ctxMenu = ref<{ x: number; y: number; session: any } | null>(null)
+function openCtx(e: MouseEvent, s: any) {
+  ctxMenu.value = { x: e.clientX, y: e.clientY, session: s }
+}
+function closeCtx() { ctxMenu.value = null }
 function confirmDelete(s: any) {
+  deleteMode.value = 'one'
   deleteName.value = s.name || ''
   showDelete.value = true
+  ctxMenu.value = null
+}
+function askDeleteOthers() {
+  deleteMode.value = 'others'
+  deleteName.value = ''
+  showDelete.value = true
+  ctxMenu.value = null
+}
+function askDeleteAll() {
+  deleteMode.value = 'all'
+  deleteName.value = ''
+  showDelete.value = true
+  ctxMenu.value = null
 }
 async function doDelete() {
   const name = deleteName.value
-  if (!name) return
   try {
-    await api.deleteSession(name)
+    if (deleteMode.value === 'one') {
+      if (!name) return
+      await api.deleteSession(name)
+    } else {
+      await api.deleteSessions(deleteMode.value)
+    }
   } catch (err) {
     console.error('deleteSession error:', err)
+    window.alert(deleteMode.value === 'one' ? '删除会话失败' : '批量删除会话失败，请重试')
   }
   showDelete.value = false
   try {
@@ -207,7 +234,7 @@ async function resumeSession(s: any, e?: Event) {
     <div class="sidebar__label-row"><span class="sidebar__label">会话</span><span class="session-item__meta">{{ sessions.length }}</span></div>
     <div class="session-search"><input class="session-search__input" id="session-search" type="search" v-model="sessionFilter" placeholder="搜索会话" /></div>
     <div class="session-list" id="session-list" style="flex:1;overflow-y:auto;min-height:0">
-      <div v-for="s in filteredSessions" :key="s.path" class="session-item" :class="{ 'session-item--active': s.current }" @click="resumeSession(s, $event)">
+      <div v-for="s in filteredSessions" :key="s.path" class="session-item" :class="{ 'session-item--active': s.current }" @click="resumeSession(s, $event)" @contextmenu.prevent="openCtx($event, s)">
         <svg class="session-item__icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         <div class="session-item__body"><div class="session-item__title">{{ s.title || s.name }}</div><div class="session-item__meta">{{ s.turns ? s.turns + " 轮" : "" }}</div></div>
         <button type="button" class="session-del" :data-name="s.name" title="删除会话" @click.stop="confirmDelete(s)">&times;</button>
@@ -226,10 +253,21 @@ async function resumeSession(s: any, e?: Event) {
       <div style="padding:0 10px 6px"><button id="teamix-logout-btn" @click="lgout()" style="width:100%;padding:5px 0;border:1px solid var(--border);border-radius:6px;background:var(--bg-2);color:var(--muted-2);font-size:11px;cursor:pointer">{{ token ? "Logout" : "Login" }}</button></div>
     </div>
   </aside>
-<div class="modal-overlay" v-if="showDelete" @click.self="showDelete = false" style="display:flex;z-index:300">
+  <!-- 会话右键菜单：删除当前 / 删除其他 / 删除全部 -->
+  <div v-if="ctxMenu" class="ctx-menu" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }" @mousedown.stop>
+    <div class="ctx-menu__item" @click="confirmDelete(ctxMenu.session)">删除此会话</div>
+    <div class="ctx-menu__item" @click="askDeleteOthers">删除其他会话</div>
+    <div class="ctx-menu__item ctx-menu__item--danger" @click="askDeleteAll">删除所有会话</div>
+  </div>
+  <div class="modal-overlay" v-if="showDelete" @click.self="showDelete = false" style="display:flex;z-index:300">
     <div class="modal" style="width:360px">
       <div class="modal__head"><span>删除会话</span><span class="modal__close" @click="showDelete = false">&times;</span></div>
-      <div class="modal__body"><p>确定删除 "{{ deleteName }}"？</p><div class="dialog-actions"><button class="dialog-btn" @click="showDelete = false">取消</button><button class="dialog-btn dialog-btn--danger" @click="doDelete">删除</button></div></div>
+      <div class="modal__body">
+        <p v-if="deleteMode === 'one'">确定删除 "{{ deleteName }}"？</p>
+        <p v-else-if="deleteMode === 'others'">确定删除除当前会话外的所有会话？此操作不可恢复。</p>
+        <p v-else>确定删除所有会话？此操作不可恢复，删除后将自动新建一个会话。</p>
+        <div class="dialog-actions"><button class="dialog-btn" @click="showDelete = false">取消</button><button class="dialog-btn dialog-btn--danger" @click="doDelete">删除</button></div>
+      </div>
     </div>
   </div>
 </template>

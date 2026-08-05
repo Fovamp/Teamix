@@ -1,12 +1,12 @@
-﻿package serve
+package serve
 
 import (
 	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"reasonix/internal/control"
+	"strings"
 )
 
 func (ts *TeamixServer) handleUserRole(w http.ResponseWriter, r *http.Request, u *userSession) {
@@ -49,6 +49,45 @@ func (ts *TeamixServer) handleDeleteSession(w http.ResponseWriter, r *http.Reque
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// 清理遗留的 checkpoint 目录（<name>.ckpt），避免删除会话后留下垃圾文件。
+	_ = os.RemoveAll(strings.TrimSuffix(target, ".jsonl") + ".ckpt")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleDeleteSessions 批量删除会话：mode="others" 删除除当前会话外的全部；
+// mode="all" 删除全部（含当前）。同步清理各会话的 checkpoint 目录。
+func (ts *TeamixServer) handleDeleteSessions(w http.ResponseWriter, r *http.Request, u *userSession) {
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	mode := body.Mode
+	if mode != "others" && mode != "all" {
+		http.Error(w, "mode must be 'others' or 'all'", http.StatusBadRequest)
+		return
+	}
+	dir := u.ctrl.SessionDir()
+	if dir == "" {
+		http.Error(w, "sessions disabled", http.StatusBadRequest)
+		return
+	}
+	current := filepath.Base(u.ctrl.SessionPath()) // 形如 0805-xxxx.jsonl
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	for _, e := range ents {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".jsonl" {
+			continue
+		}
+		if mode == "others" && e.Name() == current {
+			continue
+		}
+		full := filepath.Join(dir, e.Name())
+		_ = os.Remove(full)
+		_ = os.RemoveAll(strings.TrimSuffix(full, ".jsonl") + ".ckpt")
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
