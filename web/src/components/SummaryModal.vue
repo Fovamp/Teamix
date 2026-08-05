@@ -53,9 +53,8 @@ async function doConfirmDel() {
 }
 
 function summaryTitle(s: any): string {
-  let t = (s && s.title || "").trim()
-  // 兜底剥离 markdown 标题前缀与"对话总结："类前缀
-  t = t.replace(/^#{1,6}\s+/, "").replace(/^(对话总结|会话总结|总结)[：:]\s*/, "").trim()
+  // 标题的 md 前缀与"对话总结："类前缀由后端存库时统一清理，前端不再兜底
+  const t = (s && s.title || "").trim()
   if (t) return t
   // 旧数据无标题：取正文前 20 字
   const c = (s && s.content || "").replace(/\s+/g, " ").trim()
