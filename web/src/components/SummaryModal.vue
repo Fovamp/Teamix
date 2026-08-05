@@ -97,19 +97,21 @@ function fmtTime(t: string): string {
   </div>
 </div>
 
-<!-- 全屏展示 -->
+<!-- 展开查看（居中大框，类似工作流编辑的展开框，不是整屏） -->
 <div v-if="full" class="summary-fullscreen" @click.self="full = null">
-  <div class="summary-fullscreen__bar">
-    <div class="summary-fullscreen__head">
-      <div class="summary-fullscreen__title">{{ summaryTitle(full) }}</div>
-      <div class="summary-fullscreen__meta">{{ fmtTime(full.time) }}</div>
+  <div class="summary-fullscreen__panel">
+    <div class="summary-fullscreen__bar">
+      <div class="summary-fullscreen__head">
+        <div class="summary-fullscreen__title">{{ summaryTitle(full) }}</div>
+        <div class="summary-fullscreen__meta">{{ fmtTime(full.time) }}</div>
+      </div>
+      <div class="summary-fullscreen__ops">
+        <button type="button" class="branch-item__btn summary-card__del" @click="remove(full.id)">删除</button>
+        <button type="button" class="branch-item__btn" @click="full = null">关闭</button>
+      </div>
     </div>
-    <div class="summary-fullscreen__ops">
-      <button type="button" class="branch-item__btn summary-card__del" @click="remove(full.id)">删除</button>
-      <button type="button" class="branch-item__btn" @click="full = null">关闭</button>
-    </div>
+    <div class="summary-fullscreen__body">{{ full.content }}</div>
   </div>
-  <div class="summary-fullscreen__body">{{ full.content }}</div>
 </div>
 </template>
 
@@ -147,10 +149,23 @@ function fmtTime(t: string): string {
   position: fixed;
   inset: 0;
   z-index: 500;
-  background: oklch(12% 0.01 260 / 0.96);
+  background: oklch(0% 0 0 / 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+}
+.summary-fullscreen__panel {
+  width: min(760px, 92vw);
+  height: min(76vh, 720px);
+  background: var(--panel, #14181f);
+  border: 1px solid var(--border-strong, rgba(255,255,255,.14));
+  border-radius: var(--radius-lg, 14px);
+  box-shadow: 0 14px 44px rgba(0,0,0,.55);
   display: flex;
   flex-direction: column;
-  padding: 24px 32px;
+  padding: 18px 22px;
   box-sizing: border-box;
 }
 .summary-fullscreen__bar {
@@ -160,7 +175,8 @@ function fmtTime(t: string): string {
   gap: 16px;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 16px;
+  margin-bottom: 14px;
+  flex-shrink: 0;
 }
 .summary-fullscreen__head { min-width: 0; }
 .summary-fullscreen__title { font-size: 17px; font-weight: 700; color: var(--fg); }

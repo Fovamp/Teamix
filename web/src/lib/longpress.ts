@@ -7,7 +7,15 @@ let pressTimer: number | null = null
 let pressX = 0
 let pressY = 0
 let pressTarget: HTMLElement | null = null
+let pendingBubble: number | null = null // 拖选后的延迟弹出定时器
 let bubble: HTMLDivElement | null = null
+
+function cancelPendingBubble() {
+  if (pendingBubble !== null) {
+    clearTimeout(pendingBubble)
+    pendingBubble = null
+  }
+}
 
 function hideBubble() {
   if (bubble) bubble.style.display = "none"
@@ -75,6 +83,7 @@ export function initGlobalInteraction() {
   ensureBubble()
   document.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return
+    cancelPendingBubble()
     const t = e.target as HTMLElement
     if (!t || t.closest("input, textarea, select, [contenteditable], button, a, .modal-overlay, .session-del, .ctx-menu, #longpress-copy")) {
       return
@@ -99,7 +108,8 @@ export function initGlobalInteraction() {
       pressTimer = null
     }
     // 拖拽选中文本后（松手时存在非空选区，且不是输入框/按钮等交互元素）：
-    // 在鼠标右侧弹"复制"气泡，替代被禁用的浏览器右键复制
+    // 延迟 500ms 再弹"复制"气泡——立刻弹会挡住刚选中的文本、影响阅读；
+    // 延迟期间用户再次按下（取消选择/点别处）则取消弹出。
     const t = e.target as HTMLElement
     if (!t || typeof (t as any).closest !== "function" ||
         t.closest("input, textarea, select, [contenteditable], button, a, .session-del, .ctx-menu, #longpress-copy")) {
@@ -107,7 +117,13 @@ export function initGlobalInteraction() {
     }
     const sel = window.getSelection()
     if (sel && sel.toString().trim()) {
-      showBubble(e.clientX, e.clientY)
+      const x = e.clientX
+      const y = e.clientY
+      cancelPendingBubble()
+      pendingBubble = window.setTimeout(() => {
+        pendingBubble = null
+        showBubble(x, y)
+      }, 500)
     }
   })
 }
