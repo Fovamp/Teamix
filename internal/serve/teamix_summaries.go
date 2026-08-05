@@ -84,6 +84,10 @@ func (ts *TeamixServer) allSummaries(u *userSession) []sessionSummary {
 			continue
 		}
 		sid := strings.TrimSuffix(e.Name(), ".json")
+		// 跳过路径防御产生的 _invalid 占位文件（不是真实会话）
+		if sid == "_invalid" || sid == "" {
+			continue
+		}
 		sums := ts.loadSessionSummaries(u.name, sid)
 		if len(sums) == 0 {
 			continue
@@ -129,7 +133,7 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		instructions := strings.TrimSpace(body.Instructions)
 		if instructions == "" {
-			instructions = "第一行写一个简短标题（不超过 20 字），空一行，然后用自然语言总结对话内容，不要分门别类。"
+			instructions = "第一行写一个简短标题（不超过 20 字，直接写标题本身，不要加“对话总结”等前缀），空一行，然后用自然语言总结对话内容，不要分门别类。"
 		}
 		content, err := u.ctrl.SessionSummary(r.Context(), instructions)
 		if err != nil {
@@ -198,11 +202,23 @@ func splitSummaryTitle(s string) (title, rest string) {
 	head, remainder, hasBlank := strings.Cut(s, "\n\n")
 	first := strings.TrimSpace(head)
 	first = stripMarkdownHeading(first)
+	first = stripSummaryTitlePrefix(first)
 	if !hasBlank || first == "" || len([]rune(first)) > 20 {
 		// 无空行分隔 / 首行过长：整段当正文，不设标题
 		return "", s
 	}
 	return first, strings.TrimSpace(remainder)
+}
+
+// stripSummaryTitlePrefix 去掉标题里常见的"对话总结："类前缀，
+// 标题应直接是内容本身（"对话总结：猫娘助理的自我介绍" → "猫娘助理的自我介绍"）。
+func stripSummaryTitlePrefix(s string) string {
+	for _, p := range []string{"对话总结：", "对话总结:", "会话总结：", "会话总结:", "总结：", "总结:"} {
+		if strings.HasPrefix(s, p) {
+			return strings.TrimSpace(strings.TrimPrefix(s, p))
+		}
+	}
+	return s
 }
 
 // stripMarkdownHeading 去掉开头的 markdown 标题标记（# ## ### …）。

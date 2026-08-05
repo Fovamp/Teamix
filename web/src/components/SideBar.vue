@@ -22,12 +22,6 @@ const hasVisibleHistory = ref(false)
 const isArchitect = ref(false)
 const checkpointCount = ref(0)
 
-function hasContentInLog(): boolean {
-  const log = document.getElementById('log')
-  if (!log) return false
-  return !!log.querySelector('.msg--user, .msg--assistant, .card')
-}
-
 let _cpCache = 0
 function hasCheckpoints(): boolean { return _cpCache > 0 }
 function refreshCheckpoints() {
@@ -139,11 +133,11 @@ async function newS() {
   window.dispatchEvent(new Event("new-session-requested"))
 }
 async function compact() {
-  if (!hasContentInLog()) return
+  if (!hasVisibleHistory.value) return
   try { await api.compact() } catch {}
 }
 async function rewind() {
-  if (!hasContentInLog()) return
+  if (!hasVisibleHistory.value) return
   window.dispatchEvent(new Event('open-rewind-picker'))
 }
 function lgout() { api.logout(); location.reload() }
@@ -221,8 +215,8 @@ async function resumeSession(s: any, e?: Event) {
     <div class="teamix-user-badge" v-if="userName" style="display:flex;align-items:center;gap:8px;padding:8px 14px 6px;font-size:13px;font-weight:600;color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span>{{ userName }}</span></div>
     <nav class="sidebar__nav">
       <div class="sidebar__item sidebar__item--accent" id="btn-new" @click="newS"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>新会话</span></div>
-      <div class="sidebar__item" id="btn-compact" @click="compact" :class="{ 'sidebar__item--disabled': !hasContentInLog() }"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg><span>压缩</span></div>
-      <div class="sidebar__item" id="btn-rewind" @click="rewind" :class="{ 'sidebar__item--disabled': !hasContentInLog() }"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg><span>回退</span></div>
+      <div class="sidebar__item" id="btn-compact" @click="compact" :class="{ 'sidebar__item--disabled': !hasVisibleHistory }"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg><span>压缩</span></div>
+      <div class="sidebar__item" id="btn-rewind" @click="rewind" :class="{ 'sidebar__item--disabled': !hasVisibleHistory }"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg><span>回退</span></div>
       <div class="sidebar__item" id="btn-tree" @click="emit('branches')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><span>分支</span></div>
       <div class="sidebar__item" id="btn-summaries" @click="emit('summaries')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg><span>总结</span></div>
       <div class="sidebar__item" id="btn-models" @click="emit('models')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3"/><path d="M15 1v3"/><path d="M9 20v3"/><path d="M15 20v3"/><path d="M20 9h3"/><path d="M20 14h3"/><path d="M1 9h3"/><path d="M1 14h3"/></svg><span>模型</span></div>
