@@ -37,30 +37,41 @@ function runAction(action: "fork" | "summary" | "rewind") {
     confirmAction.value = null
     return
   }
-  const turn = props.m?.turn
-  // 总结依赖有效的 checkpoint turn（错误轮次会误总结上下文）；
-  // 分叉走 tip 分叉（turn=-1），不依赖 checkpoint，任何会话都可用。
-  if (action === "summary" && (turn == null || turn < 0)) {
-    toast("当前消息还没有可操作的轮次（缺少 checkpoint），请先完成一轮对话", "info")
-    return
-  }
   const t = localStorage.getItem("teamix_token")
   if (!t) return
   const q = "?token=" + encodeURIComponent(t)
-  const body = action === "fork"
-    ? { turn: -1, name: "" }  // turn=-1 = tip 分叉：从最新消息分叉，继承全部轮次，不依赖轮次计数
-    : action === "summary"
-      ? { turn, mode: "upto" }
-      : { turn, scope: "conversation" }
-  fetch("/" + (action === "fork" ? "fork" : action === "summary" ? "summarize" : "rewind") + q, {
+  if (action === "summary") {
+    // 会话总结：生成当前会话的人读摘要（不改动会话本身），成功后打开总结面板
+    fetch("/teamix/summaries" + q, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    })
+      .then(async (r) => {
+        if (r.ok) {
+          toast("会话总结已生成", "success")
+          window.dispatchEvent(new CustomEvent("open-summaries"))
+          return
+        }
+        // 失败：后端 http.Error 的错误文本直接 toast 显示
+        let msg = "总结生成失败"
+        try { const t = await r.text(); if (t && t.trim()) msg = t.trim() } catch { /* ignore */ }
+        toast(msg, "error", 6000)
+      })
+      .catch(() => { toast("网络错误，操作未执行", "error") })
+    confirmAction.value = null
+    return
+  }
+  // fork：tip 分叉（turn=-1），从最新消息分叉，继承全部轮次，不依赖轮次计数
+  fetch("/fork" + q, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ turn: -1, name: "" }),
   })
     .then(async (r) => {
       if (r.ok) {
         notifySessionChanged()
-        toast(action === "fork" ? "分叉成功，已切换到新会话" : "总结成功", "success")
+        toast("分叉成功，已切换到新会话", "success")
         return
       }
       // 失败：后端 http.Error 的错误文本直接 toast 显示，不再静默吞掉

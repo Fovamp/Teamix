@@ -15,10 +15,11 @@ import (
 // sessionSummary 是"会话总结"面板里的一条记录：AI 生成的、面向人阅读的
 // 当前会话摘要，展示在左侧栏"总结"面板，按会话（sessionID）隔离存储。
 // 它与 /summarize（SummarizeUpTo/From，会改写会话消息日志的压缩操作）不同：
-// 这里生成后完全不改动会话本身。
+// 这里生成后完全不改动会话本身。Title 为总结首行提炼的标题。
 type sessionSummary struct {
 	ID      string    `json:"id"`
 	Time    time.Time `json:"time"`
+	Title   string    `json:"title,omitempty"`
 	Content string    `json:"content"`
 }
 
@@ -83,25 +84,62 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		instructions := strings.TrimSpace(body.Instructions)
 		if instructions == "" {
-			instructions = "面向用户阅读的会话总结：概括主要目标、已完成的事、关键结论与尚未完成的事项。"
+			instructions = "面向用户阅读的会话总结：第一行写一个简短标题（不超过 20 字），空一行，然后概括主要目标、已完成的事、关键结论与尚未完成的事项。"
 		}
 		content, err := u.ctrl.SessionSummary(r.Context(), instructions)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("生成总结失败: %v", err), http.StatusBadGateway)
 			return
 		}
+		title, rest := splitSummaryTitle(content)
 		// load-modify-save 加锁，避免并发 POST 互相覆盖丢数据。
 		ts.mu.Lock()
 		sums := ts.loadSessionSummaries(u.name, sessionID)
 		sums = append(sums, sessionSummary{
 			ID:      fmt.Sprintf("s%d", time.Now().UnixNano()),
 			Time:    time.Now(),
-			Content: content,
+			Title:   title,
+			Content: rest,
 		})
 		ts.saveSessionSummaries(u.name, sessionID, sums)
 		ts.mu.Unlock()
 		writeJSON(w, sums)
 		return
 	}
+	if r.Method == http.MethodDelete {
+		var body struct {
+			ID string `json:"id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		ts.mu.Lock()
+		sums := ts.loadSessionSummaries(u.name, sessionID)
+		kept := sums[:0]
+		for _, s := range sums {
+			if s.ID != body.ID {
+				kept = append(kept, s)
+			}
+		}
+		ts.saveSessionSummaries(u.name, sessionID, kept)
+		ts.mu.Unlock()
+		writeJSON(w, kept)
+		return
+	}
 	writeJSON(w, ts.loadSessionSummaries(u.name, sessionID))
+}
+
+// splitSummaryTitle 把 AI 总结的第一段（空行前的第一行）拆成标题，其余作为正文。
+// 要求：标题后必须跟一个空行才视为有标题（提示词要求"第一行标题，空一行，然后正文"），
+// 标题超过 20 字视为模型没按格式输出，整段当正文。
+func splitSummaryTitle(s string) (title, rest string) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", ""
+	}
+	head, remainder, hasBlank := strings.Cut(s, "\n\n")
+	first := strings.TrimSpace(head)
+	if !hasBlank || first == "" || strings.Contains(first, "\n") || len([]rune(first)) > 20 {
+		// 无空行分隔 / 首行过长或含换行：整段当正文，不设标题
+		return "", s
+	}
+	return first, strings.TrimSpace(remainder)
 }

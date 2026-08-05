@@ -13,6 +13,15 @@ function hideBubble() {
   if (bubble) bubble.style.display = "none"
 }
 
+function showBubble(x: number, y: number) {
+  const b = ensureBubble()
+  b.style.left = Math.min(x + 14, window.innerWidth - 90) + "px"
+  b.style.top = y + 10 + "px"
+  b.style.display = "block"
+  // 不点击的话几秒后自动隐藏，避免气泡残留
+  window.setTimeout(hideBubble, 3000)
+}
+
 function ensureBubble(): HTMLDivElement {
   if (bubble) return bubble
   bubble = document.createElement("div")
@@ -75,12 +84,7 @@ export function initGlobalInteraction() {
     pressY = e.clientY
     pressTarget = t
     pressTimer = window.setTimeout(() => {
-      const b = ensureBubble()
-      b.style.left = Math.min(pressX + 14, window.innerWidth - 90) + "px"
-      b.style.top = pressY + 10 + "px"
-      b.style.display = "block"
-      // 不点击的话几秒后自动隐藏，避免气泡残留
-      window.setTimeout(hideBubble, 3000)
+      showBubble(pressX, pressY)
     }, 600)
   })
   document.addEventListener("mousemove", (e) => {
@@ -89,10 +93,21 @@ export function initGlobalInteraction() {
       pressTimer = null
     }
   })
-  document.addEventListener("mouseup", () => {
+  document.addEventListener("mouseup", (e) => {
     if (pressTimer !== null) {
       clearTimeout(pressTimer)
       pressTimer = null
+    }
+    // 拖拽选中文本后（松手时存在非空选区，且不是输入框/按钮等交互元素）：
+    // 在鼠标右侧弹"复制"气泡，替代被禁用的浏览器右键复制
+    const t = e.target as HTMLElement
+    if (!t || typeof (t as any).closest !== "function" ||
+        t.closest("input, textarea, select, [contenteditable], button, a, .session-del, .ctx-menu, #longpress-copy")) {
+      return
+    }
+    const sel = window.getSelection()
+    if (sel && sel.toString().trim()) {
+      showBubble(e.clientX, e.clientY)
     }
   })
 }

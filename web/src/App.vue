@@ -68,11 +68,16 @@ onMounted(() => {
   initGlobalInteraction()
   document.addEventListener('mousemove', onMove)
   document.addEventListener('mouseup', onUp)
+  // 消息按钮"总结"生成后自动打开总结面板
+  window.addEventListener('open-summaries', openSummaries)
 })
+
+function openSummaries() { showSummaries.value = true }
 
 onUnmounted(() => {
   document.removeEventListener('mousemove', onMove)
   document.removeEventListener('mouseup', onUp)
+  window.removeEventListener('open-summaries', openSummaries)
 })
 </script>
 

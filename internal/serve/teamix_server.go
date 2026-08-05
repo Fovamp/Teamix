@@ -544,6 +544,7 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("POST /teamix/notifications/create", ts.withUser(ts.handleNotificationCreate))
 	mux.HandleFunc("GET /teamix/summaries", ts.withUser(ts.handleSummaries))
 	mux.HandleFunc("POST /teamix/summaries", ts.withUser(ts.handleSummaries))
+	mux.HandleFunc("DELETE /teamix/summaries", ts.withUser(ts.handleSummaries))
 	mux.HandleFunc("POST /submit", ts.withUser(ts.handleSubmit))
 	mux.HandleFunc("POST /cancel", ts.withUser(ts.handleCancel))
 	mux.HandleFunc("POST /approve", ts.withUser(ts.handleApprove))

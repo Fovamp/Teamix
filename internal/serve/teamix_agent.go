@@ -9,15 +9,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
-	"time"
+	reasonixAgent "reasonix/internal/agent"
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
-	"reasonix/internal/workflow"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
-	reasonixAgent "reasonix/internal/agent"
 	reasonixStore "reasonix/internal/store"
+	"reasonix/internal/workflow"
+	"strings"
+	"time"
 )
 
 // Core agent interaction handlers: submit, approve, events, sessions, models.
@@ -57,7 +57,6 @@ func (ts *TeamixServer) handleEvents(w http.ResponseWriter, r *http.Request, u *
 		}
 	}
 }
-
 
 func (ts *TeamixServer) handleSubmit(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
@@ -122,21 +121,29 @@ func (ts *TeamixServer) handleSubmit(w http.ResponseWriter, r *http.Request, u *
 			ordered := u.workflow.OrderedStages()
 			for _, st := range ordered {
 				var prefix, label string
-				if st == stage { prefix = "> " } else { prefix = "  " }
+				if st == stage {
+					prefix = "> "
+				} else {
+					prefix = "  "
+				}
 				label = string(st)
-				if l, ok := u.workflow.GetStageLabel(st); ok { label = l }
-				if l, ok := workflow.StageLabels[st]; ok { label = l }
+				if l, ok := u.workflow.GetStageLabel(st); ok {
+					label = l
+				}
+				if l, ok := workflow.StageLabels[st]; ok {
+					label = l
+				}
 				overview += prefix + " " + label + "\n"
 			}
 			overview += "\n[Current Stage: " + string(stage) + "]\n"
 			if prompt != "" {
 				overview += prompt + "\n\n"
 			}
-				// Inject impact analysis result if available (auto-cleared after read)
+			// Inject impact analysis result if available (auto-cleared after read)
 			if result := u.workflow.GetImpactAnalysis(); result != "" {
 				overview += result + "\n\n"
 			}
-		overview += "\n\n【工作流指令】\n1. 你当前只能执行【" + string(stage) + "】阶段的工作，不要提前执行后续阶段的工作。\n2. 当你认为当前阶段的工作已经全部完成时，请在回复末尾单独一行输出 阶段完成: <原因>。不要在其他地方输出这个标记。\n---\n"
+			overview += "\n\n【工作流指令】\n1. 你当前只能执行【" + string(stage) + "】阶段的工作，不要提前执行后续阶段的工作。\n2. 当你认为当前阶段的工作已经全部完成时，请在回复末尾单独一行输出 阶段完成: <原因>。不要在其他地方输出这个标记。\n---\n"
 			input = overview + input
 		}
 	}
@@ -193,21 +200,19 @@ func (ts *TeamixServer) handleSubmit(w http.ResponseWriter, r *http.Request, u *
 	w.WriteHeader(http.StatusNoContent)
 }
 
-
 func (ts *TeamixServer) handleCancel(w http.ResponseWriter, _ *http.Request, u *userSession) {
 	u.ctrl.Cancel()
 	w.WriteHeader(http.StatusNoContent)
 }
 
-
 func (ts *TeamixServer) handleApprove(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
-		ID      string `json:"id"`
-		Allow bool `json:"allow"`
-		Session bool `json:"session"`
-		Persist bool `json:"persist"`
+		ID          string `json:"id"`
+		Allow       bool   `json:"allow"`
+		Session     bool   `json:"session"`
+		Persist     bool   `json:"persist"`
 		Scope       string `json:"scope"`
-	Description string `json:"description"`
+		Description string `json:"description"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" {
 		http.Error(w, "missing id", http.StatusBadRequest)
@@ -216,7 +221,6 @@ func (ts *TeamixServer) handleApprove(w http.ResponseWriter, r *http.Request, u 
 	u.ctrl.Approve(body.ID, body.Allow, body.Session, body.Persist)
 	w.WriteHeader(http.StatusNoContent)
 }
-
 
 func (ts *TeamixServer) handlePlan(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
@@ -227,7 +231,6 @@ func (ts *TeamixServer) handlePlan(w http.ResponseWriter, r *http.Request, u *us
 	w.WriteHeader(http.StatusNoContent)
 }
 
-
 func (ts *TeamixServer) handleCompact(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
 		Instructions string `json:"instructions"`
@@ -236,7 +239,6 @@ func (ts *TeamixServer) handleCompact(w http.ResponseWriter, r *http.Request, u 
 	u.ctrl.Compact(r.Context(), body.Instructions)
 	w.WriteHeader(http.StatusAccepted)
 }
-
 
 func (ts *TeamixServer) handleNewSession(w http.ResponseWriter, _ *http.Request, u *userSession) {
 	u.workflow = workflow.NewEmptyState("", "")
@@ -258,27 +260,33 @@ func (ts *TeamixServer) handleNewSession(w http.ResponseWriter, _ *http.Request,
 	w.WriteHeader(http.StatusNoContent)
 }
 
-
 func (ts *TeamixServer) handleRewind(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
-		Turn int `json:"turn"`
+		Turn  int    `json:"turn"`
 		Scope string `json:"scope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	scope := control.RewindCode
-	if body.Scope == "conversation" {
+	scope := control.RewindCode // 'code' 命中默认值
+	switch body.Scope {
+	case "both":
+		scope = control.RewindBoth
+	case "conversation":
 		scope = control.RewindConversation
 	}
+	before := len(u.ctrl.History())
 	if err := u.ctrl.Rewind(body.Turn, scope); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]string{"ok": "rewound"})
+	removed := before - len(u.ctrl.History())
+	if removed < 0 {
+		removed = 0
+	}
+	writeJSON(w, map[string]any{"ok": "rewound", "removed": removed})
 }
-
 
 func (ts *TeamixServer) handleFork(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
@@ -315,7 +323,6 @@ func (ts *TeamixServer) handleFork(w http.ResponseWriter, r *http.Request, u *us
 	writeJSON(w, map[string]string{"path": path})
 }
 
-
 func (ts *TeamixServer) handleSummarize(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
 		Turn *int   `json:"turn"`
@@ -341,7 +348,6 @@ func (ts *TeamixServer) handleSummarize(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusAccepted)
 }
 
-
 func (ts *TeamixServer) handleToolApprovalMode(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
 		Mode string `json:"mode"`
@@ -354,7 +360,6 @@ func (ts *TeamixServer) handleToolApprovalMode(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusNoContent)
 }
 
-
 func (ts *TeamixServer) handleAutoApproveTools(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
 		On bool `json:"on"`
@@ -364,7 +369,6 @@ func (ts *TeamixServer) handleAutoApproveTools(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusNoContent)
 }
 
-
 func (ts *TeamixServer) handleBypass(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
 		On bool `json:"on"`
@@ -373,7 +377,6 @@ func (ts *TeamixServer) handleBypass(w http.ResponseWriter, r *http.Request, u *
 	u.ctrl.SetBypass(body.On)
 	w.WriteHeader(http.StatusNoContent)
 }
-
 
 func (ts *TeamixServer) handleGoal(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
@@ -391,10 +394,9 @@ func (ts *TeamixServer) handleGoal(w http.ResponseWriter, r *http.Request, u *us
 	w.WriteHeader(http.StatusNoContent)
 }
 
-
 func (ts *TeamixServer) handleAnswer(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
-		ID string `json:"id"`
+		ID      string            `json:"id"`
 		Answers []event.AskAnswer `json:"answers"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -404,7 +406,6 @@ func (ts *TeamixServer) handleAnswer(w http.ResponseWriter, r *http.Request, u *
 	u.ctrl.AnswerQuestion(body.ID, body.Answers)
 	w.WriteHeader(http.StatusNoContent)
 }
-
 
 func (ts *TeamixServer) handleResume(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
@@ -430,7 +431,6 @@ func (ts *TeamixServer) handleResume(w http.ResponseWriter, r *http.Request, u *
 	w.WriteHeader(http.StatusNoContent)
 }
 
-
 func (ts *TeamixServer) handleForget(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
 		Name string `json:"name"`
@@ -449,18 +449,15 @@ func (ts *TeamixServer) handleForget(w http.ResponseWriter, r *http.Request, u *
 	w.WriteHeader(http.StatusNoContent)
 }
 
-
 func (ts *TeamixServer) handleHistory(w http.ResponseWriter, r *http.Request, u *userSession) {
 	msgs := u.ctrl.History()
 	writeJSON(w, historyMessages(msgs))
 }
 
-
 func (ts *TeamixServer) handleContext(w http.ResponseWriter, r *http.Request, u *userSession) {
 	used, window := u.ctrl.ContextSnapshot()
 	writeJSON(w, map[string]any{"used": used, "window": window})
 }
-
 
 func (ts *TeamixServer) handleStatus(w http.ResponseWriter, r *http.Request, u *userSession) {
 	rs := u.ctrl.RuntimeStatus()
@@ -496,12 +493,11 @@ func (ts *TeamixServer) handleStatus(w http.ResponseWriter, r *http.Request, u *
 		"cacheHit":         hit,
 		"cacheMiss":        miss,
 		"user":             u.name,
-		"selectedProject": u.selectedProject,
+		"selectedProject":  u.selectedProject,
 		"balance":          bal,
 		"lastUsage":        lastUsage,
 	})
 }
-
 
 func (ts *TeamixServer) handleSessions(w http.ResponseWriter, r *http.Request, u *userSession) {
 	dir := u.ctrl.SessionDir()
@@ -513,8 +509,8 @@ func (ts *TeamixServer) handleSessions(w http.ResponseWriter, r *http.Request, u
 		Name    string `json:"name"`
 		Path    string `json:"path"`
 		Title   string `json:"title,omitempty"`
-		Turns int `json:"turns,omitempty"`
-		Current bool `json:"current,omitempty"`
+		Turns   int    `json:"turns,omitempty"`
+		Current bool   `json:"current,omitempty"`
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -548,7 +544,6 @@ func (ts *TeamixServer) handleSessions(w http.ResponseWriter, r *http.Request, u
 	writeJSON(w, out)
 }
 
-
 func (ts *TeamixServer) handleModels(w http.ResponseWriter, r *http.Request, u *userSession) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -560,8 +555,8 @@ func (ts *TeamixServer) handleModels(w http.ResponseWriter, r *http.Request, u *
 		Provider string `json:"provider"`
 		Model    string `json:"model"`
 		Kind     string `json:"kind,omitempty"`
-		Active bool `json:"active,omitempty"`
-		Default bool `json:"default,omitempty"`
+		Active   bool   `json:"active,omitempty"`
+		Default  bool   `json:"default,omitempty"`
 	}
 	current := teamixCurrentModelRef(u.ctrl)
 	label := u.ctrl.Label()
@@ -606,12 +601,10 @@ func (ts *TeamixServer) handleModels(w http.ResponseWriter, r *http.Request, u *
 	writeJSON(w, map[string]any{"current": current, "label": label, "default": cfg.DefaultModel, "models": out})
 }
 
-
 func (ts *TeamixServer) handleCheckpoints(w http.ResponseWriter, _ *http.Request, u *userSession) {
 	cps := u.ctrl.Checkpoints()
 	writeJSON(w, cps)
 }
-
 
 // branchView 在 BranchInfo 基础上补父会话标题，前端分支弹窗可显示
 // "分叉自 <父标题>" 而不是无意义的父 ID 前几位。
@@ -680,16 +673,13 @@ func (ts *TeamixServer) handleBranchSwitch(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, map[string]any{"ok": true, "branch": info})
 }
 
-
 func (ts *TeamixServer) handleSkills(w http.ResponseWriter, _ *http.Request, u *userSession) {
 	writeJSON(w, []any{})
 }
 
-
 func (ts *TeamixServer) handleTodos(w http.ResponseWriter, _ *http.Request, u *userSession) {
 	writeJSON(w, []any{})
 }
-
 
 func (ts *TeamixServer) switchModel(u *userSession, ref string) error {
 	if u.ctrl.Running() {
@@ -724,4 +714,3 @@ func (ts *TeamixServer) switchModel(u *userSession, ref string) error {
 	cur.Close()
 	return nil
 }
-

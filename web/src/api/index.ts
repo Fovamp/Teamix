@@ -125,6 +125,12 @@ export const api = {
   summaries: (): Promise<any[]> => get("/teamix/summaries"),
   summarizeSession: (instructions?: string): Promise<any[]> =>
     post("/teamix/summaries", { instructions: instructions || "" }),
+  deleteSummary: (id: string): Promise<any[]> =>
+    fetch("/teamix/summaries" + authQuery(), {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ id }),
+    }).then(async (r) => { if (!r.ok) throw new Error(await r.text()); return r.json() }),
   // 批量删除会话：others=除当前会话外全部，all=全部
   deleteSessions: (mode: "others" | "all"): Promise<void> => post("/delete-sessions", { mode }),
   // Workflow

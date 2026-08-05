@@ -7,6 +7,7 @@ const summaries = ref<any[]>([])
 const loading = ref(false)
 const generating = ref(false)
 const err = ref("")
+const full = ref<any>(null) // 全屏展示的总结条目
 
 async function load() {
   if (!props.visible) return
@@ -37,6 +38,25 @@ async function generate() {
   generating.value = false
 }
 
+async function remove(id: string) {
+  if (!id) return
+  if (!window.confirm("确定删除这条会话总结？")) return
+  try {
+    const data = await api.deleteSummary(id)
+    summaries.value = Array.isArray(data) ? data : []
+    if (full.value && full.value.id === id) full.value = null
+  } catch (e: any) {
+    window.alert((e && e.message) || "删除失败")
+  }
+}
+
+function summaryTitle(s: any): string {
+  if (s && s.title && s.title.trim()) return s.title.trim()
+  // 旧数据无标题：取正文前 20 字
+  const c = (s && s.content || "").replace(/\s+/g, " ").trim()
+  return c ? c.slice(0, 20) + (c.length > 20 ? "…" : "") : "会话总结"
+}
+
 function fmtTime(t: string): string {
   if (!t) return ""
   const d = new Date(t)
@@ -62,28 +82,97 @@ function fmtTime(t: string): string {
     <div class="model-list" style="padding:0 8px 8px;flex:1;min-height:0;overflow-y:auto">
       <div v-if="loading" class="empty-note" style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">加载中…</div>
       <div v-else-if="summaries.length === 0" class="empty-note" style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">当前会话还没有总结，点击上方按钮生成一份</div>
-      <div v-for="s in summaries" :key="s.id" class="branch-item" style="align-items:flex-start">
+      <div v-for="s in summaries" :key="s.id" class="summary-card" @click="full = s">
         <div style="min-width:0;flex:1">
+          <div class="summary-card__title">{{ summaryTitle(s) }}</div>
           <div class="branch-item__meta">{{ fmtTime(s.time) }}</div>
-          <div class="summary-item__content">{{ s.content }}</div>
+          <div class="summary-card__preview">{{ s.content }}</div>
+        </div>
+        <div class="summary-card__actions" @click.stop>
+          <button type="button" class="branch-item__btn" title="全屏查看" @click="full = s">⛶</button>
+          <button type="button" class="branch-item__btn summary-card__del" title="删除" @click="remove(s.id)">&times;</button>
         </div>
       </div>
     </div>
   </div>
 </div>
+
+<!-- 全屏展示 -->
+<div v-if="full" class="summary-fullscreen" @click.self="full = null">
+  <div class="summary-fullscreen__bar">
+    <div class="summary-fullscreen__head">
+      <div class="summary-fullscreen__title">{{ summaryTitle(full) }}</div>
+      <div class="summary-fullscreen__meta">{{ fmtTime(full.time) }}</div>
+    </div>
+    <div class="summary-fullscreen__ops">
+      <button type="button" class="branch-item__btn summary-card__del" @click="remove(full.id)">删除</button>
+      <button type="button" class="branch-item__btn" @click="full = null">关闭</button>
+    </div>
+  </div>
+  <div class="summary-fullscreen__body">{{ full.content }}</div>
+</div>
 </template>
 
 <style scoped>
-.summary-item__content {
+.summary-card {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  cursor: pointer;
+  transition: all .15s;
+  margin-bottom: 6px;
+}
+.summary-card:hover { border-color: var(--accent); background: var(--card-hover); }
+.summary-card__title { font-size: 13px; font-weight: 600; color: var(--fg); }
+.summary-card__preview {
   font-size: 12px;
-  line-height: 1.6;
-  color: var(--fg-2, #cbd5e1);
+  line-height: 1.55;
+  color: var(--muted);
+  margin-top: 4px;
   white-space: pre-wrap;
   word-break: break-word;
-  margin-top: 4px;
-  padding: 6px 8px;
-  background: var(--panel-2, rgba(255,255,255,0.04));
-  border-radius: 6px;
-  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.summary-card__actions { display: flex; gap: 4px; flex-shrink: 0; }
+.summary-card__del { color: var(--danger); }
+
+.summary-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: oklch(12% 0.01 260 / 0.96);
+  display: flex;
+  flex-direction: column;
+  padding: 24px 32px;
+  box-sizing: border-box;
+}
+.summary-fullscreen__bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.summary-fullscreen__head { min-width: 0; }
+.summary-fullscreen__title { font-size: 17px; font-weight: 700; color: var(--fg); }
+.summary-fullscreen__meta { font-size: 12px; color: var(--muted-2); margin-top: 4px; }
+.summary-fullscreen__ops { display: flex; gap: 8px; flex-shrink: 0; }
+.summary-fullscreen__body {
+  flex: 1;
+  overflow-y: auto;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--fg-2);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

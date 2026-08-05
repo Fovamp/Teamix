@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"reasonix/internal/control"
 	"strings"
+	"time"
+
+	"reasonix/internal/control"
 )
 
 func (ts *TeamixServer) handleUserRole(w http.ResponseWriter, r *http.Request, u *userSession) {
@@ -42,21 +44,19 @@ func (ts *TeamixServer) handleDeleteSession(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "invalid session path", http.StatusForbidden)
 		return
 	}
-	if err := os.Remove(target); err != nil {
-		if os.IsNotExist(err) {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if !removeFileWithRetry(target, 5) {
+		http.Error(w, "删除失败（文件被占用），请稍后重试", http.StatusConflict)
 		return
 	}
 	// 清理遗留的 checkpoint 目录（<name>.ckpt），避免删除会话后留下垃圾文件。
-	_ = os.RemoveAll(strings.TrimSuffix(target, ".jsonl") + ".ckpt")
+	_ = removeAllWithRetry(strings.TrimSuffix(target, ".jsonl")+".ckpt", 3)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleDeleteSessions 批量删除会话：mode="others" 删除除当前会话外的全部；
 // mode="all" 删除全部（含当前）。同步清理各会话的 checkpoint 目录。
+// 删除失败（Windows 上文件可能被短暂占用）会重试，仍失败则返回具体文件名，
+// 不再静默吞掉——否则会出现"其他都删了，当前会话没删掉"。
 func (ts *TeamixServer) handleDeleteSessions(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
 		Mode string `json:"mode"`
@@ -78,6 +78,7 @@ func (ts *TeamixServer) handleDeleteSessions(w http.ResponseWriter, r *http.Requ
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	var failed []string
 	for _, e := range ents {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".jsonl" {
 			continue
@@ -86,10 +87,44 @@ func (ts *TeamixServer) handleDeleteSessions(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 		full := filepath.Join(dir, e.Name())
-		_ = os.Remove(full)
-		_ = os.RemoveAll(strings.TrimSuffix(full, ".jsonl") + ".ckpt")
+		if !removeFileWithRetry(full, 5) {
+			failed = append(failed, e.Name())
+			continue
+		}
+		_ = removeAllWithRetry(strings.TrimSuffix(full, ".jsonl")+".ckpt", 3)
+	}
+	if len(failed) > 0 {
+		http.Error(w, "删除失败（文件被占用）: "+strings.Join(failed, ", "), http.StatusConflict)
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeFileWithRetry 删除文件并短暂重试，绕过 Windows 上杀毒/索引的瞬态占用。
+func removeFileWithRetry(path string, attempts int) bool {
+	for i := 0; i < attempts; i++ {
+		err := os.Remove(path)
+		if err == nil {
+			return true
+		}
+		if !os.IsNotExist(err) {
+			time.Sleep(80 * time.Millisecond)
+			continue
+		}
+		return true // 已不存在，视为删除成功
+	}
+	return false
+}
+
+func removeAllWithRetry(path string, attempts int) bool {
+	for i := 0; i < attempts; i++ {
+		err := os.RemoveAll(path)
+		if err == nil {
+			return true
+		}
+		time.Sleep(80 * time.Millisecond)
+	}
+	return false
 }
 
 func sessionTitle(ctrl control.SessionAPI, name, firstMsg string) string {

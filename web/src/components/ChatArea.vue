@@ -733,28 +733,24 @@ function applyRewind() {
   const t = localStorage.getItem('teamix_token')
   if (!t) return
   const q = '?token=' + encodeURIComponent(t)
-  const toastMsg = { fork: '分叉失败', sumfrom: '总结失败', sumupto: '总结失败' } as Record<string, string>
-  const okMsg = { fork: '分叉成功，已切换到新会话', sumfrom: '已从此轮开始总结', sumupto: '已总结到此轮', conversation: `已回退到第 ${cp.turn} 轮（对话）`, code: `已回退到第 ${cp.turn} 轮（代码）`, both: `已回退到第 ${cp.turn} 轮` } as Record<string, string>
-  const done = (r: any) => {
-    if (r && r.ok) {
+  const okMsg = { conversation: `已回退到第 ${cp.turn} 轮（对话）`, code: `已回退到第 ${cp.turn} 轮（代码）`, both: `已回退到第 ${cp.turn} 轮` } as Record<string, string>
+  const done = async (r: any) => {
+    let data: any = null
+    try { data = await r.json() } catch { /* 非 JSON 响应（如 204/错误文本） */ }
+    if (r && r.ok && data && data.ok) {
       window.dispatchEvent(new CustomEvent('teamix-session-changed'))
-      toast(okMsg[sc.scope] || '操作成功', 'success')
+      const removed = typeof data.removed === 'number' ? data.removed : 0
+      const base = okMsg[sc.scope] || '操作成功'
+      toast(removed > 0 ? `${base}（删除 ${removed} 条消息）` : `${base}（该轮之后没有更多消息可删）`, 'success')
       return
     }
-    // 失败：读取后端错误文本并提示（fork/rewind/summarize 失败均返回 HTTP 4xx）
+    // 失败：读取后端错误文本并提示（rewind 失败返回 HTTP 4xx）
     if (r && !r.ok) {
-      r.text().then((txt: string) => toast((txt && txt.trim()) || (toastMsg[sc.scope] || '操作失败'), 'error', 6000)).catch(() => {})
+      r.text().then((txt: string) => toast((txt && txt.trim()) || '操作失败', 'error', 6000)).catch(() => {})
     }
   }
-  if (sc.scope === 'fork') {
-    fetch('/fork' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, name: '' }) }).then(done).catch(() => { toast('网络错误，操作未执行', 'error') })
-  } else if (sc.scope === 'sumfrom') {
-    fetch('/summarize' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, mode: 'from' }) }).then(done).catch(() => { toast('网络错误，操作未执行', 'error') })
-  } else if (sc.scope === 'sumupto') {
-    fetch('/summarize' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, mode: 'upto' }) }).then(done).catch(() => { toast('网络错误，操作未执行', 'error') })
-  } else {
-    fetch('/rewind' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, scope: sc.scope }) }).then(done).catch(() => { toast('网络错误，操作未执行', 'error') })
-  }
+  fetch('/rewind' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, scope: sc.scope }) })
+    .then(done).catch(() => { toast('网络错误，操作未执行', 'error') })
 }
 
 function refreshCheckpointAvailability() {

@@ -1,13 +1,10 @@
 // 常量：从 ChatArea.vue 拆出。
 
-/** rewind 操作范围 */
+/** rewind 操作范围（仅回退相关：代码/对话的组合；分叉、总结是独立功能，不混入） */
 export const SCOPES = [
   { key: 'b', label: '代码 + 对话', scope: 'both' },
   { key: 'c', label: '仅对话', scope: 'conversation' },
   { key: 'd', label: '仅代码', scope: 'code' },
-  { key: 'f', label: '分叉（新分支）', scope: 'fork' },
-  { key: 's', label: '从此处总结', scope: 'sumfrom' },
-  { key: 'u', label: '总结到此处', scope: 'sumupto' },
 ]
 
 /** slash 命令面板 */
