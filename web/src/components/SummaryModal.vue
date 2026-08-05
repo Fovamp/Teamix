@@ -7,7 +7,9 @@ const summaries = ref<any[]>([])
 const loading = ref(false)
 const generating = ref(false)
 const err = ref("")
-const full = ref<any>(null) // 全屏展示的总结条目
+const full = ref<any>(null) // 展开查看的总结条目
+const confirmDel = ref<string | null>(null) // 待删除的总结 id（页面风格确认框）
+const sessionLabel = ref("") // 当前会话标识（标题或名字）
 
 async function load() {
   if (!props.visible) return
@@ -20,6 +22,12 @@ async function load() {
     summaries.value = []
     err.value = "加载失败"
   }
+  // 标明这些总结属于哪个会话
+  try {
+    const ss = await api.sessions()
+    const cur = Array.isArray(ss) ? ss.find((x: any) => x.current) : null
+    sessionLabel.value = (cur && (cur.title || cur.name)) || ""
+  } catch { /* ignore */ }
   loading.value = false
 }
 
@@ -38,15 +46,16 @@ async function generate() {
   generating.value = false
 }
 
-async function remove(id: string) {
+async function doConfirmDel() {
+  const id = confirmDel.value
+  confirmDel.value = null
   if (!id) return
-  if (!window.confirm("确定删除这条会话总结？")) return
   try {
     const data = await api.deleteSummary(id)
     summaries.value = Array.isArray(data) ? data : []
     if (full.value && full.value.id === id) full.value = null
   } catch (e: any) {
-    window.alert((e && e.message) || "删除失败")
+    err.value = (e && e.message) || "删除失败"
   }
 }
 
@@ -74,7 +83,8 @@ function fmtTime(t: string): string {
       <span>会话总结</span>
       <span class="modal__close" @click="emit('close')">&times;</span>
     </div>
-    <div style="padding:8px;display:flex;gap:8px;align-items:center">
+    <div style="padding:0 8px 4px;font-size:11px;color:var(--muted-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" v-if="sessionLabel">当前会话：{{ sessionLabel }}</div>
+    <div style="padding:4px 8px;display:flex;gap:8px;align-items:center">
       <button type="button" class="branch-item__btn" style="margin:0" :disabled="generating" @click="generate">{{ generating ? "生成中…" : "＋ 生成总结" }}</button>
       <span style="font-size:11px;color:var(--muted-2)">为当前会话生成一份人读摘要，不改动会话本身</span>
     </div>
@@ -89,15 +99,16 @@ function fmtTime(t: string): string {
           <div class="summary-card__preview">{{ s.content }}</div>
         </div>
         <div class="summary-card__actions" @click.stop>
-          <button type="button" class="branch-item__btn" title="全屏查看" @click="full = s">⛶</button>
-          <button type="button" class="branch-item__btn summary-card__del" title="删除" @click="remove(s.id)">&times;</button>
+          <button type="button" class="branch-item__btn" title="展开查看" @click="full = s">⛶</button>
+          <button type="button" class="branch-item__btn summary-card__del" title="删除" @click="confirmDel = s.id">&times;</button>
         </div>
+        <div class="summary-card__tip">{{ s.content }}</div>
       </div>
     </div>
   </div>
 </div>
 
-<!-- 展开查看（居中大框，类似工作流编辑的展开框，不是整屏） -->
+<!-- 展开查看（居中大框） -->
 <div v-if="full" class="summary-fullscreen" @click.self="full = null">
   <div class="summary-fullscreen__panel">
     <div class="summary-fullscreen__bar">
@@ -106,17 +117,25 @@ function fmtTime(t: string): string {
         <div class="summary-fullscreen__meta">{{ fmtTime(full.time) }}</div>
       </div>
       <div class="summary-fullscreen__ops">
-        <button type="button" class="branch-item__btn summary-card__del" @click="remove(full.id)">删除</button>
         <button type="button" class="branch-item__btn" @click="full = null">关闭</button>
       </div>
     </div>
     <div class="summary-fullscreen__body">{{ full.content }}</div>
   </div>
 </div>
+
+<!-- 页面风格删除确认框 -->
+<div class="modal-overlay" v-if="confirmDel" @click.self="confirmDel = null" style="display:flex;z-index:320">
+  <div class="modal" style="width:340px">
+    <div class="modal__head"><span>删除总结</span><span class="modal__close" @click="confirmDel = null">&times;</span></div>
+    <div class="modal__body"><p>确定删除这条会话总结？</p><div class="dialog-actions"><button class="dialog-btn" @click="confirmDel = null">取消</button><button class="dialog-btn dialog-btn--danger" @click="doConfirmDel">删除</button></div></div>
+  </div>
+</div>
 </template>
 
 <style scoped>
 .summary-card {
+  position: relative;
   display: flex;
   gap: 8px;
   align-items: flex-start;
@@ -144,6 +163,31 @@ function fmtTime(t: string): string {
 }
 .summary-card__actions { display: flex; gap: 4px; flex-shrink: 0; }
 .summary-card__del { color: var(--danger); }
+/* 悬浮预览：鼠标停在卡片上时显示完整内容 */
+.summary-card__tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  width: min(360px, 72vw);
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--panel, #14181f);
+  border: 1px solid var(--border-strong, rgba(255,255,255,.14));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.5);
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--fg-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  z-index: 20;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s;
+}
+.summary-card:hover .summary-card__tip { opacity: 1; }
 
 .summary-fullscreen {
   position: fixed;

@@ -355,6 +355,14 @@ func (a *Agent) SummarizeUpTo(ctx context.Context, toIdx int) error {
 	return nil
 }
 
+// conversationSummarySystemPrompt 是"会话总结"（给人看）的提示词：要求自然
+// 语言的平实总结，不套压缩用的分类结构（Standing facts & constraints 等）。
+// 分类结构是给模型续跑用的简报，人读总结不需要，反而会引导总结漏掉结构外的内容。
+const conversationSummarySystemPrompt = `You are writing a summary of a conversation for a human reader.
+Keep it plain and natural — a short paragraph or a few short paragraphs.
+Do not invent headings, sections or bullet lists unless they genuinely help readability.
+Just say what the conversation was about, the key points, and anything still open.`
+
 // SummarizeConversation produces a human-readable summary of the whole
 // conversation (everything after the system prompt) WITHOUT modifying the
 // session — unlike SummarizeUpTo/From or Compact it never rewrites the message
@@ -369,7 +377,11 @@ func (a *Agent) SummarizeConversation(ctx context.Context, instructions string) 
 	if len(msgs) <= head {
 		return "", fmt.Errorf("conversation is empty")
 	}
-	return a.summarize(ctx, msgs[head:], instructions)
+	sys := conversationSummarySystemPrompt
+	if strings.TrimSpace(instructions) != "" {
+		sys += "\n\nUser guidance for this summary:\n" + strings.TrimSpace(instructions)
+	}
+	return a.streamSummary(ctx, sys, msgs[head:])
 }
 
 // IsCompactionSummary reports whether m is a rolling digest inserted by a
@@ -636,12 +648,18 @@ func charsOfMessages(msgs []provider.Message) int {
 // is appended to the system prompt as extra focus guidance (from /compact <focus>
 // and/or a PreCompact hook).
 func (a *Agent) summarize(ctx context.Context, region []provider.Message, instructions string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, summaryTimeout)
-	defer cancel()
 	sys := summarySystemPrompt
 	if strings.TrimSpace(instructions) != "" {
 		sys += "\n\nAdditional focus for this compaction (prioritize keeping this):\n" + strings.TrimSpace(instructions)
 	}
+	return a.streamSummary(ctx, sys, region)
+}
+
+// streamSummary 用给定的系统提示词对 region 生成一段文本总结。
+// 供压缩（summarySystemPrompt 分类结构）与会话总结（独立的人读提示词）共用。
+func (a *Agent) streamSummary(ctx context.Context, sys string, region []provider.Message) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, summaryTimeout)
+	defer cancel()
 	ch, err := a.prov.Stream(ctx, provider.Request{
 		Messages: []provider.Message{
 			{Role: provider.RoleSystem, Content: sys},

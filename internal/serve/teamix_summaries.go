@@ -84,7 +84,7 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		instructions := strings.TrimSpace(body.Instructions)
 		if instructions == "" {
-			instructions = "面向用户阅读的会话总结：第一行写一个简短标题（不超过 20 字），空一行，然后概括主要目标、已完成的事、关键结论与尚未完成的事项。"
+			instructions = "第一行写一个简短标题（不超过 20 字），空一行，然后用自然语言总结对话内容，不要分门别类。"
 		}
 		content, err := u.ctrl.SessionSummary(r.Context(), instructions)
 		if err != nil {
