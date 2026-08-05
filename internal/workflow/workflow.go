@@ -1,4 +1,4 @@
-﻿// Package workflow implements the Teamix 5-stage delivery state machine.
+// Package workflow implements the Teamix 5-stage delivery state machine.
 package workflow
 
 import (
@@ -39,15 +39,15 @@ const (
 )
 
 type State struct {
-	mu         sync.Mutex
-	Current    Stage                 `json:"current"`
-	Statuses   map[Stage]StageStatus `json:"statuses"`
-	StageLabels  map[Stage]string    `json:"stage_labels"`
-	StagePrompts map[Stage]string    `json:"stage_prompts"`
-	StageOrder    []Stage            `json:"stage_order"`
-	ImpactAnalysis string            `json:"impact_analysis,omitempty"`
-	SessionDir    string             `json:"-"`
-	sessionID     string             `json:"-"`
+	mu             sync.Mutex
+	Current        Stage                 `json:"current"`
+	Statuses       map[Stage]StageStatus `json:"statuses"`
+	StageLabels    map[Stage]string      `json:"stage_labels"`
+	StagePrompts   map[Stage]string      `json:"stage_prompts"`
+	StageOrder     []Stage               `json:"stage_order"`
+	ImpactAnalysis string                `json:"impact_analysis,omitempty"`
+	SessionDir     string                `json:"-"`
+	sessionID      string                `json:"-"`
 }
 
 func NewState(sessionDir, sessionID string) *State {
@@ -73,13 +73,13 @@ func NewState(sessionDir, sessionID string) *State {
 // NewEmptyState creates a workflow state with no stages selected.
 func NewEmptyState(sessionDir, sessionID string) *State {
 	return &State{
-		Current:    "",
-		Statuses:   make(map[Stage]StageStatus),
-		StageLabels: make(map[Stage]string),
+		Current:      "",
+		Statuses:     make(map[Stage]StageStatus),
+		StageLabels:  make(map[Stage]string),
 		StagePrompts: make(map[Stage]string),
-		StageOrder:  nil,
-		SessionDir: sessionDir,
-		sessionID:  sessionID,
+		StageOrder:   nil,
+		SessionDir:   sessionDir,
+		sessionID:    sessionID,
 	}
 }
 
@@ -148,6 +148,29 @@ func (s *State) CurrentStage() Stage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.Current
+}
+
+// IsLastStage reports whether the current stage is the final stage in the order
+// (no stage after it). The frontend uses this to stop offering "enter next
+// stage" once the pipeline is complete, while still allowing jumps to any
+// earlier stage via SetStage.
+func (s *State) IsLastStage() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	order := s.StageOrder
+	if len(order) == 0 {
+		order = AllStages
+	}
+	if s.Current == "" || len(order) == 0 {
+		return false
+	}
+	return order[len(order)-1] == s.Current
+}
+
+// HasNextStage reports whether advancing from the current stage is possible
+// (i.e. the current stage is not the last one).
+func (s *State) HasNextStage() bool {
+	return !s.IsLastStage()
 }
 
 func (s *State) Snapshot() map[Stage]StageStatus {
@@ -238,7 +261,6 @@ func CompleteReason(output string) string {
 }
 
 var _ = fmt.Sprintf
-
 
 // SelectTemplate replaces the workflow stages with those from a template.
 func (s *State) SelectTemplate(stages []Stage, templateStages []TemplateStage) {
@@ -364,6 +386,5 @@ func (s *State) StagePromptByTemplate(templateStages []TemplateStage) string {
 	}
 	return ""
 }
-
 
 //

@@ -84,21 +84,12 @@ func (ts *TeamixServer) handleWorkflowGet(w http.ResponseWriter, r *http.Request
 	writeJSON(w, map[string]any{
 		"stages":  out,
 		"current": current,
+		"is_last": u.workflow.IsLastStage(),
 	})
 }
 
-
 func (ts *TeamixServer) handleWorkflowAdvance(w http.ResponseWriter, r *http.Request, u *userSession) {
 	ok := u.workflow.Advance()
-	if !ok {
-		writeJSON(w, map[string]any{"ok": false})
-		return
-	}
-	// Auto-run impact analysis when entering the analysis stage
-	if u.workflow.CurrentStage() == "analysis" {
-		result := ts.runImpactAnalysis(u.name)
-		u.workflow.SetImpactAnalysis(result)
-	}
 	// Return updated stages so the frontend can update the progress bar immediately
 	type stageJSON struct {
 		Stage  string `json:"stage"`
@@ -121,15 +112,32 @@ func (ts *TeamixServer) handleWorkflowAdvance(w http.ResponseWriter, r *http.Req
 		}
 		out = append(out, stageJSON{Stage: string(st), Label: label, Status: string(status)})
 	}
-	writeJSON(w, map[string]any{"ok": true, "stages": out, "current": string(u.workflow.CurrentStage())})
+	if !ok {
+		// 已是最后一个阶段：没有下一阶段可进入，把状态连同 is_last 返回，
+		// 前端据此不再弹"进入下一阶段"卡片（跳转仍可用）。
+		writeJSON(w, map[string]any{
+			"ok": false, "stages": out,
+			"current": string(u.workflow.CurrentStage()),
+			"is_last": u.workflow.IsLastStage(),
+		})
+		return
+	}
+	// Auto-run impact analysis when entering the analysis stage
+	if u.workflow.CurrentStage() == "analysis" {
+		result := ts.runImpactAnalysis(u.name)
+		u.workflow.SetImpactAnalysis(result)
+	}
+	writeJSON(w, map[string]any{
+		"ok": true, "stages": out,
+		"current": string(u.workflow.CurrentStage()),
+		"is_last": u.workflow.IsLastStage(),
+	})
 }
-
 
 func (ts *TeamixServer) handleWorkflowRollback(w http.ResponseWriter, r *http.Request, u *userSession) {
 	ok := u.workflow.Rollback()
 	writeJSON(w, map[string]any{"ok": ok})
 }
-
 
 func (ts *TeamixServer) handleWorkflowSetStage(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
@@ -147,7 +155,6 @@ func (ts *TeamixServer) handleWorkflowSetStage(w http.ResponseWriter, r *http.Re
 	}
 	writeJSON(w, map[string]any{"ok": ok})
 }
-
 
 func (ts *TeamixServer) handleTemplateGet(w http.ResponseWriter, r *http.Request, u *userSession) {
 	name := r.URL.Query().Get("name")
@@ -176,7 +183,6 @@ func (ts *TeamixServer) handleTemplateGet(w http.ResponseWriter, r *http.Request
 	}
 	http.Error(w, "template not found", http.StatusNotFound)
 }
-
 
 func (ts *TeamixServer) handleTemplateSave(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
@@ -236,7 +242,6 @@ func (ts *TeamixServer) handleTemplateSave(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, map[string]any{"ok": true, "name": body.Name, "scope": scope})
 }
 
-
 func (ts *TeamixServer) handleTemplateDelete(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
 		Name  string `json:"name"`
@@ -272,7 +277,6 @@ func (ts *TeamixServer) handleTemplateDelete(w http.ResponseWriter, r *http.Requ
 	}
 	writeJSON(w, map[string]any{"ok": true})
 }
-
 
 func (ts *TeamixServer) handleWorkflowTemplates(w http.ResponseWriter, r *http.Request, u *userSession) {
 	type tJSON struct {
@@ -315,7 +319,6 @@ func (ts *TeamixServer) handleWorkflowTemplates(w http.ResponseWriter, r *http.R
 	writeJSON(w, out)
 }
 
-
 func (ts *TeamixServer) handleWorkflowSelect(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
 		Template string `json:"template"`
@@ -353,4 +356,3 @@ func (ts *TeamixServer) handleWorkflowSelect(w http.ResponseWriter, r *http.Requ
 	u.workflow.SelectTemplate(stages, t.Stages)
 	writeJSON(w, map[string]any{"ok": true, "stages": len(stages)})
 }
-

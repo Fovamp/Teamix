@@ -413,12 +413,12 @@ const sse = useSSE({
           // AI 输出完成后才会写入文件，只刷新一次会停留在旧标题/旧轮数。
           if (!e.err) loadSessions()
           if (pendingPages.length > 0 && !e.err) { cards.showOpenPageCard(pendingPages); pendingPages = [] }
-          if (stageCompletePending && !e.err) { cards.showStageApproval(stageCompleteReason) }
+          if (stageCompletePending && !e.err) { cards.showStageApproval(stageCompleteReason, isLastStage()) }
           // Fallback: check accumulated text in case marker was split across chunks
           if (!stageCompletePending && !e.err && wfVisible.value && wfStages.value.length > 0 && window._wfLastText && window._wfLastText.indexOf('\u9636\u6bb5\u5b8c\u6210') >= 0 && activeStageIdx >= 0) {
             stageCompletePending = true
             try { sessionStorage.setItem('wf_advance_pending', '1') } catch (e) {}
-            cards.showStageApproval('')
+            cards.showStageApproval('', isLastStage())
           }
           window._wfLastText = ''
           break
@@ -540,6 +540,11 @@ function fetchTodos() {
 }
 
 // ── Workflow ──
+// isLastStage 判断当前阶段是否为工作流的最后一个阶段（之后没有下一阶段）。
+function isLastStage(): boolean {
+  return wfStages.value.length > 0 && activeStageIdx >= 0 && activeStageIdx === wfStages.value.length - 1
+}
+
 async function loadWorkflow() {
   try {
     const data = await api.workflow()
@@ -648,16 +653,24 @@ async function send() {
     if (chatHistory.length > 50) chatHistory.shift()
     chatHistoryIndex = chatHistory.length
     inputText.value = ''
-    const reasonText = stageCompleteReason ? '（' + stageCompleteReason + '）' : ''
-    cards.showWfConfirm('阶段已完成' + reasonText + '，是否进入下一阶段？', (ok: boolean) => {
-      if (!ok) { stageCompletePending = false; stageCompleteReason = ''; stageCompleteExtra = ''; return }
-      const t = localStorage.getItem('teamix_token')
-      if (!t) return
-      fetch('/teamix/workflow/advance?token=' + encodeURIComponent(t), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
-      }).then(() => { loadWorkflow(); (async () => { const tk = localStorage.getItem('teamix_token'); if(tk) await fetch('/submit?token='+encodeURIComponent(tk),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input:v})}) })() }).catch(() => { loadWorkflow(); (async () => { const tk = localStorage.getItem('teamix_token'); if(tk) await fetch('/submit?token='+encodeURIComponent(tk),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input:'请继续'})}) })() })
-    })
-    return
+    if (isLastStage()) {
+      // 已是最后一个阶段：没有下一阶段可进入，直接按正常输入提交
+      // （阶段卡片上的"跳转到..."仍可跳回中间任意阶段）。
+      stageCompletePending = false
+      stageCompleteReason = ''
+      stageCompleteExtra = ''
+    } else {
+      const reasonText = stageCompleteReason ? '（' + stageCompleteReason + '）' : ''
+      cards.showWfConfirm('阶段已完成' + reasonText + '，是否进入下一阶段？', (ok: boolean) => {
+        if (!ok) { stageCompletePending = false; stageCompleteReason = ''; stageCompleteExtra = ''; return }
+        const t = localStorage.getItem('teamix_token')
+        if (!t) return
+        fetch('/teamix/workflow/advance?token=' + encodeURIComponent(t), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+        }).then(() => { loadWorkflow(); (async () => { const tk = localStorage.getItem('teamix_token'); if(tk) await fetch('/submit?token='+encodeURIComponent(tk),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input:v})}) })() }).catch(() => { loadWorkflow(); (async () => { const tk = localStorage.getItem('teamix_token'); if(tk) await fetch('/submit?token='+encodeURIComponent(tk),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input:'请继续'})}) })() })
+      })
+      return
+    }
   }
 
   // Workflow commands

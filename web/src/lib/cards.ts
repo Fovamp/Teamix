@@ -451,24 +451,32 @@ export function createCards(ctx: CardsContext) {
   }
 
   // ── Stage approval ──
-  function showStageApproval(reason: string) {
+  function showStageApproval(reason: string, isLast?: boolean) {
     const st = ctx.getStageState()
     const extra = st.extra ? '\n\n' + st.extra : ''
     const msg = (reason ? 'AI认为当前阶段已完成：' + reason : 'AI认为当前阶段已完成') + extra
     const d = el('div', 'approval')
     d.style.borderLeft = '3px solid var(--accent)'
     d.style.marginBottom = '8px'
-    d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="approval__title">阶段完成</span></div><div class="approval__subject">' + msg + '</div><div class="approval__actions"><button class="approval__btn approval__btn--allow" id="sa-confirm"><span class="approval__key">Y</span> 确认进入下一阶段</button><button class="approval__btn approval__btn--deny" id="sa-cancel"><span class="approval__key">N</span> 继续当前阶段</button><button class="approval__btn" id="sa-jump" style="border:1px solid var(--border);color:var(--fg-2);font-size:11px"><span class="approval__key">J</span> 跳转到...</button></div><div id="sa-jump-list" style="display:none;border-top:1px solid var(--border);padding:8px 12px;font-size:12px"></div>'
+    // 最后一个阶段：没有"下一阶段"可进入，卡片只保留跳转与关闭
+    // （跳转仍可回到中间任意阶段，不禁止）；非最后阶段保持原三个按钮。
+    const title = isLast ? '全部阶段已完成' : '阶段完成'
+    const actionsHtml = isLast
+      ? '<button class="approval__btn" id="sa-jump" style="border:1px solid var(--border);color:var(--fg-2);font-size:11px"><span class="approval__key">J</span> 跳转到...</button><button class="approval__btn approval__btn--deny" id="sa-cancel">关闭</button>'
+      : '<button class="approval__btn approval__btn--allow" id="sa-confirm"><span class="approval__key">Y</span> 确认进入下一阶段</button><button class="approval__btn approval__btn--deny" id="sa-cancel"><span class="approval__key">N</span> 继续当前阶段</button><button class="approval__btn" id="sa-jump" style="border:1px solid var(--border);color:var(--fg-2);font-size:11px"><span class="approval__key">J</span> 跳转到...</button>'
+    d.innerHTML = '<div class="approval__header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="approval__title">' + title + '</span></div><div class="approval__subject">' + msg + '</div><div class="approval__actions">' + actionsHtml + '</div><div id="sa-jump-list" style="display:none;border-top:1px solid var(--border);padding:8px 12px;font-size:12px"></div>'
     insertCard(d)
     ctx.scrollDown(true)
-    document.getElementById('sa-confirm')!.onclick = () => {
-      ctx.setStageState({ pending: false, reason: '', extra: '' })
-      d.remove()
-      const t = localStorage.getItem('teamix_token')
-      if (!t) return
-      fetch('/teamix/workflow/advance?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-        .then(() => { ctx.onWorkflowChanged(); fetch('/submit?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: '请继续' }) }) })
-        .catch(() => { ctx.onWorkflowChanged(); fetch('/submit?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: '请继续' }) }) })
+    if (!isLast) {
+      document.getElementById('sa-confirm')!.onclick = () => {
+        ctx.setStageState({ pending: false, reason: '', extra: '' })
+        d.remove()
+        const t = localStorage.getItem('teamix_token')
+        if (!t) return
+        fetch('/teamix/workflow/advance?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+          .then(() => { ctx.onWorkflowChanged(); fetch('/submit?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: '请继续' }) }) })
+          .catch(() => { ctx.onWorkflowChanged(); fetch('/submit?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: '请继续' }) }) })
+      }
     }
     document.getElementById('sa-cancel')!.onclick = () => {
       ctx.setStageState({ pending: false, reason: '', extra: '' })
