@@ -56,9 +56,14 @@ function summaryTitle(s: any): string {
   // 标题的 md 前缀与"对话总结："类前缀由后端存库时统一清理，前端不再兜底
   const t = (s && s.title || "").trim()
   if (t) return t
-  // 旧数据无标题：取正文前 20 字
-  const c = (s && s.content || "").replace(/\s+/g, " ").trim()
+  // 旧数据无标题：取描述或正文前 20 字
+  const c = (s && (s.description || s.content) || "").replace(/\s+/g, " ").trim()
   return c ? c.slice(0, 20) + (c.length > 20 ? "…" : "") : "会话总结"
+}
+
+// 列表/悬浮展示的描述：优先 AI 概述，旧数据（无 description）回退到正文
+function summaryDescription(s: any): string {
+  return (s && s.description && s.description.trim()) || (s && s.content || "").trim()
 }
 
 function fmtTime(t: string): string {
@@ -90,7 +95,7 @@ function fmtTime(t: string): string {
         <div style="min-width:0;flex:1">
           <div class="summary-card__title" :title="s.title || summaryTitle(s)">{{ summaryTitle(s) }}</div>
           <div class="branch-item__meta">{{ fmtTime(s.time) }}</div>
-          <div class="summary-card__body">{{ s.content }}</div>
+          <div class="summary-card__body">{{ summaryDescription(s) }}</div>
         </div>
         <div class="summary-card__actions" @click.stop>
           <span class="summary-card__src" :title="s.sessionTitle || s.sessionId || ''">→ {{ s.sessionTitle || (s.sessionId ? s.sessionId.slice(0, 12) : '') }}</span>
@@ -114,6 +119,7 @@ function fmtTime(t: string): string {
         <button type="button" class="branch-item__btn" @click="full = null">关闭</button>
       </div>
     </div>
+    <div class="summary-fullscreen__desc" v-if="full.description && full.description !== full.content">{{ full.description }}</div>
     <div class="summary-fullscreen__body">{{ full.content }}</div>
   </div>
 </div>
@@ -208,6 +214,17 @@ function fmtTime(t: string): string {
 .summary-fullscreen__title { font-size: 17px; font-weight: 700; color: var(--fg); }
 .summary-fullscreen__meta { font-size: 12px; color: var(--muted-2); margin-top: 4px; }
 .summary-fullscreen__ops { display: flex; gap: 8px; flex-shrink: 0; }
+.summary-fullscreen__desc {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--muted);
+  padding-bottom: 12px;
+  border-bottom: 1px dashed var(--border);
+  margin-bottom: 12px;
+  flex-shrink: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .summary-fullscreen__body {
   flex: 1;
   overflow-y: auto;

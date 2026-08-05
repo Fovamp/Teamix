@@ -17,12 +17,14 @@ import (
 
 // sessionSummary 是"会话总结"面板里的一条记录：AI 生成的、面向人阅读的
 // 会话摘要。与 /summarize（SummarizeUpTo/From，会改写会话消息日志的压缩操作）
-// 不同：这里生成后完全不改动会话本身。Title 为总结首行提炼的标题；
-// SessionID/SessionTitle 标注这条总结来自哪个会话（供前端箭头标注来源）。
+// 不同：这里生成后完全不改动会话本身。Title 为简短标题；Description 为一两句
+// 概述（列表/悬浮展示）；Content 为完整正文（展开查看）；
+// SessionID/SessionTitle 标注这条总结来自哪个会话。
 type sessionSummary struct {
 	ID           string    `json:"id"`
 	Time         time.Time `json:"time"`
 	Title        string    `json:"title,omitempty"`
+	Description  string    `json:"description,omitempty"`
 	Content      string    `json:"content"`
 	SessionID    string    `json:"sessionId,omitempty"`
 	SessionTitle string    `json:"sessionTitle,omitempty"`
@@ -141,16 +143,17 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 			http.Error(w, fmt.Sprintf("生成总结失败: %v", err), http.StatusBadGateway)
 			return
 		}
-		title, rest := parseSummaryOutput(content)
+		title, desc, content := parseSummaryOutput(content)
 		// load-modify-save 加锁，避免并发 POST 互相覆盖丢数据。
 		ts.mu.Lock()
 		sums := ts.loadSessionSummaries(u.name, sessionID)
 		sums = append(sums, sessionSummary{
-			ID:        fmt.Sprintf("s%d", time.Now().UnixNano()),
-			Time:      time.Now(),
-			Title:     title,
-			Content:   rest,
-			SessionID: sessionID,
+			ID:          fmt.Sprintf("s%d", time.Now().UnixNano()),
+			Time:        time.Now(),
+			Title:       title,
+			Description: desc,
+			Content:     content,
+			SessionID:   sessionID,
 		})
 		ts.saveSessionSummaries(u.name, sessionID, sums)
 		ts.mu.Unlock()
@@ -195,26 +198,36 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 //
 //	<title>…</title>
 //	<description>…</description>
+//	<content>…</content>
 //
 // 只按标签取内容，不做任何字符串猜测/剥离；标签缺失（模型没按格式）时
-// 整段当正文、不设标题，由前端用正文开头做回退标题。
+// 整段当正文、不设标题与描述，由前端用正文开头做回退标题。
 var (
 	summaryTitleRe = regexp.MustCompile(`(?s)<title>\s*(.*?)\s*</title>`)
 	summaryDescRe  = regexp.MustCompile(`(?s)<description>\s*(.*?)\s*</description>`)
+	summaryBodyRe  = regexp.MustCompile(`(?s)<content>\s*(.*?)\s*</content>`)
 )
 
-func parseSummaryOutput(content string) (title, rest string) {
+func parseSummaryOutput(content string) (title, description, body string) {
 	tm := summaryTitleRe.FindStringSubmatch(content)
 	dm := summaryDescRe.FindStringSubmatch(content)
+	bm := summaryBodyRe.FindStringSubmatch(content)
 	if len(tm) == 2 && strings.TrimSpace(tm[1]) != "" {
 		title = strings.TrimSpace(tm[1])
 	}
 	if len(dm) == 2 && strings.TrimSpace(dm[1]) != "" {
-		rest = strings.TrimSpace(dm[1])
+		description = strings.TrimSpace(dm[1])
 	}
-	if title == "" && rest == "" {
+	if len(bm) == 2 && strings.TrimSpace(bm[1]) != "" {
+		body = strings.TrimSpace(bm[1])
+	}
+	if title == "" && description == "" && body == "" {
 		// 完全没有可用标签：整段当正文，不猜标题
-		return "", strings.TrimSpace(content)
+		return "", "", strings.TrimSpace(content)
 	}
-	return title, rest
+	// 有 description 但缺 content 时正文回退到 description
+	if body == "" && description != "" {
+		body = description
+	}
+	return title, description, body
 }
