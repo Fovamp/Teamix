@@ -6,21 +6,25 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	reasonixAgent "reasonix/internal/agent"
 	"reasonix/internal/config"
 )
 
 // sessionSummary 是"会话总结"面板里的一条记录：AI 生成的、面向人阅读的
-// 当前会话摘要，展示在左侧栏"总结"面板，按会话（sessionID）隔离存储。
-// 它与 /summarize（SummarizeUpTo/From，会改写会话消息日志的压缩操作）不同：
-// 这里生成后完全不改动会话本身。Title 为总结首行提炼的标题。
+// 会话摘要。与 /summarize（SummarizeUpTo/From，会改写会话消息日志的压缩操作）
+// 不同：这里生成后完全不改动会话本身。Title 为总结首行提炼的标题；
+// SessionID/SessionTitle 标注这条总结来自哪个会话（供前端箭头标注来源）。
 type sessionSummary struct {
-	ID      string    `json:"id"`
-	Time    time.Time `json:"time"`
-	Title   string    `json:"title,omitempty"`
-	Content string    `json:"content"`
+	ID           string    `json:"id"`
+	Time         time.Time `json:"time"`
+	Title        string    `json:"title,omitempty"`
+	Content      string    `json:"content"`
+	SessionID    string    `json:"sessionId,omitempty"`
+	SessionTitle string    `json:"sessionTitle,omitempty"`
 }
 
 // summaryDir 返回会话总结的存储根目录（<workspaceRoot>/.teamix/summaries/）。
@@ -64,8 +68,49 @@ func (ts *TeamixServer) saveSessionSummaries(user, sessionID string, sums []sess
 	_ = os.WriteFile(ts.summaryFile(user, sessionID), data, 0o644)
 }
 
-// handleSummaries: GET 返回当前会话的总结列表；POST 生成一条新的会话总结
-// （AI 摘要，不改动会话本身）并追加保存。正在运行轮次时拒绝，避免与
+// allSummaries 返回该用户所有会话的总结，按时间倒序，每条带来源会话
+// （SessionID + 会话标题）。标题来自会话首条消息，缺失时为空串。
+func (ts *TeamixServer) allSummaries(u *userSession) []sessionSummary {
+	userDir := filepath.Join(ts.summaryDir(), u.name)
+	entries, err := os.ReadDir(userDir)
+	if err != nil {
+		return []sessionSummary{}
+	}
+	sessionDir := u.ctrl.SessionDir()
+	titleCache := map[string]string{}
+	var out []sessionSummary
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		sid := strings.TrimSuffix(e.Name(), ".json")
+		sums := ts.loadSessionSummaries(u.name, sid)
+		if len(sums) == 0 {
+			continue
+		}
+		title := titleCache[sid]
+		if title == "" && sessionDir != "" {
+			if first, _ := reasonixAgent.SessionPreview(filepath.Join(sessionDir, sid+".jsonl")); first != "" {
+				title = sessionTitle(u.ctrl, sid+".jsonl", first)
+				titleCache[sid] = title
+			}
+		}
+		for i := range sums {
+			sums[i].SessionID = sid
+			sums[i].SessionTitle = title
+			out = append(out, sums[i])
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.After(out[j].Time) })
+	if out == nil {
+		out = []sessionSummary{}
+	}
+	return out
+}
+
+// handleSummaries: GET 返回该用户所有会话的总结（每条标注来源会话）；
+// POST 生成一条新的会话总结（AI 摘要，不改动会话本身）并追加到当前会话；
+// DELETE 按 id 删除（跨会话文件扫描）。正在运行轮次时拒绝 POST，避免与
 // provider 通道冲突。
 func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, u *userSession) {
 	sessionID := strings.TrimSuffix(filepath.Base(u.ctrl.SessionPath()), ".jsonl")
@@ -96,14 +141,15 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 		ts.mu.Lock()
 		sums := ts.loadSessionSummaries(u.name, sessionID)
 		sums = append(sums, sessionSummary{
-			ID:      fmt.Sprintf("s%d", time.Now().UnixNano()),
-			Time:    time.Now(),
-			Title:   title,
-			Content: rest,
+			ID:        fmt.Sprintf("s%d", time.Now().UnixNano()),
+			Time:      time.Now(),
+			Title:     title,
+			Content:   rest,
+			SessionID: sessionID,
 		})
 		ts.saveSessionSummaries(u.name, sessionID, sums)
 		ts.mu.Unlock()
-		writeJSON(w, sums)
+		writeJSON(w, ts.allSummaries(u))
 		return
 	}
 	if r.Method == http.MethodDelete {
@@ -112,24 +158,38 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		ts.mu.Lock()
-		sums := ts.loadSessionSummaries(u.name, sessionID)
-		kept := sums[:0]
-		for _, s := range sums {
-			if s.ID != body.ID {
+		userDir := filepath.Join(ts.summaryDir(), u.name)
+		ents, _ := os.ReadDir(userDir)
+		for _, e := range ents {
+			if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+				continue
+			}
+			sid := strings.TrimSuffix(e.Name(), ".json")
+			sums := ts.loadSessionSummaries(u.name, sid)
+			kept := sums[:0]
+			changed := false
+			for _, s := range sums {
+				if s.ID == body.ID {
+					changed = true
+					continue
+				}
 				kept = append(kept, s)
 			}
+			if changed {
+				ts.saveSessionSummaries(u.name, sid, kept)
+			}
 		}
-		ts.saveSessionSummaries(u.name, sessionID, kept)
 		ts.mu.Unlock()
-		writeJSON(w, kept)
+		writeJSON(w, ts.allSummaries(u))
 		return
 	}
-	writeJSON(w, ts.loadSessionSummaries(u.name, sessionID))
+	writeJSON(w, ts.allSummaries(u))
 }
 
 // splitSummaryTitle 把 AI 总结的第一段（空行前的第一行）拆成标题，其余作为正文。
 // 要求：标题后必须跟一个空行才视为有标题（提示词要求"第一行标题，空一行，然后正文"），
-// 标题超过 20 字视为模型没按格式输出，整段当正文。
+// 标题超过 20 字视为模型没按格式输出，整段当正文。同时剥离 markdown 标题前缀
+// （"### 关于…" → "关于…"）。
 func splitSummaryTitle(s string) (title, rest string) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -137,9 +197,23 @@ func splitSummaryTitle(s string) (title, rest string) {
 	}
 	head, remainder, hasBlank := strings.Cut(s, "\n\n")
 	first := strings.TrimSpace(head)
-	if !hasBlank || first == "" || strings.Contains(first, "\n") || len([]rune(first)) > 20 {
-		// 无空行分隔 / 首行过长或含换行：整段当正文，不设标题
+	first = stripMarkdownHeading(first)
+	if !hasBlank || first == "" || len([]rune(first)) > 20 {
+		// 无空行分隔 / 首行过长：整段当正文，不设标题
 		return "", s
 	}
 	return first, strings.TrimSpace(remainder)
+}
+
+// stripMarkdownHeading 去掉开头的 markdown 标题标记（# ## ### …）。
+func stripMarkdownHeading(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || s[0] != '#' {
+		return s
+	}
+	i := 0
+	for i < len(s) && s[i] == '#' {
+		i++
+	}
+	return strings.TrimLeft(s[i:], " \t")
 }

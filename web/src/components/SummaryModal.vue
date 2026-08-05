@@ -9,7 +9,6 @@ const generating = ref(false)
 const err = ref("")
 const full = ref<any>(null) // 展开查看的总结条目
 const confirmDel = ref<string | null>(null) // 待删除的总结 id（页面风格确认框）
-const sessionLabel = ref("") // 当前会话标识（标题或名字）
 
 async function load() {
   if (!props.visible) return
@@ -22,12 +21,6 @@ async function load() {
     summaries.value = []
     err.value = "加载失败"
   }
-  // 标明这些总结属于哪个会话
-  try {
-    const ss = await api.sessions()
-    const cur = Array.isArray(ss) ? ss.find((x: any) => x.current) : null
-    sessionLabel.value = (cur && (cur.title || cur.name)) || ""
-  } catch { /* ignore */ }
   loading.value = false
 }
 
@@ -60,7 +53,10 @@ async function doConfirmDel() {
 }
 
 function summaryTitle(s: any): string {
-  if (s && s.title && s.title.trim()) return s.title.trim()
+  let t = (s && s.title || "").trim()
+  // 兜底剥离 markdown 标题前缀（### 关于… → 关于…）
+  t = t.replace(/^#{1,6}\s+/, "").trim()
+  if (t) return t
   // 旧数据无标题：取正文前 20 字
   const c = (s && s.content || "").replace(/\s+/g, " ").trim()
   return c ? c.slice(0, 20) + (c.length > 20 ? "…" : "") : "会话总结"
@@ -83,7 +79,6 @@ function fmtTime(t: string): string {
       <span>会话总结</span>
       <span class="modal__close" @click="emit('close')">&times;</span>
     </div>
-    <div style="padding:0 8px 4px;font-size:11px;color:var(--muted-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" v-if="sessionLabel">当前会话：{{ sessionLabel }}</div>
     <div style="padding:4px 8px;display:flex;gap:8px;align-items:center">
       <button type="button" class="branch-item__btn" style="margin:0" :disabled="generating" @click="generate">{{ generating ? "生成中…" : "＋ 生成总结" }}</button>
       <span style="font-size:11px;color:var(--muted-2)">为当前会话生成一份人读摘要，不改动会话本身</span>
@@ -91,14 +86,15 @@ function fmtTime(t: string): string {
     <div style="padding:0 8px 8px;color:var(--danger);font-size:12px;min-height:0" v-if="err">{{ err }}</div>
     <div class="model-list" style="padding:0 8px 8px;flex:1;min-height:0;overflow-y:auto">
       <div v-if="loading" class="empty-note" style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">加载中…</div>
-      <div v-else-if="summaries.length === 0" class="empty-note" style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">当前会话还没有总结，点击上方按钮生成一份</div>
+      <div v-else-if="summaries.length === 0" class="empty-note" style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">还没有任何会话总结，点击上方按钮为当前会话生成一份</div>
       <div v-for="s in summaries" :key="s.id" class="summary-card" @click="full = s">
         <div style="min-width:0;flex:1">
-          <div class="summary-card__title">{{ summaryTitle(s) }}</div>
+          <div class="summary-card__title" :title="s.title || summaryTitle(s)">{{ summaryTitle(s) }}</div>
           <div class="branch-item__meta">{{ fmtTime(s.time) }}</div>
           <div class="summary-card__body">{{ s.content }}</div>
         </div>
         <div class="summary-card__actions" @click.stop>
+          <span class="summary-card__src" :title="s.sessionTitle || s.sessionId || ''">→ {{ s.sessionTitle || (s.sessionId ? s.sessionId.slice(0, 12) : '') }}</span>
           <button type="button" class="branch-item__btn" title="展开查看" @click="full = s">⛶</button>
           <button type="button" class="branch-item__btn summary-card__del" title="删除" @click="confirmDel = s.id">&times;</button>
         </div>
@@ -148,8 +144,18 @@ function fmtTime(t: string): string {
 }
 .summary-card:hover { border-color: var(--accent); background: var(--card-hover); }
 .summary-card__title { font-size: 13px; font-weight: 600; color: var(--fg); }
-.summary-card__actions { display: flex; gap: 4px; flex-shrink: 0; }
+.summary-card__actions { display: flex; gap: 4px; flex-shrink: 0; align-items: center; }
 .summary-card__del { color: var(--danger); }
+/* 来源会话标注：→ 会话标题（截断省略，悬浮显示完整） */
+.summary-card__src {
+  font-size: 11px;
+  color: var(--muted-2);
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
 /* 内容默认折叠，悬浮时直接在卡片内展开（不弹浮层） */
 .summary-card__body {
   max-height: 0;
