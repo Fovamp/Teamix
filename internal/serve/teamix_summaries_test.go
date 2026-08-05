@@ -1,6 +1,9 @@
 package serve
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestParseSummaryOutput(t *testing.T) {
 	cases := []struct {
@@ -10,34 +13,34 @@ func TestParseSummaryOutput(t *testing.T) {
 		wantBody        string
 	}{
 		{
-			in:              "<title>猫娘助理</title>\n<description>她介绍了自己。</description>\n<content>她是一位猫娘助理，擅长卖萌。</content>",
-			wantTitle:       "猫娘助理",
-			wantDescription: "她介绍了自己。",
-			wantBody:        "她是一位猫娘助理，擅长卖萌。",
+			in:              "<title>\u732b\u5a18\u52a9\u7406</title>\n<description>\u5979\u4ecb\u7ecd\u4e86\u81ea\u5df1\u3002</description>\n<content>\u5979\u662f\u4e00\u4f4d\u732b\u5a18\u52a9\u7406\uff0c\u64c5\u957f\u5356\u840c\u3002</content>",
+			wantTitle:       "\u732b\u5a18\u52a9\u7406",
+			wantDescription: "\u5979\u4ecb\u7ecd\u4e86\u81ea\u5df1\u3002",
+			wantBody:        "\u5979\u662f\u4e00\u4f4d\u732b\u5a18\u52a9\u7406\uff0c\u64c5\u957f\u5356\u840c\u3002",
 		},
 		{
-			// 缺 content：正文回退到 description
-			in:              "<title>数字记录</title>\n<description>用户依次给出四个数字，助手只确认未操作。</description>",
-			wantTitle:       "数字记录",
-			wantDescription: "用户依次给出四个数字，助手只确认未操作。",
-			wantBody:        "用户依次给出四个数字，助手只确认未操作。",
+			// missing content: body falls back to description
+			in:              "<title>\u6570\u5b57\u8bb0\u5f55</title>\n<description>\u7528\u6237\u4f9d\u6b21\u7ed9\u51fa\u56db\u4e2a\u6570\u5b57\uff0c\u52a9\u624b\u53ea\u786e\u8ba4\u672a\u64cd\u4f5c\u3002</description>",
+			wantTitle:       "\u6570\u5b57\u8bb0\u5f55",
+			wantDescription: "\u7528\u6237\u4f9d\u6b21\u7ed9\u51fa\u56db\u4e2a\u6570\u5b57\uff0c\u52a9\u624b\u53ea\u786e\u8ba4\u672a\u64cd\u4f5c\u3002",
+			wantBody:        "\u7528\u6237\u4f9d\u6b21\u7ed9\u51fa\u56db\u4e2a\u6570\u5b57\uff0c\u52a9\u624b\u53ea\u786e\u8ba4\u672a\u64cd\u4f5c\u3002",
 		},
 		{
-			// 只有 description：标题空，正文回退
-			in:              "<description>只有描述没有标题</description>",
-			wantDescription: "只有描述没有标题",
-			wantBody:        "只有描述没有标题",
+			// only description: empty title, body falls back
+			in:              "<description>\u53ea\u6709\u63cf\u8ff0\u6ca1\u6709\u6807\u9898</description>",
+			wantDescription: "\u53ea\u6709\u63cf\u8ff0\u6ca1\u6709\u6807\u9898",
+			wantBody:        "\u53ea\u6709\u63cf\u8ff0\u6ca1\u6709\u6807\u9898",
 		},
 		{
-			// 完全没有标签：整段当正文
-			in:       "没有标签的原始输出",
-			wantBody: "没有标签的原始输出",
+			// no tags at all: whole content as body
+			in:       "\u6ca1\u6709\u6807\u7b7e\u7684\u539f\u59cb\u8f93\u51fa",
+			wantBody: "\u6ca1\u6709\u6807\u7b7e\u7684\u539f\u59cb\u8f93\u51fa",
 		},
 		{
-			// 空标题不算标题
-			in:              "<title>   </title>\n<description>正文</description>",
-			wantDescription: "正文",
-			wantBody:        "正文",
+			// empty title does not count
+			in:              "<title>   </title>\n<description>\u6b63\u6587</description>",
+			wantDescription: "\u6b63\u6587",
+			wantBody:        "\u6b63\u6587",
 		},
 	}
 	for _, c := range cases {
@@ -46,5 +49,14 @@ func TestParseSummaryOutput(t *testing.T) {
 			t.Errorf("parseSummaryOutput(%q) = (%q, %q, %q), want (%q, %q, %q)",
 				c.in, title, desc, body, c.wantTitle, c.wantDescription, c.wantBody)
 		}
+	}
+}
+
+func TestSummaryFileRelativeWorkspace(t *testing.T) {
+	// workspaceRoot being a relative path must still yield a real session file, not _invalid
+	ts := &TeamixServer{workspaceRoot: "relative/path"}
+	f := ts.summaryFile("admin", "0805-1234")
+	if filepath.Base(f) != "0805-1234.json" {
+		t.Fatalf("relative workspaceRoot: summaryFile = %q, want real session file", f)
 	}
 }

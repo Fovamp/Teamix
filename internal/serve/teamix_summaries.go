@@ -41,17 +41,57 @@ func (ts *TeamixServer) summaryDir() string {
 	return dir
 }
 
-// summaryFile 返回某用户某会话的总结文件。sessionID 来自 SessionPath 的文件名，
-// 仍做路径穿越防御：结果必须落在 summaryDir 之内。
+// summaryFile 返回某用户某会话的总结文件。sessionID 来自 SessionPath 的文件名。
+// 路径穿越防御：统一转绝对路径后再比较（workspaceRoot 可能是相对路径，
+// 直接比较绝对 vs 相对会永远不匹配，导致所有总结误落 _invalid.json）。
 func (ts *TeamixServer) summaryFile(user, sessionID string) string {
-	userDir := filepath.Join(ts.summaryDir(), user)
+	base := filepath.Clean(ts.summaryDir())
+	userDir := filepath.Join(base, user)
 	_ = os.MkdirAll(userDir, 0o755)
 	p := filepath.Join(userDir, sessionID+".json")
-	base := filepath.Clean(ts.summaryDir()) + string(os.PathSeparator)
-	if abs, err := filepath.Abs(p); err != nil || !strings.HasPrefix(abs, filepath.Clean(ts.summaryDir())) || !strings.HasPrefix(abs, base) {
+	absBase, absErr := filepath.Abs(base)
+	absP, err := filepath.Abs(p)
+	if err != nil || absErr != nil || !strings.HasPrefix(absP, absBase+string(os.PathSeparator)) {
 		return filepath.Join(userDir, "_invalid.json")
 	}
 	return p
+}
+
+// migrateInvalidSummaries 把历史误写进 _invalid.json 的总结按 SessionID 归位到
+// 各自会话文件（早期版本路径防御误判把所有总结都写进了 _invalid）。
+func (ts *TeamixServer) migrateInvalidSummaries(user string) {
+	invPath := filepath.Join(ts.summaryDir(), user, "_invalid.json")
+	data, err := os.ReadFile(invPath)
+	if err != nil {
+		return
+	}
+	var inv []sessionSummary
+	if json.Unmarshal(data, &inv) != nil || len(inv) == 0 {
+		return
+	}
+	bySession := map[string][]sessionSummary{}
+	for _, s := range inv {
+		if s.SessionID == "" {
+			continue
+		}
+		bySession[s.SessionID] = append(bySession[s.SessionID], s)
+	}
+	for sid, sums := range bySession {
+		existing := ts.loadSessionSummaries(user, sid)
+		seen := map[string]bool{}
+		for _, e := range existing {
+			seen[e.ID] = true
+		}
+		for _, s := range sums {
+			if !seen[s.ID] {
+				existing = append(existing, s)
+			}
+		}
+		if len(existing) > 0 {
+			_ = ts.saveSessionSummaries(user, sid, existing)
+		}
+	}
+	_ = os.Remove(invPath)
 }
 
 func (ts *TeamixServer) loadSessionSummaries(user, sessionID string) []sessionSummary {
@@ -123,6 +163,10 @@ func (ts *TeamixServer) allSummaries(u *userSession) []sessionSummary {
 // DELETE 按 id 删除（跨会话文件扫描）。正在运行轮次时拒绝 POST，避免与
 // provider 通道冲突。GET 不要求当前会话存在（查看历史总结不依赖活动会话）。
 func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, u *userSession) {
+	// 历史误写进 _invalid.json 的总结先归位（幂等，空则无操作）
+	ts.mu.Lock()
+	ts.migrateInvalidSummaries(u.name)
+	ts.mu.Unlock()
 	sessionID := strings.TrimSuffix(filepath.Base(u.ctrl.SessionPath()), ".jsonl")
 	if r.Method == http.MethodPost {
 		if sessionID == "" || sessionID == "." || sessionID == string(filepath.Separator) {
