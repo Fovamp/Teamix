@@ -7,11 +7,11 @@ const emit = defineEmits<{ (e: "close"): void }>()
 const { toast } = useToast()
 const isArch = ref(false)
 const tab = ref("keys")
-const allTabs = ["users", "projects", "keys", "mcp", "soul", "skills", "memory"]
+const allTabs = ["users", "projects", "keys", "mcp", "soul", "skills", "memory", "audit"]
 // 普通用户可见：MCP/Skills/记忆/人格（人格=全局只读可选 + 私有可编辑）；用户/项目/密钥池为架构师专属
 const visibleTabs = ref<string[]>(allTabs)
-const tabLbl: Record<string, string> = { users: "\u7528\u6237", projects: "\u9879\u76ee", keys: "\u5bc6\u94a5\u6c60", mcp: "MCP", soul: "AI \u4eba\u683c", skills: "Skills", memory: "\u8bb0\u5fc6" }
-const tabIcon: Record<string, string> = { users: "\ud83d\udc65", projects: "\ud83d\udce6", keys: "\ud83d\udd11", mcp: "\ud83d\udd27", soul: "\ud83e\udde0", skills: "\ud83d\udcdc", memory: "\ud83e\udde0" }
+const tabLbl: Record<string, string> = { users: "\u7528\u6237", projects: "\u9879\u76ee", keys: "\u5bc6\u94a5\u6c60", mcp: "MCP", soul: "AI \u4eba\u683c", skills: "Skills", memory: "\u8bb0\u5fc6", audit: "AI \u5ba1\u8ba1" }
+const tabIcon: Record<string, string> = { users: "\ud83d\udc65", projects: "\ud83d\udce6", keys: "\ud83d\udd11", mcp: "\ud83d\udd27", soul: "\ud83e\udde0", skills: "\ud83d\udcdc", memory: "\ud83e\udde0", audit: "\ud83d\udee1\ufe0f" }
 
 onMounted(async () => {
   try {
@@ -43,6 +43,7 @@ async function switchTab(t: string) {
     else if (t === "mcp") { await renderMCP() }
     else if (t === "skills") { await renderSkills() }
     else if (t === "memory") { await renderMemory() }
+    else if (t === "audit") { await renderAudit() }
     else { await renderSoul() }
   } catch (e: any) {
     contentHtml.value = `<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25: ${e.message}</div>`
@@ -402,6 +403,61 @@ async function renderSoul() {
     h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
   }
   contentHtml.value = h
+}
+
+// AI 审计面板（仅架构师）：AI 调用操作流向 + 泄露三信号（出网/事故/告警）。
+async function renderAudit() {
+  const q = tokenQuery()
+  let h = '<div class="section"><h3>🛡️ AI 审计</h3><p class="desc">AI 调用操作流向：每次模型请求走了哪个模型、是否出网、如何脱敏（仅架构师）。红色 = 泄露事故（非 public 却出网 / 闭环检测命中）。</p></div>'
+  h += '<div class="section" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+  h += '<input id="audit-user" placeholder="用户（空=全部）" style="padding:4px 8px;font-size:12px;width:110px">'
+  h += '<input id="audit-date" placeholder="日期 YYYY-MM-DD" style="padding:4px 8px;font-size:12px;width:130px">'
+  h += '<label style="font-size:12px"><input type="checkbox" id="audit-outbound"> 只看出了网的</label>'
+  h += '<label style="font-size:12px"><input type="checkbox" id="audit-alert"> 只看告警</label>'
+  h += '<button class="btn primary" onclick="auditLoad()" style="padding:4px 12px;font-size:12px">查询</button>'
+  h += '</div><div id="audit-render" style="margin-top:8px">'
+  h += await auditRows(q, "", "", false, false)
+  h += '</div>'
+  contentHtml.value = h
+  ;(window as any).auditLoad = async function () {
+    const u = (document.getElementById("audit-user") as HTMLInputElement)?.value || ""
+    const d = (document.getElementById("audit-date") as HTMLInputElement)?.value || ""
+    const ob = (document.getElementById("audit-outbound") as HTMLInputElement)?.checked || false
+    const al = (document.getElementById("audit-alert") as HTMLInputElement)?.checked || false
+    const box = document.getElementById("audit-render")
+    if (box) box.innerHTML = await auditRows(q, u, d, ob, al)
+  }
+}
+
+async function auditRows(q: string, user: string, date: string, outbound: boolean, alert: boolean): Promise<string> {
+  const params = new URLSearchParams()
+  if (user) params.set("user", user)
+  if (date) params.set("date", date)
+  if (outbound) params.set("outbound", "true")
+  if (alert) params.set("alert", "true")
+  const sep = q.includes("?") ? "&" : "?"
+  try {
+    const resp = await fetch("/teamix/audit/ai-logs" + q + (params.toString() ? sep + params.toString() : ""))
+    if (!resp.ok) return '<div style="color:#f44336;padding:12px;font-size:13px">无权访问或加载失败</div>'
+    const data = await resp.json()
+    const recs = data.records || []
+    if (recs.length === 0) return '<div style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">暂无记录</div>'
+    let h = ''
+    for (const r of recs) {
+      const critical = (r.alerts || []).some((a: string) => a.includes("[critical]"))
+      const sent = r.outbound?.sent ? "✅ 出网" : "🔒 内网"
+      const sens = r.sensitivity || "未标记"
+      const trace = (r.trace || []).map((s: any) => `${s.step}:${s.model || ""}(${s.reason || ""})`).join(" → ")
+      h += '<div style="border:1px solid ' + (critical ? "#f44336" : "var(--border,rgba(128,128,128,.2))") + ';border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:12px;line-height:1.5">'
+      h += '<div><b>' + escH(r.time ? new Date(r.time).toLocaleString() : "") + '</b> · ' + escH(r.user || "") + ' · ' + escH(r.purpose || "") + ' · ' + sent + ' · 敏感级:' + escH(sens) + '</div>'
+      h += '<div style="color:var(--muted-2)">' + escH(trace) + '</div>'
+      if (r.alerts && r.alerts.length) h += '<div style="color:' + (critical ? "#f44336" : "#e6a23c") + '">⚠ ' + escH(r.alerts.join("; ")) + '</div>'
+      h += '</div>'
+    }
+    return h
+  } catch (e: any) {
+    return '<div style="color:#f44336;padding:12px;font-size:13px">加载失败: ' + escH(e.message) + '</div>'
+  }
 }
 
 function tokenQuery() {

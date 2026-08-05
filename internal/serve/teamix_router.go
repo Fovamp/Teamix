@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"reasonix/internal/auditlog"
@@ -48,16 +49,123 @@ func sensitiveRulesFromCfg(cfg *teamixconfig.Config) *modelrouter.SensitiveRules
 	}
 }
 
-// routerCfg 构造一次 boot.Build 的路由集成配置：内部池 + 敏感规则 + 审计。
+// currentSensitiveRules 每次构建会话时重读 .teamix/config.yaml 的 sensitive 段
+// （热加载：新增机密目录免重启，改配置下次新会话/切模型生效）。读失败回退启动快照。
+func (ts *TeamixServer) currentSensitiveRules() *modelrouter.SensitiveRules {
+	cfg, err := teamixconfig.Load(ts.workspaceRoot)
+	if err != nil || cfg == nil {
+		return ts.sensitiveRules
+	}
+	return sensitiveRulesFromCfg(cfg)
+}
+
+// QuotaTracker 三层配额计数（内存原子，P1）：个人日额 / 团队与全局月额。
+// 只计数"出了网"的外部请求（OnDecision 里 Pool==external 时累加）。
+// architect 角色豁免配额。
+type QuotaTracker struct {
+	mu             sync.Mutex
+	userDay        map[string]int // user → 当日出网次数
+	userDayDate    string
+	globalMonth    int
+	globalMonthKey string
+	perUserPerDay  int // <=0 不限
+	globalPerMonth int // <=0 不限
+}
+
+func NewQuotaTracker(perUserPerDay, globalPerMonth int) *QuotaTracker {
+	return &QuotaTracker{
+		userDay:        make(map[string]int),
+		perUserPerDay:  perUserPerDay,
+		globalPerMonth: globalPerMonth,
+	}
+}
+
+// dayKey/monthKey 基于日期（UTC 简单切日/切月）。
+func dayKey() string   { return time.Now().Format("2006-01-02") }
+func monthKey() string { return time.Now().Format("2006-01") }
+
+// Allow 检查当前请求是否允许出网（个人日额 + 全局月额；architect 豁免）。
+func (q *QuotaTracker) Allow(user string, architect bool) bool {
+	if q == nil {
+		return true
+	}
+	if architect {
+		return true
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.perUserPerDay > 0 {
+		if q.userDayDate != dayKey() {
+			q.userDay = make(map[string]int)
+			q.userDayDate = dayKey()
+		}
+		if q.userDay[user] >= q.perUserPerDay {
+			return false
+		}
+	}
+	if q.globalPerMonth > 0 {
+		if q.globalMonthKey != monthKey() {
+			q.globalMonth = 0
+			q.globalMonthKey = monthKey()
+		}
+		if q.globalMonth >= q.globalPerMonth {
+			return false
+		}
+	}
+	return true
+}
+
+// Record 记录一次出网（配额消费）。
+func (q *QuotaTracker) Record(user string) {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.userDayDate != dayKey() {
+		q.userDay = make(map[string]int)
+		q.userDayDate = dayKey()
+	}
+	q.userDay[user]++
+	if q.globalMonthKey != monthKey() {
+		q.globalMonth = 0
+		q.globalMonthKey = monthKey()
+	}
+	q.globalMonth++
+}
+
+// routerCfg 构造一次 boot.Build 的路由集成配置：内部池 + 敏感规则 + 审计 + 配额。
 // 每次 Build 调用独立构造，使 Audit 回调能带上当前用户（per-user 日志）。
 func (ts *TeamixServer) routerCfg(user string) *modelrouter.BootConfig {
+	architect := ts.globalCfg != nil && ts.globalCfg.IsArchitect(user)
 	return &modelrouter.BootConfig{
 		Internal:  ts.internalProvider,
-		Sensitive: ts.sensitiveRules,
+		Sensitive: ts.currentSensitiveRules(), // 热加载：每次 Build 重读机密清单
 		Offline:   ts.offline.Load(),
 		Audit: func(d modelrouter.Decision) {
 			if ts.auditWriter != nil {
 				ts.auditWriter.Write(auditRecord(user, d))
+			}
+			// 出网即消费配额
+			if d.Pool == modelrouter.KindExternal && ts.quota != nil {
+				ts.quota.Record(user)
+			}
+		},
+		// 配额门禁：超限柔性降级内部池（用户无感，审计记 quota_exceeded）
+		QuotaCheck: func() bool {
+			return ts.quota == nil || ts.quota.Allow(user, architect)
+		},
+		// 闭环还原失败 → 致命告警 + 审计（假名化漏了/模型幻觉，泄露信号 ③）
+		OnRestoreFail: func(issue string) {
+			slog.Error("teamix: closed-loop detected (potential leak)", "user", user, "issue", issue)
+			if ts.auditWriter != nil {
+				ts.auditWriter.Write(auditlog.Record{
+					RequestID: "restore-fail",
+					User:      user,
+					Time:      time.Now(),
+					Purpose:   "execute",
+					Alerts:    []string{"[critical] closed_loop_detected: " + issue},
+				})
 			}
 		},
 	}
@@ -103,9 +211,9 @@ func auditRecord(user string, d modelrouter.Decision) auditlog.Record {
 		}},
 		Outbound: auditlog.Outbound{Sent: outboundFromDecision(d)},
 	}
-	// 泄露信号 ②：非 public 敏感级却出网 = 事故（本该拦截的内容出去了）
+	// 泄露信号 ②：非 public 敏感级却出网 = 事故（本该拦截的内容出去了）→ 致命告警
 	if rec.Outbound.Sent && d.Sensitivity != "" && d.Sensitivity != provider.SensitivityPublic {
-		rec.Alerts = append(rec.Alerts, "sensitive_sent_external")
+		rec.Alerts = append(rec.Alerts, "[critical] sensitive_sent_external")
 	}
 	return rec
 }

@@ -11,11 +11,28 @@ import (
 // ReasonSensitiveForcedInternal = 安全层覆盖路由决定：敏感内容强制内部（fail-closed）。
 const ReasonSensitiveForcedInternal = "sensitive_forced_internal"
 
+// ReasonClosedLoopFallback = 闭环 Fail-Close：外部输出还原校验失败，丢弃并回退内部重生成。
+const ReasonClosedLoopFallback = "closed_loop_fallback_internal"
+
 // ReasonToolArgSensitive = 入参扫描命中机密清单（tool call 参数路径即泄露点）。
 const ReasonToolArgSensitive = "tool_arg_sensitive_confidential"
 
 // ReasonInternalPrompt = System Prompt 含内部标记，强制内部。
 const ReasonInternalPrompt = "internal_prompt_marker"
+
+// ReasonSecretDetected = 内容检测兜底：消息中出现密钥模式（API key 等），强制内部。
+const ReasonSecretDetected = "secret_pattern_detected_internal"
+
+// HasSecretPattern 内容级兜底（判定第二层）：检测文本中的密钥/凭证模式。
+// 工具分类管"结构化入口"，这里管"手打机密文本/AGENTS.md 里硬编码密钥"。
+func HasSecretPattern(content string) bool {
+	for _, c := range builtinPseudoClasses {
+		if c.kind == "apikey" && c.re.MatchString(content) {
+			return true
+		}
+	}
+	return false
+}
 
 // SensitiveRules 是机密黑名单（.teamix/config.yaml 的 sensitive 段）：
 // 命中 dirs/files 的内容强制走内部模型，配置层无外部路径。
@@ -97,7 +114,8 @@ func hasInternalPrompt(msgs []provider.Message, marker string) bool {
 // 检查顺序：敏感级标记 → 入参扫描（tool call 路径命中机密清单）→ system prompt 标记。
 // 此裁决独立于路由规则、不可被覆盖——非 public 内容配置层就没有外部路径。
 func (r *RouterProvider) securityForceReason(req provider.Request) string {
-	if req.Sensitivity != "" && req.Sensitivity != provider.SensitivityPublic {
+	// redact 允许假名化出网（P1）；internal/confidential 强制内部（fail-closed）
+	if req.Sensitivity != "" && req.Sensitivity != provider.SensitivityPublic && req.Sensitivity != provider.SensitivityRedact {
 		return ReasonSensitiveForcedInternal
 	}
 	if r.cfg.Sensitive != nil && r.cfg.Sensitive.scanToolArgs(req.Messages) {
@@ -105,6 +123,12 @@ func (r *RouterProvider) securityForceReason(req provider.Request) string {
 	}
 	if r.cfg.InternalPromptMarker != "" && hasInternalPrompt(req.Messages, r.cfg.InternalPromptMarker) {
 		return ReasonInternalPrompt
+	}
+	// 内容级兜底：任何消息（含 system/AGENTS.md 指令）出现密钥模式 → 强制内部
+	for _, m := range req.Messages {
+		if m.Content != "" && HasSecretPattern(m.Content) {
+			return ReasonSecretDetected
+		}
 	}
 	return ""
 }

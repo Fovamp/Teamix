@@ -27,6 +27,14 @@ type Config struct {
 	Models    ModelsConfig    `yaml:"models,omitempty"`
 	Sensitive SensitiveConfig `yaml:"sensitive,omitempty"`
 	Audit     AuditConfig     `yaml:"audit,omitempty"`
+	Quota     QuotaConfig     `yaml:"quota,omitempty"`
+}
+
+// QuotaConfig 三层配额（出网请求次数）：个人日额 + 全局月额（architect 豁免）。
+// 超限柔性降级：外部请求自动切内部池（不报错，审计记 quota_exceeded）。
+type QuotaConfig struct {
+	PerUserPerDay  int `yaml:"per_user_per_day,omitempty"`  // <=0 不限
+	GlobalPerMonth int `yaml:"global_per_month,omitempty"`  // <=0 不限
 }
 
 // ModelsConfig 是双模型协作的模型池配置（.teamix/config.yaml 的 models 段）。

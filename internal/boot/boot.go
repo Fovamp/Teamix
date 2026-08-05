@@ -317,6 +317,15 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 		return p, nil
 	}
+
+	// sensitiveRulesForAgent 把 Router 网关的机密黑名单传给 agent，用于"数据域钉住"
+	// （工具触碰机密路径 → 会话标记敏感 → 后续请求强制内部）。无 Router 时 nil。
+	sensitiveRulesForAgent := func(opts Options) *modelrouter.SensitiveRules {
+		if opts.Router == nil {
+			return nil
+		}
+		return opts.Router.Sensitive
+	}
 	balanceClient, err := netclient.NewHTTPClient(proxySpec, netclient.TransportOptions{})
 	if err != nil {
 		return nil, err
@@ -1287,6 +1296,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		MemoryCompiler:                     memCompiler,
 		MemoryCompilerVerbosity:            cfg.MemoryCompilerVerbosity(),
 		UseMemoryCompilerLLMClassification: strings.TrimSpace(os.Getenv("REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION")) == "true",
+		SensitiveRules:                     sensitiveRulesForAgent(opts),
 	}, sink)
 
 	var runner agent.Runner = executor

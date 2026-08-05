@@ -70,6 +70,9 @@ type TeamixServer struct {
 	// offline 仅本地模式：手动"全走 Qwen"唯一入口（运维侧，architect 可切）。
 	// 切换后下次 boot.Build（新会话/切模型）生效；审计记录敏感级便于追溯。
 	offline atomic.Bool
+
+	// quota 三层配额（个人日额 / 全局月额，architect 豁免）；nil = 不限。
+	quota *QuotaTracker
 }
 
 func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *TeamixServer {
@@ -92,6 +95,10 @@ func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *Tea
 			auditCfg.Dir = ".teamix/logs/ai-audit"
 		}
 		ts.auditWriter = auditlog.New(auditCfg.Dir, auditCfg.RetentionDays)
+		q := ts.globalCfg.Config.Quota
+		if q.PerUserPerDay > 0 || q.GlobalPerMonth > 0 {
+			ts.quota = NewQuotaTracker(q.PerUserPerDay, q.GlobalPerMonth)
+		}
 	}
 	ts.keyPool = keypool.NewPool("DEEPSEEK_API_KEY")
 	ts.keyPool.Load(ts.workspaceRoot)
@@ -506,6 +513,7 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("GET /models", ts.withUser(ts.handleModels))
 	mux.HandleFunc("GET /teamix/offline", ts.withUser(ts.handleOfflineGet))
 	mux.HandleFunc("POST /teamix/offline", ts.withUser(ts.handleOfflineSet))
+	mux.HandleFunc("GET /teamix/audit/ai-logs", ts.withUser(ts.handleAuditLogs))
 	mux.HandleFunc("GET /checkpoints", ts.withUser(ts.handleCheckpoints))
 	mux.HandleFunc("GET /branches", ts.withUser(ts.handleBranches))
 	mux.HandleFunc("POST /teamix/branch/switch", ts.withUser(ts.handleBranchSwitch))

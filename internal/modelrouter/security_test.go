@@ -144,3 +144,30 @@ func TestSensitiveDefaultNoConfig(t *testing.T) {
 		t.Errorf("no rules: routed to %q, want external (no forced internal)", text)
 	}
 }
+
+func TestSecretPatternForcesInternal(t *testing.T) {
+	// 内容兜底（F）：消息中出现密钥模式（如 AGENTS.md 硬编码）→ 强制内部
+	r := sensitiveRouter()
+	text, err := streamText(t, r, provider.Request{
+		Purpose: provider.PurposeExecute,
+		Messages: []provider.Message{{
+			Role:    provider.RoleSystem,
+			Content: "内部规范：数据库密钥 sk-proj-abc123def456ghi789 仅内网使用",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "internal-ok" {
+		t.Errorf("secret pattern routed to %q, want internal (forced)", text)
+	}
+}
+
+func TestHasSecretPattern(t *testing.T) {
+	if !HasSecretPattern("连接串含 sk-abc123def456ghi789 结尾") {
+		t.Error("apikey pattern not detected")
+	}
+	if HasSecretPattern("正常的技术讨论内容") {
+		t.Error("false positive on normal content")
+	}
+}

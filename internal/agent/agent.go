@@ -16,6 +16,7 @@ import (
 	"reasonix/internal/capability"
 	"reasonix/internal/diff"
 	"reasonix/internal/event"
+	"reasonix/internal/modelrouter"
 	"reasonix/internal/evidence"
 	"reasonix/internal/instruction"
 	"reasonix/internal/jobs"
@@ -266,6 +267,10 @@ type Agent struct {
 	temperature          float64
 	pricing              *provider.Pricing
 	usageSource          string
+	// sensitive 会话敏感状态（数据域钉住）：工具触碰机密后为 confidential，
+	// 后续所有请求标记敏感 → 路由强制内部。sensitiveRules 为机密黑名单。
+	sensitive      provider.Sensitivity
+	sensitiveRules *modelrouter.SensitiveRules
 	responseLanguage     atomic.Value // string: auto|zh|en
 	reasoningLanguage    atomic.Value // string: auto|zh|en
 
@@ -1007,6 +1012,10 @@ type Options struct {
 	// disables hook firing.
 	Hooks ToolHooks
 
+	// SensitiveRules 机密黑名单（Teamix 双模型协作）：工具触碰机密路径后，
+	// 会话标记为敏感（数据域钉住），后续请求强制走内部模型。nil 不启用。
+	SensitiveRules *modelrouter.SensitiveRules
+
 	// Jobs is the session's background-job manager (nil disables background tools).
 	Jobs *jobs.Manager
 
@@ -1138,6 +1147,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		temperature:              opts.Temperature,
 		pricing:                  opts.Pricing,
 		usageSource:              usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
+		sensitiveRules:           opts.SensitiveRules,
 		sink:                     sink,
 		gate:                     gate,
 		planModeReadOnlyTrust:    planModeReadOnlyTrust,
@@ -1190,8 +1200,7 @@ func usageSourceOrDefault(source, fallback string) string {
 
 // purposeFromUsageSource 把 billable usage source 映射为路由用途标签。
 // 主对话与子代理共用 agent 循环，靠 UsageSource 区分路由去向。
-func purposeFromUsageSource(source string) provider.Purpose {
-	switch source {
+func purposeFromUsageSource(source string) provider.Purpose {	switch source {
 	case event.UsageSourcePlanner:
 		return provider.PurposePlan
 	case event.UsageSourceSubagent:
@@ -1204,6 +1213,28 @@ func purposeFromUsageSource(source string) provider.Purpose {
 		return provider.PurposeGuard
 	default:
 		return provider.PurposeExecute
+	}
+}
+
+// markToolSensitivity 在工具执行前扫描参数：路径命中机密清单 → 会话标记为
+// confidential（数据域钉住）。此后所有请求带敏感标记，路由强制内部模型。
+// 覆盖文件类工具（read_file/grep/glob/ls 等的 path/dir/file/src/target 参数）。
+func (a *Agent) markToolSensitivity(t tool.Tool, args json.RawMessage) {
+	if a.sensitiveRules == nil || a.sensitive == provider.SensitivityConfidential {
+		return
+	}
+	if len(args) == 0 {
+		return
+	}
+	var m map[string]any
+	if err := json.Unmarshal(args, &m); err != nil {
+		return
+	}
+	for _, key := range []string{"path", "dir", "file", "src", "target"} {
+		if v, ok := m[key].(string); ok && v != "" && a.sensitiveRules.MatchPath(v) {
+			a.sensitive = provider.SensitivityConfidential
+			return
+		}
 	}
 }
 
@@ -2233,6 +2264,7 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 		Tools:       a.tools.Schemas(),
 		Temperature: provider.OptionalTemperature(a.temperature),
 		Purpose:     purposeFromUsageSource(a.usageSource),
+		Sensitivity: a.sensitive,
 	})
 	if err != nil {
 		return "", "", "", nil, nil, false, false, err
@@ -3031,6 +3063,8 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	if it, ok := runTool.(tool.ImageTool); ok {
 		result, images, err = it.ExecuteWithImages(cctx, runArgs)
 	} else {
+		// 数据域钉住：执行前扫描工具参数，路径命中机密清单 → 会话标记机密
+		a.markToolSensitivity(runTool, runArgs)
 		result, err = runTool.Execute(cctx, runArgs)
 	}
 	result = secrets.RedactToolOutput(result)
