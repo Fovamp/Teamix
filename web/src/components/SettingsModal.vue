@@ -61,8 +61,11 @@ async function renderUsers() {
     if (users.length === 0) h += '<div style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">\u6682\u65e0\u7528\u6237</div>'
     users.forEach((u: any) => {
       const cur = u.isCurrent ? ' <span style="font-size:10px;padding:1px 6px;border-radius:99px;background:var(--accent-soft);color:var(--accent)">\u5f53\u524d</span>' : ''
+      const credBadge = u.credentialConfigured
+        ? ' <span style="font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(52,199,89,.15);color:#34c759">\u5df2\u914d\u51ed\u8bc1</span>'
+        : ' <span style="font-size:10px;padding:1px 6px;border-radius:99px;background:var(--bg-2);color:var(--muted-2)">\u672a\u914d\u51ed\u8bc1</span>'
       h += '<div class="card" style="flex-direction:row;align-items:center;justify-content:space-between;padding:8px 12px">'
-      h += '<div class="card-info"><div class="card-title"><code>' + escH(u.name) + '</code>' + cur + '</div></div>'
+      h += '<div class="card-info"><div class="card-title"><code>' + escH(u.name) + '</code>' + cur + credBadge + '</div></div>'
       h += '<div style="display:flex;gap:6px;align-items:center">'
       h += '<select data-user-role="' + escAttr(u.name) + '" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="developer"' + (u.role === 'developer' ? ' selected' : '') + '>developer</option><option value="architect"' + (u.role === 'architect' ? ' selected' : '') + '>architect</option></select>'
       h += '<button class="btn sm" data-user-edit="' + escAttr(u.name) + '" id="user-editbtn-' + escAttr(u.name) + '" style="padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:11px;cursor:pointer">\u7f16\u8f91</button>'

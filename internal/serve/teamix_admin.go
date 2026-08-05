@@ -1,4 +1,4 @@
-﻿package serve
+package serve
 
 import (
 	"context"
@@ -48,14 +48,19 @@ func (ts *TeamixServer) handleUsersList(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	type userJSON struct {
-		Name      string `json:"name"`
-		Role      string `json:"role"`
-		IsCurrent bool   `json:"isCurrent"`
+		Name                 string `json:"name"`
+		Role                 string `json:"role"`
+		IsCurrent            bool   `json:"isCurrent"`
+		CredentialConfigured bool   `json:"credentialConfigured"` // 该用户是否已配置 git 凭证（读其用户目录配置）
 	}
 	users := ts.usersConfig().Users
 	out := make([]userJSON, 0, len(users))
 	for _, e := range users {
-		out = append(out, userJSON{Name: e.Name, Role: e.RoleOr(), IsCurrent: e.Name == u.name})
+		configured := false
+		if uc, err := teamixconfig.LoadUserConfig(ts.UserRoot(e.Name)); err == nil {
+			configured = uc.HasGitCredentials()
+		}
+		out = append(out, userJSON{Name: e.Name, Role: e.RoleOr(), IsCurrent: e.Name == u.name, CredentialConfigured: configured})
 	}
 	writeJSON(w, map[string]any{"users": out})
 }
@@ -335,10 +340,10 @@ func (ts *TeamixServer) handleProjectScan(w http.ResponseWriter, r *http.Request
 	// 公共区目录不存在（改造前添加的项目）→ 先 clone
 	if _, err := os.Stat(projDir); os.IsNotExist(err) {
 		uc, _ := teamixconfig.LoadUserConfig(u.userRoot)
-	if !uc.HasGitCredentials() {
-		writeJSON(w, map[string]any{"ok": false, "error": "请先在\"用户管理\"中为当前账号配置 Git 凭证（SSH Key 或 HTTPS 账号/令牌）"})
-		return
-	}
+		if !uc.HasGitCredentials() {
+			writeJSON(w, map[string]any{"ok": false, "error": "请先在\"用户管理\"中为当前账号配置 Git 凭证（SSH Key 或 HTTPS 账号/令牌）"})
+			return
+		}
 		if err := ts.cloneProject(target.Git, projDir, uc, ""); err != nil {
 			writeJSON(w, map[string]any{"ok": false, "error": "克隆到公共区失败: " + err.Error()})
 			return
