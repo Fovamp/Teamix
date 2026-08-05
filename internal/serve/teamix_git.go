@@ -1,11 +1,11 @@
-﻿package serve
+package serve
 
 import (
 	"bufio"
 	"bytes"
-	"io"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -56,7 +56,11 @@ func (ts *TeamixServer) handleGitCredentialsSave(w http.ResponseWriter, r *http.
 		uc.Git.HTTPSPassword = ""
 	} else if body.HTTPSUsername != "" {
 		uc.Git.HTTPSUsername = body.HTTPSUsername
-		uc.Git.HTTPSPassword = body.HTTPSPassword
+		// 密码留空 = 保持已有密码（前端回填用户名后点保存不应把已存密码清空，
+		// 否则每次登录都要重新填写）。只有 SSH 切换或显式填密码才改动。
+		if body.HTTPSPassword != "" {
+			uc.Git.HTTPSPassword = body.HTTPSPassword
+		}
 		uc.Git.SSHKeyPath = ""
 	}
 
@@ -198,7 +202,7 @@ func (ts *TeamixServer) cloneProject(gitURL, targetPath string, uc *teamixconfig
 		if u, err := url.Parse(gitURL); err == nil && u.Scheme == "https" {
 			u.User = url.UserPassword(uc.Git.HTTPSUsername, uc.Git.HTTPSPassword)
 			cmd = exec.Command("git", "-c", "credential.helper=", "-c", "core.longpaths=true", "clone", "--progress", u.String(), targetPath)
-		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+			cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 		}
 	}
 

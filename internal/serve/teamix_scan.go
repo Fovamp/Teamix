@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"reasonix/internal/teamixconfig"
@@ -33,15 +34,24 @@ var (
 )
 
 // analyzeProject 扫描项目目录，识别全部模块（backend 启动类 + frontend）。
+// 单遍遍历：启动类识别、端口检测、前端识别共用一次 WalkDir，端口不再
+// 对每个模块根做第二次整树遍历（旧实现双重遍历，JeecgBoot 等大仓库极慢）。
+//   - 启动类：*Application.java + @SpringBootApplication 注解（跳过 src/test）
+//   - 端口：application*.yml / application*.properties 的 server.port（按模块根归组）
+//   - 前端：package.json 含 dev/start script
 func analyzeProject(dir string) []teamixconfig.ServiceEntry {
-	var out []teamixconfig.ServiceEntry
+	apps := map[string]bool{} // moduleRoot -> 发现启动类
+	ports := map[string]int{} // moduleRoot -> port
+	portSeen := map[string]bool{}
+
+	var frontends []teamixconfig.ServiceEntry
 	seen := map[string]bool{}
-	add := func(s teamixconfig.ServiceEntry) {
+	frontendAdd := func(s teamixconfig.ServiceEntry) {
 		if s.Dir == "" || seen[s.Dir] {
 			return
 		}
 		seen[s.Dir] = true
-		out = append(out, s)
+		frontends = append(frontends, s)
 	}
 
 	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
@@ -52,26 +62,33 @@ func analyzeProject(dir string) []teamixconfig.ServiceEntry {
 			if skipScanDirs[d.Name()] {
 				return filepath.SkipDir
 			}
-			return nil
-		}
-		// Spring Boot 启动类：*Application.java + @SpringBootApplication 注解
-		if strings.HasSuffix(d.Name(), "Application.java") {
-			if data, err := os.ReadFile(path); err == nil && springBootRe.Match(data) {
-				modRoot := moduleRootOf(path)
-				rel, _ := filepath.Rel(dir, modRoot)
-				modName := filepath.Base(modRoot)
-				add(teamixconfig.ServiceEntry{
-					Name:    modName,
-					Type:    "backend",
-					Dir:     filepath.ToSlash(rel) + "/",
-					Startup: "mvn spring-boot:run -pl " + modName,
-					Port:    detectPortRecursive(modRoot),
-				})
+			// 跳过 src/test：测试用的 *Application.java 不是可启动服务，也减少遍历量
+			if d.Name() == "test" && filepath.Base(filepath.Dir(path)) == "src" {
+				return filepath.SkipDir
 			}
 			return nil
 		}
-		// Node 前端：package.json 含 dev/start script（跳过测试/示例/文档等噪音子项目）
-		if d.Name() == "package.json" {
+		name := d.Name()
+		switch {
+		case strings.HasSuffix(name, "Application.java"):
+			if data, err := os.ReadFile(path); err == nil && springBootRe.Match(data) {
+				apps[moduleRootOf(path)] = true
+			}
+		case strings.HasPrefix(name, "application") &&
+			(strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".properties")):
+			if data, err := os.ReadFile(path); err == nil {
+				root := moduleRootOf(path)
+				if !portSeen[root] {
+					if m := ymlPortRe.FindSubmatch(data); m != nil {
+						ports[root] = atoiSafe(string(m[1]))
+						portSeen[root] = true
+					} else if m := propPortRe.FindSubmatch(data); m != nil {
+						ports[root] = atoiSafe(string(m[1]))
+						portSeen[root] = true
+					}
+				}
+			}
+		case name == "package.json":
 			if hasDevScript(path) {
 				projDir := filepath.Dir(path)
 				rel, _ := filepath.Rel(dir, projDir)
@@ -86,7 +103,7 @@ func analyzeProject(dir string) []teamixconfig.ServiceEntry {
 				if skip {
 					return nil
 				}
-				add(teamixconfig.ServiceEntry{
+				frontendAdd(teamixconfig.ServiceEntry{
 					Name: filepath.Base(projDir), Type: "frontend",
 					Dir:     filepath.ToSlash(rel) + "/",
 					Startup: "npm run dev",
@@ -94,6 +111,27 @@ func analyzeProject(dir string) []teamixconfig.ServiceEntry {
 			}
 		}
 		return nil
+	})
+
+	out := make([]teamixconfig.ServiceEntry, 0, len(apps)+len(frontends))
+	for root := range apps {
+		rel, _ := filepath.Rel(dir, root)
+		modName := filepath.Base(root)
+		out = append(out, teamixconfig.ServiceEntry{
+			Name:    modName,
+			Type:    "backend",
+			Dir:     filepath.ToSlash(rel) + "/",
+			Startup: "mvn spring-boot:run -pl " + modName,
+			Port:    ports[root],
+		})
+	}
+	out = append(out, frontends...)
+	// 稳定输出：按名称排序，避免 map 遍历顺序抖动导致前端列表乱跳
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Type != out[j].Type {
+			return out[i].Type < out[j].Type
+		}
+		return out[i].Name < out[j].Name
 	})
 	return out
 }
@@ -114,39 +152,8 @@ func moduleRootOf(javaFilePath string) string {
 	}
 }
 
-// detectPortRecursive 在模块根下递归查找 application*.yml / properties 的 server.port。
-func detectPortRecursive(modRoot string) int {
-	found := 0
-	filepath.WalkDir(modRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			if skipScanDirs[d.Name()] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		name := d.Name()
-		if strings.HasPrefix(name, "application") &&
-			(strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".properties")) {
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return nil
-			}
-			if m := ymlPortRe.FindSubmatch(data); m != nil {
-				found = atoiSafe(string(m[1]))
-				return filepath.SkipAll
-			}
-			if m := propPortRe.FindSubmatch(data); m != nil {
-				found = atoiSafe(string(m[1]))
-				return filepath.SkipAll
-			}
-		}
-		return nil
-	})
-	return found
-}
+// detectPortRecursive 已废弃：端口检测并入 analyzeProject 单遍遍历
+// （旧实现每发现一个启动类就对模块根再整树遍历，大仓库极慢）。
 
 // hasDevScript 检查 package.json 是否含 dev/start script（判定前端模块）。
 func hasDevScript(packageJSONPath string) bool {
