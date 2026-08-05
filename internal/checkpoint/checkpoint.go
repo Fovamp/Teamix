@@ -45,11 +45,14 @@ type Checkpoint struct {
 }
 
 // Meta is the picker-facing summary of a checkpoint (no file contents).
+// json tags 必须与前端读取的字段一致（turn/prompt/files）：缺 tag 会序列化成
+// Turn/Prompt/Paths 大写 key，前端 cp.turn 读不到 → 回退选择器显示空轮次、
+// turn 校准失效（回溯误删/总结空操作等连锁问题）。
 type Meta struct {
-	Turn   int
-	Time   time.Time
-	Prompt string
-	Paths  []string
+	Turn   int       `json:"turn"`
+	Time   time.Time `json:"time"`
+	Prompt string    `json:"prompt,omitempty"`
+	Paths  []string  `json:"paths,omitempty"`
 }
 
 // Store holds a session's checkpoints in memory and, when dir is set, persists one

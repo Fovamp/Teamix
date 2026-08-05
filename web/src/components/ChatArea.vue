@@ -5,12 +5,14 @@ import { stripSystemTags, el, fmtTok, fmtElapsed } from "../utils/format"
 import { SLASH_CMDS, SCOPES } from "../utils/constants"
 import { useVerticalDragResize } from "../composables/useDragResize"
 import { useSSE } from "../composables/useSSE"
+import { useToast } from "../composables/useToast"
 import { createCards } from "../lib/cards"
 import MessageItem from "./MessageItem.vue"
 
 // ── helpers（见 utils/format.ts）──
 
 // ── state ──
+const { toast } = useToast()
 const messages = ref<any[]>([])
 const inputText = ref("")
 const pastedBlocks = ref<{ label: string; text: string }[]>([])
@@ -87,7 +89,6 @@ let slashFiltered: any[] = []
 // chat history
 let chatHistory: string[] = []
 let chatHistoryIndex = 0
-let firstTurnDone = false
 const hasVisibleHistory = ref(false)
 let checkpointCount = 0
 
@@ -119,7 +120,7 @@ onMounted(() => {
   connectSSE()
   loadProjectInfo()
   loadWorkflow()
-  window.addEventListener("open-rewind-picker", () => { openRewindPicker() })
+  window.addEventListener("open-rewind-picker", ((e: CustomEvent) => { openRewindPicker(e?.detail) }) as any)
   window.addEventListener("model-changed", () => { setTimeout(fetchStatus, 500) })
   window.addEventListener("new-session-requested", () => { handleNewSession() })
   window.addEventListener("session-resumed", ((e: CustomEvent) => {
@@ -233,7 +234,6 @@ function handleNewSession() {
     hasVisibleHistory.value = false
     chatHistory = []
     chatHistoryIndex = 0
-    firstTurnDone = false
     checkpointCount = 0
     todosState = []
     todosDismissed = false
@@ -265,17 +265,20 @@ async function loadHistory() {
 
 function refreshTurnBase() {
   api.checkpoints().then((cps: any) => {
-    // checkpoints 为空时不覆盖 turnCounter（避免把有效计数重置成 -1 导致后续 turn 错乱）
-    if (!Array.isArray(cps) || cps.length === 0) return
+    if (!Array.isArray(cps)) return
     let base = 0
     for (const c of cps) { const t = Number(c?.turn); if (!isNaN(t) && t >= base) base = t + 1 }
-    turnCounter = base - 1 // turn_started +1 后 = base（后端下一个 checkpoint turn）
+    // checkpoints 为空时（fork 新分支未继承 / summarize/compact 清空）不给最新消息
+    // 兜底 turn=0：总结/回溯会把它当成 turn 0 而误删全部上下文。此时按钮仍显示，
+    // 但点击会提示"无可操作轮次"；分叉走 tip 分叉（turn=-1），不依赖 checkpoint。
+    const hasCkpt = base - 1 >= 0
+    turnCounter = base - 1 // 无 checkpoint 时 -1，turn_started +1 后 0（与后端新分支编号一致）
     // 刷新页面后：给最新一条 assistant 历史消息补上 turn（= 当前最后一个 checkpoint turn），
     // 使操作按钮在刷新后仍然可用（失误刷新也能继续分叉/总结/回溯）
     const ms = messages.value
     for (let i = ms.length - 1; i >= 0; i--) {
       if (ms[i].role === 'assistant') {
-        ms[i].turn = base - 1
+        if (hasCkpt) ms[i].turn = base - 1
         lastAssistantIdx.value = i
         break
       }
@@ -406,7 +409,9 @@ const sse = useSSE({
           fetchTodos()
           refreshCheckpointAvailability()
           loadWorkflow()
-          if (!firstTurnDone && !e.err) { firstTurnDone = true; loadSessions() }
+          // 每次 turn_done 都刷新会话列表：标题（第一条用户消息）与轮数在
+          // AI 输出完成后才会写入文件，只刷新一次会停留在旧标题/旧轮数。
+          if (!e.err) loadSessions()
           if (pendingPages.length > 0 && !e.err) { cards.showOpenPageCard(pendingPages); pendingPages = [] }
           if (stageCompletePending && !e.err) { cards.showStageApproval(stageCompleteReason) }
           // Fallback: check accumulated text in case marker was split across chunks
@@ -694,18 +699,32 @@ async function doStop() {
 }
 
 // ── Rewind picker ──
-function openRewindPicker() {
+// initialScope 可选：消息按钮"回溯"传 conversation 下标（1），左侧栏"回退"不传（默认 both=0）
+function openRewindPicker(initialScope?: number) {
   fetch('/checkpoints?token=' + encodeURIComponent(localStorage.getItem('teamix_token') || ''))
     .then(r => r.json()).then(cps => {
       checkpointCount = Array.isArray(cps) ? cps.length : 0
       if (!cps || cps.length === 0) { cards.showNotice('暂无可用检查点', 'warn'); return }
-      rewindCheckpoints = cps; rewindStage = 0; rewindSelected = 0; rewindScope = 0
+      rewindCheckpoints = cps; rewindStage = 0; rewindSelected = 0
+      rewindScope = typeof initialScope === 'number' ? initialScope : 0
       rewindKey.value++; showRewind.value = true
     }).catch(() => { })
 }
 
 function selectRewindCheckpoint(i: number) { rewindSelected = i; rewindKey.value++ }
 function advanceRewindStage() { rewindStage = 1; rewindScope = 0; rewindKey.value++ }
+
+// cleanTurnPrompt 从 checkpoint 的 prompt 里提取可读的用户输入标题：
+// Teamix 在 workflow 阶段会把 "[Workflow Stages]...---\n" 前缀拼到用户输入前，
+// 直接展示会把标题污染成工作流指令。取最后一个 "---" 之后的部分；
+// 再剥离 compose 注入的开头 transient 语言块（<response-language>/<reasoning-language>）。
+function cleanTurnPrompt(p: string): string {
+  if (!p) return ""
+  const idx = p.lastIndexOf("---")
+  let s = (idx >= 0 ? p.slice(idx + 3) : p).trim()
+  s = s.replace(/^<(?:response|reasoning)-language>[\s\S]*?<\/(?:response|reasoning)-language>\s*/i, "").trim()
+  return s.slice(0, 80) + (s.length > 80 ? "…" : "")
+}
 
 function applyRewind() {
   const cp = rewindCheckpoints[rewindSelected]
@@ -714,15 +733,27 @@ function applyRewind() {
   const t = localStorage.getItem('teamix_token')
   if (!t) return
   const q = '?token=' + encodeURIComponent(t)
-  const done = (r: any) => { if (r && r.ok) window.dispatchEvent(new CustomEvent('teamix-session-changed')) }
+  const toastMsg = { fork: '分叉失败', sumfrom: '总结失败', sumupto: '总结失败' } as Record<string, string>
+  const okMsg = { fork: '分叉成功，已切换到新会话', sumfrom: '已从此轮开始总结', sumupto: '已总结到此轮', conversation: `已回退到第 ${cp.turn} 轮（对话）`, code: `已回退到第 ${cp.turn} 轮（代码）`, both: `已回退到第 ${cp.turn} 轮` } as Record<string, string>
+  const done = (r: any) => {
+    if (r && r.ok) {
+      window.dispatchEvent(new CustomEvent('teamix-session-changed'))
+      toast(okMsg[sc.scope] || '操作成功', 'success')
+      return
+    }
+    // 失败：读取后端错误文本并提示（fork/rewind/summarize 失败均返回 HTTP 4xx）
+    if (r && !r.ok) {
+      r.text().then((txt: string) => toast((txt && txt.trim()) || (toastMsg[sc.scope] || '操作失败'), 'error', 6000)).catch(() => {})
+    }
+  }
   if (sc.scope === 'fork') {
-    fetch('/fork' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, name: '' }) }).then(done).catch(() => {})
+    fetch('/fork' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, name: '' }) }).then(done).catch(() => { toast('网络错误，操作未执行', 'error') })
   } else if (sc.scope === 'sumfrom') {
-    fetch('/summarize' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, mode: 'from' }) }).then(done).catch(() => {})
+    fetch('/summarize' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, mode: 'from' }) }).then(done).catch(() => { toast('网络错误，操作未执行', 'error') })
   } else if (sc.scope === 'sumupto') {
-    fetch('/summarize' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, mode: 'upto' }) }).then(done).catch(() => {})
+    fetch('/summarize' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, mode: 'upto' }) }).then(done).catch(() => { toast('网络错误，操作未执行', 'error') })
   } else {
-    fetch('/rewind' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, scope: sc.scope }) }).then(done).catch(() => {})
+    fetch('/rewind' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: cp.turn, scope: sc.scope }) }).then(done).catch(() => { toast('网络错误，操作未执行', 'error') })
   }
 }
 
@@ -1277,8 +1308,8 @@ defineExpose({ loadSessions, fetchStatus, fetchNotifications })
             class="rewind-picker__item" :class="{ 'rewind-picker__item--active': i === rewindSelected }"
             @click="selectRewindCheckpoint(i); advanceRewindStage()">
             <span class="rewind-picker__turn">#{{ cp.turn }}</span>
-            <span class="rewind-picker__prompt">{{ (cp.prompt || '').slice(0, 80) }}</span>
-            <span class="rewind-picker__files">{{ cp.files || 0 }} 个文件</span>
+            <span class="rewind-picker__prompt" :title="cleanTurnPrompt(cp.prompt || '')">{{ cleanTurnPrompt(cp.prompt || '') || '(空轮次)' }}</span>
+            <span class="rewind-picker__files">{{ cp.paths ? cp.paths.length : 0 }} 个文件</span>
           </div>
         </div>
         <div class="rewind-picker__foot">

@@ -291,13 +291,23 @@ func (ts *TeamixServer) handleFork(w http.ResponseWriter, r *http.Request, u *us
 	}
 	// 对齐 desktop 分叉语义：分叉后自动切换到新会话，新会话继承分叉轮的完整上下文。
 	// 未指定名字时继承当前会话的标题（新分支看起来与原会话一致）。
+	// turn < 0（前端"分叉会话"按钮）走 tip 分叉 Branch：从最新消息分叉、
+	// 继承全部轮次，不依赖前端 turn 计数（turn_started 事件缺失等会造成错位）。
 	name := body.Name
 	if name == "" {
 		if meta, ok, _ := reasonixAgent.LoadBranchMeta(u.ctrl.SessionPath()); ok && meta.Name != "" {
 			name = meta.Name
 		}
 	}
-	path, err := u.ctrl.ForkNamed(body.Turn, name)
+	var (
+		path string
+		err  error
+	)
+	if body.Turn < 0 {
+		path, err = u.ctrl.Branch(name)
+	} else {
+		path, err = u.ctrl.ForkNamed(body.Turn, name)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -320,7 +330,9 @@ func (ts *TeamixServer) handleSummarize(w http.ResponseWriter, r *http.Request, 
 			err = u.ctrl.SummarizeFrom(r.Context(), *body.Turn)
 		}
 		if err != nil {
-			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+			// 与 fork/rewind 一致：失败用 HTTP 400 返回，前端才能 toast 出原因
+			// （200 + {ok:false} 会让前端当成成功而静默）。
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	} else {
@@ -601,14 +613,53 @@ func (ts *TeamixServer) handleCheckpoints(w http.ResponseWriter, _ *http.Request
 }
 
 
+// branchView 在 BranchInfo 基础上补父会话标题，前端分支弹窗可显示
+// "分叉自 <父标题>" 而不是无意义的父 ID 前几位。
+type branchView struct {
+	reasonixAgent.BranchInfo
+	ParentTitle string `json:"parent_title,omitempty"`
+}
+
 func (ts *TeamixServer) handleBranches(w http.ResponseWriter, _ *http.Request, u *userSession) {
 	branches, err := u.ctrl.Branches()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	sessDir := u.ctrl.SessionDir()
+	parentTitles := map[string]string{}
+	out := make([]branchView, 0, len(branches))
+	for _, b := range branches {
+		v := branchView{BranchInfo: b}
+		if pid := b.ParentID; pid != "" {
+			title, ok := parentTitles[pid]
+			if !ok {
+				title = sessionPreviewTitle(sessDir, pid)
+				parentTitles[pid] = title
+			}
+			v.ParentTitle = title
+		}
+		out = append(out, v)
+	}
 	tree := u.ctrl.BranchTreeText()
-	writeJSON(w, map[string]any{"branches": branches, "tree": tree})
+	writeJSON(w, map[string]any{"branches": out, "tree": tree})
+}
+
+// sessionPreviewTitle 返回父会话（按 BranchID 定位）的第一条用户消息作为标题，
+// 供分支弹窗标注父分支。找不到会话或没有消息时回退为父 ID。
+func sessionPreviewTitle(sessDir, parentID string) string {
+	if sessDir == "" || parentID == "" {
+		return parentID
+	}
+	path := filepath.Join(sessDir, parentID+".jsonl")
+	first, turns := reasonixAgent.SessionPreview(path)
+	if turns <= 0 || first == "" {
+		return parentID
+	}
+	if r := []rune(first); len(r) > 60 {
+		return string(r[:60]) + "…"
+	}
+	return first
 }
 
 // handleBranchSwitch 切换分支：直接调 ctrl.SwitchBranch，不走 agent 对话

@@ -304,7 +304,23 @@ func ClearSessionInFlightTurn(sessionPath string) error {
 	return SaveBranchMetaPreserveUpdated(sessionPath, m)
 }
 
+// ListBranches returns the visible session branches in dir, excluding recovery
+// branches (see ListRecoveryBranches). Picker callers never show a recovery
+// fork as a regular session, so it stays filtered out here.
 func ListBranches(dir string) ([]BranchInfo, error) {
+	return listBranches(dir, false)
+}
+
+// ListRecoveryBranches returns only the recovery branches in dir (files named
+// *-recovery-*.jsonl). Crash-recovery bookkeeping — interruptedTurnContinued
+// OnRecoveryBranch — needs to see exactly these to tell a turn that kept
+// running on a recovery fork from a genuinely crashed turn, so it must not go
+// through ListBranches, which deliberately hides them.
+func ListRecoveryBranches(dir string) ([]BranchInfo, error) {
+	return listBranches(dir, true)
+}
+
+func listBranches(dir string, includeRecovery bool) ([]BranchInfo, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -314,14 +330,22 @@ func ListBranches(dir string) ([]BranchInfo, error) {
 	}
 	var out []BranchInfo
 	for _, e := range entries {
-		if e.IsDir() || !store.IsSessionTranscriptName(e.Name()) {
+		if e.IsDir() {
 			continue
+		}
+		name := e.Name()
+		if !store.IsSessionTranscriptName(name) {
+			// Recovery branches fail IsSessionTranscriptName on purpose
+			// (-recovery-); only the bookkeeping path opts back in.
+			if !(includeRecovery && strings.Contains(name, "-recovery-")) {
+				continue
+			}
 		}
 		info, err := e.Info()
 		if err != nil {
 			continue
 		}
-		path := filepath.Join(dir, e.Name())
+		path := filepath.Join(dir, name)
 		if !IsVisibleSession(path) {
 			continue
 		}

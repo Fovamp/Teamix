@@ -121,7 +121,10 @@ export const api = {
     get("/teamix/notifications" + (project ? "?project=" + encodeURIComponent(project) : "")),
   notificationRead: (id: string, project?: string): Promise<any> =>
     post("/teamix/notifications/read", { id, project: project || "" }),
-
+  // 会话总结（生成/查看当前会话的人读摘要，不改动会话本身）
+  summaries: (): Promise<any[]> => get("/teamix/summaries"),
+  summarizeSession: (instructions?: string): Promise<any[]> =>
+    post("/teamix/summaries", { instructions: instructions || "" }),
   // Workflow
   workflow: (): Promise<import("../types").WorkflowState> => get("/teamix/workflow"),
   workflowTemplates: (): Promise<any> => get("/teamix/workflows/templates"),

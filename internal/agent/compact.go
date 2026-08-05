@@ -355,6 +355,23 @@ func (a *Agent) SummarizeUpTo(ctx context.Context, toIdx int) error {
 	return nil
 }
 
+// SummarizeConversation produces a human-readable summary of the whole
+// conversation (everything after the system prompt) WITHOUT modifying the
+// session — unlike SummarizeUpTo/From or Compact it never rewrites the message
+// log. Used by the Teamix UI's "会话总结" panel, which shows past summaries for
+// the current session. Refuses an empty conversation.
+func (a *Agent) SummarizeConversation(ctx context.Context, instructions string) (string, error) {
+	msgs := a.session.Messages
+	head := 0
+	if len(msgs) > 0 && msgs[0].Role == provider.RoleSystem {
+		head = 1
+	}
+	if len(msgs) <= head {
+		return "", fmt.Errorf("conversation is empty")
+	}
+	return a.summarize(ctx, msgs[head:], instructions)
+}
+
 // IsCompactionSummary reports whether m is a rolling digest inserted by a
 // prior compaction fold. Exported for session owners outside this package
 // (e.g. the guardian) whose turn rollback must not treat a digest as a

@@ -1,4 +1,4 @@
-﻿package serve
+package serve
 
 import (
 	"context"
@@ -38,17 +38,17 @@ type userSession struct {
 }
 
 type TeamixServer struct {
-	mu         sync.RWMutex
-	sessions   map[string]*userSession
-	nameToTok  map[string]string
-	serveCfg   config.ServeConfig
-	modelRef   string
-	profile    string
+	mu            sync.RWMutex
+	sessions      map[string]*userSession
+	nameToTok     map[string]string
+	serveCfg      config.ServeConfig
+	modelRef      string
+	profile       string
 	workspaceRoot string
-	globalCfg  *teamixconfig.GlobalConfig
-	sharedHost *plugin.Host
-	keyPool    *keypool.Pool
-	mux        http.Handler
+	globalCfg     *teamixconfig.GlobalConfig
+	sharedHost    *plugin.Host
+	keyPool       *keypool.Pool
+	mux           http.Handler
 
 	// clone 进度追踪：key = "user/project" → 当前传输进度（供前端进度条轮询）
 	cloneMu   sync.Mutex
@@ -150,7 +150,7 @@ func (ts *TeamixServer) InitUserWorkspace(name string) (string, error) {
 		}
 	}
 
-		// Write the user's reasonix.toml at users/<name>/reasonix.toml (project root),
+	// Write the user's reasonix.toml at users/<name>/reasonix.toml (project root),
 	// which is where config.LoadForRoot() actually reads it from. The old
 	// .reasonix/ sub-directory location was never loaded, so [skills].paths and
 	// [[plugins]] silently did nothing.
@@ -269,7 +269,6 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 	slog.Info("teamix: user logged in", "name", name, "token_prefix", token[:8], "workspace", userRoot)
 	return sess, true, nil
 }
-
 
 func (ts *TeamixServer) withUser(next func(http.ResponseWriter, *http.Request, *userSession)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -543,6 +542,8 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("GET /teamix/notifications", ts.withUser(ts.handleNotifications))
 	mux.HandleFunc("POST /teamix/notifications/read", ts.withUser(ts.handleNotificationRead))
 	mux.HandleFunc("POST /teamix/notifications/create", ts.withUser(ts.handleNotificationCreate))
+	mux.HandleFunc("GET /teamix/summaries", ts.withUser(ts.handleSummaries))
+	mux.HandleFunc("POST /teamix/summaries", ts.withUser(ts.handleSummaries))
 	mux.HandleFunc("POST /submit", ts.withUser(ts.handleSubmit))
 	mux.HandleFunc("POST /cancel", ts.withUser(ts.handleCancel))
 	mux.HandleFunc("POST /approve", ts.withUser(ts.handleApprove))

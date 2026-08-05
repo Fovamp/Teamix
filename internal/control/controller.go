@@ -620,6 +620,64 @@ func ckptDir(sessionPath string) string {
 	return store.SessionCheckpointDir(sessionPath)
 }
 
+// copyCheckpointDir 把 src 目录下的 checkpoint 文件（turn-*.json）复制到 dst，
+// 供 fork 出的分支继承主线的轮次编号与回退边界。src 不存在或无 checkpoint 时
+// 返回 nil（新分支从 0 编号，与旧行为一致）。
+func copyCheckpointDir(src, dst string) error {
+	if src == "" || dst == "" || src == dst {
+		return nil
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(src, e.Name()))
+		if err != nil {
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(dst, e.Name()), b, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// forkCheckpointDir 把 src 目录的 checkpoint 复制到 dst，但只保留
+// turn <= forkTurn 的轮次。中间轮分叉时分支消息只继承到第 forkTurn 轮结束
+// （end = 主线第 forkTurn+1 轮的 MsgIndex），主线上更晚的 checkpoint 边界
+// 恰好等于分支消息总数：若不裁剪，"总结到此轮/回溯"会把整个分支误判为
+// 可压缩区域，整段对话被压成一条摘要。tip 分叉（Branch）复制全量消息，
+// 不经过本函数。
+func forkCheckpointDir(src, dst string, forkTurn int) error {
+	if err := copyCheckpointDir(src, dst); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(dst)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		var t int
+		if n, _ := fmt.Sscanf(e.Name(), "turn-%d.json", &t); n == 1 && t > forkTurn {
+			_ = os.Remove(filepath.Join(dst, e.Name()))
+		}
+	}
+	return nil
+}
+
 // rebindCheckpoints points the store at the (possibly new) session, loading any
 // checkpoints already on disk, and resets the turn boundaries. Called on
 // construction and whenever the session path changes (NewSession/Resume/SetSessionPath).
@@ -2948,6 +3006,14 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 	}); err != nil {
 		return "", c.rewindFail(err)
 	}
+	// 继承主线的 checkpoint（turn-N.json）：分支的消息是主线第 N 轮的副本，
+	// 若不带 checkpoint 过去，分支的轮次编号会从 0 重新开始，与继承的消息
+	// 错位，且分支内无法立即 fork/rewind（checkpoint 目录为空）。只继承
+	// turn <= N 的轮次——更晚的 checkpoint 边界超出分支消息数，会让
+	// "总结到此轮"把整个分支压缩成摘要。
+	if err := forkCheckpointDir(ckptDir(parentPath), ckptDir(newPath), turn); err != nil {
+		slog.Warn("controller: copy checkpoints to fork", "err", err)
+	}
 	if switchToFork {
 		// See snapshotMu: the swap must not interleave with an in-flight save.
 		c.snapshotMu.Lock()
@@ -3027,6 +3093,11 @@ func (c *Controller) Branch(name string) (string, error) {
 		SchemaVersion:    agent.BranchMetaCountsVersion,
 	}); err != nil {
 		return "", c.rewindFail(err)
+	}
+	// Tip 分叉同样继承主线的 checkpoint：否则分支轮次从 0 重新编号，与
+	// 继承的消息错位，且分支内无法立即 rewind / 从中间轮分叉。
+	if err := copyCheckpointDir(ckptDir(parentPath), ckptDir(newPath)); err != nil {
+		slog.Warn("controller: copy checkpoints to branch", "err", err)
 	}
 	// See snapshotMu: the swap must not interleave with an in-flight save.
 	c.snapshotMu.Lock()
@@ -3161,6 +3232,16 @@ func (c *Controller) SummarizeFrom(ctx context.Context, turn int) error {
 
 func (c *Controller) SummarizeUpTo(ctx context.Context, turn int) error {
 	return c.summarizeAt(ctx, turn, false)
+}
+
+// SessionSummary generates a human-readable summary of the current session's
+// conversation without modifying the session — unlike Compact/SummarizeUpTo it
+// never rewrites the message log. Used by the Teamix UI's "会话总结" panel.
+func (c *Controller) SessionSummary(ctx context.Context, instructions string) (string, error) {
+	if c.executor == nil {
+		return "", fmt.Errorf("no active session")
+	}
+	return c.executor.SummarizeConversation(ctx, instructions)
 }
 
 func (c *Controller) summarizeAt(ctx context.Context, turn int, from bool) error {
@@ -3756,7 +3837,7 @@ func interruptedTurnContinuedOnRecoveryBranch(path string, marker *agent.InFligh
 	if marker == nil {
 		return false
 	}
-	branches, err := agent.ListBranches(filepath.Dir(path))
+	branches, err := agent.ListRecoveryBranches(filepath.Dir(path))
 	if err != nil {
 		return false
 	}

@@ -125,6 +125,7 @@ type SessionHistory interface {
 	CompactRatio() float64
 	SummarizeFrom(ctx context.Context, turn int) error
 	SummarizeUpTo(ctx context.Context, turn int) error
+	SessionSummary(ctx context.Context, instructions string) (string, error)
 }
 
 // MemoryControl covers session/project memory reads and mutations.

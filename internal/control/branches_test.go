@@ -207,11 +207,13 @@ func TestSubmitBranchHonorsNumericTurnTarget(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("load branch meta ok=%v err=%v", ok, err)
 	}
-	if meta.ForkTurn != 1 || meta.ForkMessageIndex != 3 || meta.Name != "experiment" {
-		t.Fatalf("meta = %+v, want turn 1, msg index 3, name experiment", meta)
+	// 新语义（继承含分叉轮）：fork turn 1 继承到该轮结束。bound 里只有 turn 1
+	// 的 boundary（索引 3），turn 1 是最后一轮 → 继承全部消息（索引 4）。
+	if meta.ForkTurn != 1 || meta.ForkMessageIndex != 4 || meta.Name != "experiment" {
+		t.Fatalf("meta = %+v, want turn 1, msg index 4, name experiment", meta)
 	}
-	if got := len(c.History()); got != 3 {
-		t.Fatalf("forked history length = %d, want 3", got)
+	if got := len(c.History()); got != 4 {
+		t.Fatalf("forked history length = %d, want 4 (fork turn inherits the forked turn)", got)
 	}
 }
 
