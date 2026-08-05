@@ -355,13 +355,13 @@ func (a *Agent) SummarizeUpTo(ctx context.Context, toIdx int) error {
 	return nil
 }
 
-// conversationSummarySystemPrompt 是"会话总结"（给人看）的提示词：要求自然
-// 语言的平实总结，不套压缩用的分类结构（Standing facts & constraints 等）。
-// 分类结构是给模型续跑用的简报，人读总结不需要，反而会引导总结漏掉结构外的内容。
+// conversationSummarySystemPrompt 是"会话总结"（给人看）的提示词：要求
+// 结构化的 title/description 输出（标签固定，后端只解析不猜测），并保持
+// 平实自然语言，不套压缩用的分类结构（Standing facts & constraints 等）。
 const conversationSummarySystemPrompt = `You are writing a summary of a conversation for a human reader.
-Keep it plain and natural — a short paragraph or a few short paragraphs.
-Do not invent headings, sections or bullet lists unless they genuinely help readability.
-Just say what the conversation was about, the key points, and anything still open.`
+Output EXACTLY in this format, nothing else:
+<title>a short title, at most 20 characters, no "summary" prefix</title>
+<description>a plain natural-language summary — a short paragraph or a few short paragraphs; do not invent headings, sections or bullet lists</description>`
 
 // SummarizeConversation produces a human-readable summary of the whole
 // conversation (everything after the system prompt) WITHOUT modifying the

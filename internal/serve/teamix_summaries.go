@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -133,14 +134,14 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		instructions := strings.TrimSpace(body.Instructions)
 		if instructions == "" {
-			instructions = "第一行写一个简短标题（不超过 20 字，直接写标题本身，不要加“对话总结”等前缀），空一行，然后用自然语言总结对话内容，不要分门别类。"
+			instructions = "用自然语言总结对话内容，不要分门别类。"
 		}
 		content, err := u.ctrl.SessionSummary(r.Context(), instructions)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("生成总结失败: %v", err), http.StatusBadGateway)
 			return
 		}
-		title, rest := splitSummaryTitle(content)
+		title, rest := parseSummaryOutput(content)
 		// load-modify-save 加锁，避免并发 POST 互相覆盖丢数据。
 		ts.mu.Lock()
 		sums := ts.loadSessionSummaries(u.name, sessionID)
@@ -190,46 +191,30 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, ts.allSummaries(u))
 }
 
-// splitSummaryTitle 把 AI 总结的第一段（空行前的第一行）拆成标题，其余作为正文。
-// 要求：标题后必须跟一个空行才视为有标题（提示词要求"第一行标题，空一行，然后正文"），
-// 标题超过 20 字视为模型没按格式输出，整段当正文。同时剥离 markdown 标题前缀
-// （"### 关于…" → "关于…"）。
-func splitSummaryTitle(s string) (title, rest string) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "", ""
-	}
-	head, remainder, hasBlank := strings.Cut(s, "\n\n")
-	first := strings.TrimSpace(head)
-	first = stripMarkdownHeading(first)
-	first = stripSummaryTitlePrefix(first)
-	if !hasBlank || first == "" || len([]rune(first)) > 20 {
-		// 无空行分隔 / 首行过长：整段当正文，不设标题
-		return "", s
-	}
-	return first, strings.TrimSpace(remainder)
-}
+// parseSummaryOutput 解析 AI 按固定格式输出的总结：
+//
+//	<title>…</title>
+//	<description>…</description>
+//
+// 只按标签取内容，不做任何字符串猜测/剥离；标签缺失（模型没按格式）时
+// 整段当正文、不设标题，由前端用正文开头做回退标题。
+var (
+	summaryTitleRe = regexp.MustCompile(`(?s)<title>\s*(.*?)\s*</title>`)
+	summaryDescRe  = regexp.MustCompile(`(?s)<description>\s*(.*?)\s*</description>`)
+)
 
-// stripSummaryTitlePrefix 去掉标题里常见的"对话总结："类前缀，
-// 标题应直接是内容本身（"对话总结：猫娘助理的自我介绍" → "猫娘助理的自我介绍"）。
-func stripSummaryTitlePrefix(s string) string {
-	for _, p := range []string{"对话总结：", "对话总结:", "会话总结：", "会话总结:", "总结：", "总结:"} {
-		if strings.HasPrefix(s, p) {
-			return strings.TrimSpace(strings.TrimPrefix(s, p))
-		}
+func parseSummaryOutput(content string) (title, rest string) {
+	tm := summaryTitleRe.FindStringSubmatch(content)
+	dm := summaryDescRe.FindStringSubmatch(content)
+	if len(tm) == 2 && strings.TrimSpace(tm[1]) != "" {
+		title = strings.TrimSpace(tm[1])
 	}
-	return s
-}
-
-// stripMarkdownHeading 去掉开头的 markdown 标题标记（# ## ### …）。
-func stripMarkdownHeading(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" || s[0] != '#' {
-		return s
+	if len(dm) == 2 && strings.TrimSpace(dm[1]) != "" {
+		rest = strings.TrimSpace(dm[1])
 	}
-	i := 0
-	for i < len(s) && s[i] == '#' {
-		i++
+	if title == "" && rest == "" {
+		// 完全没有可用标签：整段当正文，不猜标题
+		return "", strings.TrimSpace(content)
 	}
-	return strings.TrimLeft(s[i:], " \t")
+	return title, rest
 }
