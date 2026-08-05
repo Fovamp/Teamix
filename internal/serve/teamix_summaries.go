@@ -66,9 +66,12 @@ func (ts *TeamixServer) loadSessionSummaries(user, sessionID string) []sessionSu
 	return out
 }
 
-func (ts *TeamixServer) saveSessionSummaries(user, sessionID string, sums []sessionSummary) {
-	data, _ := json.MarshalIndent(sums, "", "  ")
-	_ = os.WriteFile(ts.summaryFile(user, sessionID), data, 0o644)
+func (ts *TeamixServer) saveSessionSummaries(user, sessionID string, sums []sessionSummary) error {
+	data, err := json.MarshalIndent(sums, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(ts.summaryFile(user, sessionID), data, 0o644)
 }
 
 // allSummaries 返回该用户所有会话的总结，按时间倒序，每条带来源会话
@@ -118,14 +121,14 @@ func (ts *TeamixServer) allSummaries(u *userSession) []sessionSummary {
 // handleSummaries: GET 返回该用户所有会话的总结（每条标注来源会话）；
 // POST 生成一条新的会话总结（AI 摘要，不改动会话本身）并追加到当前会话；
 // DELETE 按 id 删除（跨会话文件扫描）。正在运行轮次时拒绝 POST，避免与
-// provider 通道冲突。
+// provider 通道冲突。GET 不要求当前会话存在（查看历史总结不依赖活动会话）。
 func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, u *userSession) {
 	sessionID := strings.TrimSuffix(filepath.Base(u.ctrl.SessionPath()), ".jsonl")
-	if sessionID == "" || sessionID == "." || sessionID == string(filepath.Separator) {
-		http.Error(w, "no active session", http.StatusBadRequest)
-		return
-	}
 	if r.Method == http.MethodPost {
+		if sessionID == "" || sessionID == "." || sessionID == string(filepath.Separator) {
+			http.Error(w, "no active session", http.StatusBadRequest)
+			return
+		}
 		if u.ctrl.Running() {
 			http.Error(w, "a turn is running; wait for it to finish", http.StatusConflict)
 			return
@@ -155,7 +158,11 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 			Content:     content,
 			SessionID:   sessionID,
 		})
-		ts.saveSessionSummaries(u.name, sessionID, sums)
+		if err := ts.saveSessionSummaries(u.name, sessionID, sums); err != nil {
+			ts.mu.Unlock()
+			http.Error(w, fmt.Sprintf("保存总结失败: %v", err), http.StatusInternalServerError)
+			return
+		}
 		ts.mu.Unlock()
 		writeJSON(w, ts.allSummaries(u))
 		return
@@ -184,7 +191,7 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 				kept = append(kept, s)
 			}
 			if changed {
-				ts.saveSessionSummaries(u.name, sid, kept)
+				_ = ts.saveSessionSummaries(u.name, sid, kept)
 			}
 		}
 		ts.mu.Unlock()

@@ -23,6 +23,7 @@ const showWorkflows = ref(false)
 const showSettings = ref(false)
 const showProject = ref(false)
 const showSummaries = ref(false)
+const summarySeed = ref<any[] | null>(null) // 消息按钮"总结"刚生成的结果，直接喂给面板
 
 // 左右两侧拖拽竖线（resize-divider）：
 // 直接在模板中渲染，随 .app 一起挂载，无登录时序问题；
@@ -72,7 +73,12 @@ onMounted(() => {
   window.addEventListener('open-summaries', openSummaries)
 })
 
-function openSummaries() { showSummaries.value = true }
+function openSummaries(e?: Event) {
+  const d = (e as CustomEvent)?.detail
+  // 有刚生成的结果就直接用（避免面板重新拉取的时序问题），否则清空等面板自己拉
+  summarySeed.value = Array.isArray(d) && d.length ? d : null
+  showSummaries.value = true
+}
 
 onUnmounted(() => {
   document.removeEventListener('mousemove', onMove)
@@ -96,7 +102,7 @@ onUnmounted(() => {
     <WorkflowsModal :visible="showWorkflows" @close="showWorkflows = false" />
     <SettingsModal :visible="showSettings" @close="showSettings = false" />
     <ProjectModal :visible="showProject" @close="showProject = false" @selected="onProjectSelected" />
-    <SummaryModal :visible="showSummaries" @close="showSummaries = false" />
+    <SummaryModal :visible="showSummaries" :seed="summarySeed" @close="showSummaries = false" />
     <ToastContainer />
   </div>
 </template>

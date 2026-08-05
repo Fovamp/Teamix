@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from "vue"
 import { api } from "../api"
-const props = defineProps<{ visible: boolean }>()
+const props = defineProps<{ visible: boolean; seed?: any[] | null }>()
 const emit = defineEmits<{ (e: "close"): void }>()
 const summaries = ref<any[]>([])
 const loading = ref(false)
@@ -24,7 +24,16 @@ async function load() {
   loading.value = false
 }
 
-watch(() => props.visible, (v) => { if (v) load() })
+watch(() => props.visible, (v) => {
+  if (v) {
+    // 消息按钮"总结"刚生成的结果优先直接渲染，避免重新拉取的时序问题
+    if (Array.isArray(props.seed) && props.seed.length) {
+      summaries.value = props.seed
+      return
+    }
+    load()
+  }
+})
 
 async function generate() {
   if (generating.value) return

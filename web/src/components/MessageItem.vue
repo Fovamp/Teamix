@@ -49,8 +49,11 @@ function runAction(action: "fork" | "summary" | "rewind") {
     })
       .then(async (r) => {
         if (r.ok) {
+          let data: any = null
+          try { data = await r.json() } catch { /* 非 JSON */ }
           toast("会话总结已生成", "success")
-          window.dispatchEvent(new CustomEvent("open-summaries"))
+          // 把生成结果直接带给总结面板，避免依赖面板打开后的重新拉取
+          window.dispatchEvent(new CustomEvent("open-summaries", { detail: data }))
           return
         }
         // 失败：后端 http.Error 的错误文本直接 toast 显示
