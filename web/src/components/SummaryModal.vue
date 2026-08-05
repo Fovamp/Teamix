@@ -96,13 +96,12 @@ function fmtTime(t: string): string {
         <div style="min-width:0;flex:1">
           <div class="summary-card__title">{{ summaryTitle(s) }}</div>
           <div class="branch-item__meta">{{ fmtTime(s.time) }}</div>
-          <div class="summary-card__preview">{{ s.content }}</div>
+          <div class="summary-card__body">{{ s.content }}</div>
         </div>
         <div class="summary-card__actions" @click.stop>
           <button type="button" class="branch-item__btn" title="展开查看" @click="full = s">⛶</button>
           <button type="button" class="branch-item__btn summary-card__del" title="删除" @click="confirmDel = s.id">&times;</button>
         </div>
-        <div class="summary-card__tip">{{ s.content }}</div>
       </div>
     </div>
   </div>
@@ -149,45 +148,23 @@ function fmtTime(t: string): string {
 }
 .summary-card:hover { border-color: var(--accent); background: var(--card-hover); }
 .summary-card__title { font-size: 13px; font-weight: 600; color: var(--fg); }
-.summary-card__preview {
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--muted);
-  margin-top: 4px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
 .summary-card__actions { display: flex; gap: 4px; flex-shrink: 0; }
 .summary-card__del { color: var(--danger); }
-/* 悬浮预览：鼠标停在卡片上时显示完整内容 */
-.summary-card__tip {
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 8px);
-  transform: translateX(-50%);
-  width: min(360px, 72vw);
-  max-height: 240px;
-  overflow-y: auto;
-  background: var(--panel, #14181f);
-  border: 1px solid var(--border-strong, rgba(255,255,255,.14));
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.5);
-  padding: 10px 12px;
+/* 内容默认折叠，悬浮时直接在卡片内展开（不弹浮层） */
+.summary-card__body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height .25s ease;
   font-size: 12px;
   line-height: 1.65;
-  color: var(--fg-2);
+  color: var(--muted);
   white-space: pre-wrap;
   word-break: break-word;
-  z-index: 20;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .12s;
 }
-.summary-card:hover .summary-card__tip { opacity: 1; }
+.summary-card:hover .summary-card__body {
+  max-height: 360px;
+  overflow-y: auto;
+}
 
 .summary-fullscreen {
   position: fixed;
