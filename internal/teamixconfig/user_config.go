@@ -11,8 +11,8 @@ import (
 // UserConfig 对应用户私有配置 users/<name>/.teamix/config.yaml
 type UserConfig struct {
 	Git         GitConfig    `yaml:"git"`
-	MCP         []PluginRef  `yaml:"mcp"`
-	Skills      []SkillRef   `yaml:"skills"`
+	MCP         []PluginRef  `yaml:"mcp,omitempty"`    // 兼容遗留：新代码写 .reasonix/mcp-private.json
+	Skills      []SkillRef   `yaml:"skills,omitempty"` // 兼容遗留：新代码写 .reasonix/skills/
 	Preferences Preferences  `yaml:"preferences"`
 }
 
