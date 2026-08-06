@@ -25,7 +25,6 @@ import (
 	"reasonix/internal/modelrouter"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
-	"reasonix/internal/rag"
 	"reasonix/internal/teamixconfig"
 	"reasonix/internal/workflow"
 )
@@ -65,6 +64,7 @@ type TeamixServer struct {
 	// internalProvider 本地 Qwen（env 配置，nil=不可用）；sensitiveRules 机密
 	// 黑名单（.teamix/config.yaml）；auditWriter AI 调用审计日志（per-user）。
 	internalProvider provider.Provider
+	externalProvider provider.Provider // 由 keypool Acquire 后构建，绕过 Reasonix credential store
 	sensitiveRules   *modelrouter.SensitiveRules
 	auditWriter      *auditlog.Writer
 
@@ -77,29 +77,9 @@ type TeamixServer struct {
 	// budgetNotified 预算超限致命告警只发一次（P2 预算降档）。
 	budgetNotified atomic.Bool
 
-	// ragIndexes 本地机密文档检索索引（P2 本地 RAG）：按用户隔离
-	// （map[user]*rag.Index）——用户 A 索引的机密文档，用户 B 搜不到。
-	// rag_search 工具只读当前用户自己的索引。项目级隔离标注后续可选。
-	ragIndexes map[string]*rag.Index
-	ragMu      sync.Mutex
 
 	// alertWebhook 企微机器人 webhook（致命告警渠道，.teamix/config.yaml alert 段）。
 	alertWebhook string
-}
-
-// ragIndexFor 返回指定用户的 RAG 索引（懒创建，按用户隔离）。
-func (ts *TeamixServer) ragIndexFor(user string) *rag.Index {
-	ts.ragMu.Lock()
-	defer ts.ragMu.Unlock()
-	if ts.ragIndexes == nil {
-		ts.ragIndexes = make(map[string]*rag.Index)
-	}
-	ix, ok := ts.ragIndexes[user]
-	if !ok {
-		ix = rag.New()
-		ts.ragIndexes[user] = ix
-	}
-	return ix
 }
 
 func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *TeamixServer {
@@ -114,7 +94,6 @@ func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *Tea
 	}
 	ts.globalCfg = ts.loadGlobalConfig()
 	ts.headroomHook = ts.buildHeadroomHook()
-	ts.internalProvider = buildInternalProvider()
 	if ts.globalCfg != nil && ts.globalCfg.Config != nil {
 		ts.alertWebhook = ts.globalCfg.Config.Alert.WebhookURL
 	}
@@ -130,8 +109,6 @@ func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *Tea
 			ts.quota = NewQuotaTracker(q.PerUserPerDay, q.GlobalPerMonth)
 		}
 	}
-	ts.keyPool = keypool.NewPool("DEEPSEEK_API_KEY")
-	ts.keyPool.Load(ts.workspaceRoot)
 	ts.mux = ts.buildHandler()
 	return ts
 }
@@ -297,7 +274,6 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		return nil, false, fmt.Errorf("init workspace for %q: %w", name, err)
 	}
 	token := teamixGenerateToken()
-	ts.keyPool.Acquire()
 	bc := NewBroadcaster()
 	// 模型仅公共可配（公司统一 token）：公共 teamix.default_model 非空则覆盖启动参数，否则回落启动参数。
 	model := ts.modelRef
@@ -320,7 +296,6 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		ExcludeHomeSkills:   true,
 		WrapProvider:        ts.headroomHook,
 		Router:              ts.routerCfg(name),
-		RagIndex:            ts.ragIndexFor(name),
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("build controller for %q: %w", name, err)
@@ -412,6 +387,14 @@ func (ts *TeamixServer) SetWorkspaceRoot(wr string) {
 		slog.Warn("teamix: failed to load global config", "err", err)
 	}
 	ts.globalCfg = cfg
+
+	// 工作区路径已知后才注入项目 .env + 初始化模型池和密钥池
+	loadTeamixEnv(wr)
+	ts.internalProvider = buildInternalProvider()
+	ts.keyPool = keypool.NewPool("DEEPSEEK_API_KEY")
+	ts.keyPool.Load(wr)
+	ts.keyPool.Acquire()
+	ts.externalProvider = ts.buildKeyPoolProvider()
 }
 
 func (ts *TeamixServer) loadGlobalConfig() *teamixconfig.GlobalConfig {
@@ -556,7 +539,6 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("POST /teamix/offline", ts.withUser(ts.handleOfflineSet))
 	mux.HandleFunc("GET /teamix/audit/ai-logs", ts.withUser(ts.handleAuditLogs))
 	mux.HandleFunc("GET /teamix/audit/report", ts.withUser(ts.handleAuditReport))
-	mux.HandleFunc("POST /teamix/rag/index", ts.withUser(ts.handleRagIndex))
 	mux.HandleFunc("POST /teamix/users/external", ts.withUser(ts.handleUserExternalToggle))
 	mux.HandleFunc("GET /checkpoints", ts.withUser(ts.handleCheckpoints))
 	mux.HandleFunc("GET /branches", ts.withUser(ts.handleBranches))

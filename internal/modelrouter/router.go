@@ -12,6 +12,7 @@ package modelrouter
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -165,6 +166,10 @@ type Config struct {
 	// AcquireTimeout 池并发闸排队超时（过载保护，P3）：超过此时间仍未获得
 	// 并发槽 → 视为池过载（ErrPoolBusy），由 Stream 降级或报错。<=0 默认 15s。
 	AcquireTimeout time.Duration
+
+	// ExternalUnavailable 外部池明确不可用（Teamix：keypool 未配 key）。
+	// true 时路由到外部池直接报错，不静默 fallback 到内部。
+	ExternalUnavailable bool
 }
 
 // ErrPoolBusy 表示池并发闸排队超时（过载）。
@@ -225,7 +230,20 @@ func (r *RouterProvider) Name() string { return "model-router" }
 func (r *RouterProvider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
 	d, err := r.decide(req)
 	if err != nil {
-		return nil, err
+		// 路由决策不可恢复时，模拟 AI 流式输出错误提示到对话气泡中。
+		msg := "⚠️ " + err.Error()
+		ch := make(chan provider.Chunk, len([]rune(msg)))
+		go func() {
+			// 模拟思考过程（触发前端渲染准备）
+			ch <- provider.Chunk{Type: provider.ChunkReasoning, Text: "检测到密钥池未配置..."}
+			time.Sleep(50 * time.Millisecond)
+			for _, r := range msg {
+				ch <- provider.Chunk{Type: provider.ChunkText, Text: string(r)}
+				time.Sleep(1 * time.Millisecond)
+			}
+			close(ch)
+		}()
+		return ch, nil
 	}
 	r.emit(d.Decision)
 
@@ -400,6 +418,10 @@ func (r *RouterProvider) decide(req provider.Request) (decision, error) {
 	pool := r.poolOf(kind)
 	if pool == nil {
 		// fail-closed 兜底：目的池缺失 → 内部池（无内部则报错，绝不裸奔到不存在的池）
+		// Teamix 例外：ExternalUnavailable 时外部池不可用直接报错（架构师需干预）
+		if kind == KindExternal && r.cfg.ExternalUnavailable {
+			return decision{}, fmt.Errorf("外部模型密钥未配置，请联系架构师在「设置 → 密钥池」中添加 DeepSeek API Key")
+		}
 		pool = r.cfg.Internal
 		if pool == nil {
 			return decision{}, fmt.Errorf("modelrouter: no pool for purpose %s (fail-closed)", purpose)
@@ -487,6 +509,7 @@ func (r *RouterProvider) streamPool(ctx context.Context, req provider.Request, p
 		maxRetries = 2
 	}
 	idx, p := pool.SelectProvider()
+	slog.Info("[Teamix] selected provider", "provider", p.Name(), "pool", pool.Name)
 	var lastErr error
 	for attempt := 0; ; attempt++ {
 		ch, err := p.Stream(ctx, req)
@@ -514,8 +537,10 @@ func (r *RouterProvider) streamPool(ctx context.Context, req provider.Request, p
 			}
 			// 被动健康检查：连续失败 → 熔断该候选（30s 冷却跳过）
 			pool.MarkFailed(idx)
+			slog.Error("[Teamix] provider failed", "attempt", attempt+1, "err", lastErr)
 			return nil, lastErr
 		}
+		slog.Warn("[Teamix] retrying", "attempt", attempt+1, "maxRetries", maxRetries, "err", err)
 	}
 }
 
@@ -552,9 +577,31 @@ func (r *RouterProvider) wrapFirstChunk(ctx context.Context, req provider.Reques
 }
 
 func (r *RouterProvider) emit(d Decision) {
+	// 实时路由决策可见性：每次模型调用都在控制台打印走向。
+	r.logDecision(d)
 	if r.OnDecision != nil {
 		r.OnDecision(d)
 	}
+}
+
+func (r *RouterProvider) logDecision(d Decision) {
+	// 格式：[ROUTE] 请求ID → 用途:模型池:模型 (原因) | 敏感级 | tokens
+	purpose := d.Purpose
+	if purpose == "" {
+		purpose = "execute"
+	}
+	sens := string(d.Sensitivity)
+	if sens == "" {
+		sens = "public"
+	}
+	slog.Info("[Teamix] route decision",
+		"requestID", d.RequestID,
+		"purpose", purpose,
+		"pool", d.Pool,
+		"model", d.Model,
+		"reason", d.Reason,
+		"sensitivity", sens,
+		"tokens", d.EstimatedTokens)
 }
 
 // BootConfig 是 boot 层集成载体：由宿主（serve）构建，boot 在 buildProv 时
@@ -562,6 +609,13 @@ func (r *RouterProvider) emit(d Decision) {
 // 包装）；internal 为本地/内网模型池（Qwen），nil 时该池不可用（fail-closed）。
 type BootConfig struct {
 	Internal             provider.Provider
+	// External 由 Teamix 层直接构建（key 来自 keypool），非 nil 时 Wrap() 优先使用，
+	// 不再经过 Reasonix credential store。nil = 回退到 buildProv 构建的 provider。
+	External             provider.Provider
+	// ExternalFromKeyPool 为 true 时表示 External 由 keypool 控制：
+	//   - External != nil → 使用 keypool 的 provider
+	//   - External == nil → keypool 无可用 key，外部池不可用，路由直接报错
+	ExternalFromKeyPool  bool
 	Offline              bool
 	Sensitive            *SensitiveRules
 	InternalPromptMarker string
@@ -577,6 +631,14 @@ type BootConfig struct {
 // Wrap 构造 RouterProvider 并包住 external provider（当前模型）。
 // 无内部池时仍可工作：强制内部用途/敏感内容会 fail-closed 报错。
 func (bc *BootConfig) Wrap(external provider.Provider) provider.Provider {
+	if bc.ExternalFromKeyPool {
+		// Teamix 严格模式：外部池唯一来源 = keypool。keypool 无 key 时 external=nil，
+		// cfg.External 不创建 → decide() 遇到 ExternalUnavailable 直接报错。
+		external = bc.External
+	} else if bc.External != nil {
+		// Reasonix 原生：优先用 BootConfig 自带的 external（兼容旧行为）。
+		external = bc.External
+	}
 	cfg := Config{
 		RoleDefault: map[provider.Purpose]Kind{
 			provider.PurposeExecute:  KindExternal,
@@ -596,6 +658,10 @@ func (bc *BootConfig) Wrap(external provider.Provider) provider.Provider {
 	}
 	if external != nil {
 		cfg.External = &Pool{Kind: KindExternal, Name: "external", Providers: []provider.Provider{external}}
+	}
+	// Teamix：keypool 模式下，外部池明确不可用时路由直接报错而非静默 fallback
+	if bc.ExternalFromKeyPool && bc.External == nil {
+		cfg.ExternalUnavailable = true
 	}
 	r := New(cfg)
 	if bc.Audit != nil {

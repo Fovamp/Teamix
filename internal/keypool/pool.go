@@ -35,6 +35,7 @@ type Pool struct {
 	strategy  Strategy
 	counter   atomic.Int64
 	targetEnv string
+	onAcquire func(keyValue string) // optional: called after Acquire with the selected value (empty=none)
 }
 
 func NewPool(targetEnv string) *Pool {
@@ -132,6 +133,9 @@ func (p *Pool) Acquire() string {
 	if len(enabled) == 0 {
 		slog.Warn("keypool: no enabled keys available")
 		os.Unsetenv(p.targetEnv)
+		if p.onAcquire != nil {
+			p.onAcquire("")
+		}
 		return ""
 	}
 
@@ -147,7 +151,15 @@ func (p *Pool) Acquire() string {
 	atomic.AddInt64(&chosen.UseCount, 1)
 	os.Setenv(p.targetEnv, chosen.Value)
 	slog.Debug("keypool: acquired key", "env", chosen.EnvName, "use_count", chosen.UseCount)
+	if p.onAcquire != nil {
+		p.onAcquire(chosen.Value)
+	}
 	return chosen.EnvName
+}
+
+// SetOnAcquire 设置 Acquire 后的回调：keyValue 为选中 key 的值，空串表示无可用 key。
+func (p *Pool) SetOnAcquire(fn func(keyValue string)) {
+	p.onAcquire = fn
 }
 
 func (p *Pool) List() []KeyInfo {

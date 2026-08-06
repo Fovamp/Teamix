@@ -3,6 +3,7 @@ package serve
 import (
 	"encoding/json"
 	"sync"
+	"time"
 
 	"reasonix/internal/event"
 	"reasonix/internal/eventwire"
@@ -56,6 +57,22 @@ func (b *Broadcaster) Subscribe() (<-chan []byte, func()) {
 		}
 		b.mu.Unlock()
 	}
+}
+
+// WaitForSubscriber blocks until at least one SSE client is connected or
+// the timeout expires. Returns true if a subscriber is present.
+func (b *Broadcaster) WaitForSubscriber(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		b.mu.Lock()
+		n := len(b.subs)
+		b.mu.Unlock()
+		if n > 0 {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
 }
 
 // Subscribers reports the current connection count (for diagnostics/tests).

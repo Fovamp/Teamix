@@ -196,6 +196,8 @@ func (ts *TeamixServer) handleSubmit(w http.ResponseWriter, r *http.Request, u *
 		}
 	}
 
+	// 确保 SSE 连接就绪后再提交
+	u.bc.WaitForSubscriber(3 * time.Second)
 	u.ctrl.SubmitHTTP(input)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -241,14 +243,28 @@ func (ts *TeamixServer) handleCompact(w http.ResponseWriter, r *http.Request, u 
 }
 
 func (ts *TeamixServer) handleNewSession(w http.ResponseWriter, _ *http.Request, u *userSession) {
+	// 如果 agent 正在处理中，拒绝创建新会话
+	if u.ctrl.Running() {
+		http.Error(w, "当前回复尚未完成，请等待完成后再创建新会话", http.StatusConflict)
+		return
+	}
+	// 检查是否需要创建新会话：
+	//   - 没有已有会话 → 允许（首次创建）
+	//   - 已有会话但当前无内容 → 拒绝（防刷屏）
+	//   - 已有会话且有内容 → 允许（正常创建）
+	existingSessions := countSessions(u.ctrl.SessionDir())
+	currentHasContent := len(u.ctrl.History()) > 0
+	if existingSessions > 0 && !currentHasContent {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	u.workflow = workflow.NewEmptyState("", "")
-	// Force cancel any stuck running turn before creating a new session.
 	u.ctrl.Cancel()
 	if err := u.ctrl.NewSession(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Ensure session path exists so /sessions can find it
 	sp := u.ctrl.SessionPath()
 	if sp == "" {
 		sp = reasonixAgent.NewSessionPath(u.ctrl.SessionDir(), u.ctrl.Label())
@@ -258,6 +274,23 @@ func (ts *TeamixServer) handleNewSession(w http.ResponseWriter, _ *http.Request,
 		os.WriteFile(sp, []byte{}, 0644)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func countSessions(dir string) int {
+	if dir == "" {
+		return 0
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+			n++
+		}
+	}
+	return n
 }
 
 func (ts *TeamixServer) handleRewind(w http.ResponseWriter, r *http.Request, u *userSession) {
@@ -698,7 +731,10 @@ func (ts *TeamixServer) switchModel(u *userSession, ref string) error {
 	prevPath := cur.SessionPath()
 	carried := cur.History()
 
-	bc := NewBroadcaster()
+	bc := u.bc // 复用现有 Broadcaster，避免 SSE 连接断连
+	if bc == nil {
+		bc = NewBroadcaster()
+	}
 	newCtrl, err := boot.Build(context.Background(), boot.Options{
 		Model:               ref,
 		RequireKey:          true,
@@ -709,7 +745,6 @@ func (ts *TeamixServer) switchModel(u *userSession, ref string) error {
 		ExcludeHomeSkills:   true,
 		WrapProvider:        ts.headroomHook,
 		Router:              ts.routerCfg(u.name),
-		RagIndex:            ts.ragIndexFor(u.name),
 	})
 	if err != nil {
 		return fmt.Errorf("switch model: %w", err)

@@ -1,10 +1,12 @@
 package serve
 
 import (
+	"bytes"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,6 +16,8 @@ import (
 	"reasonix/internal/modelrouter"
 	"reasonix/internal/provider"
 	"reasonix/internal/teamixconfig"
+
+	"github.com/joho/godotenv"
 )
 
 // buildInternalProvider 从环境变量构建内部模型池 provider（本地 Qwen）。
@@ -37,6 +41,59 @@ func buildInternalProvider() provider.Provider {
 		return nil
 	}
 	return p
+}
+
+// buildKeyPoolProvider 从 keypool 当前选中的 key 构建外部模型 provider。
+// 绕过 Reasonix credential store，key 唯一来源 = 工作区 .reasonix/secrets/pool.yaml。
+// keypool 为空时返回 nil。
+func (ts *TeamixServer) buildKeyPoolProvider() provider.Provider {
+	key := os.Getenv("DEEPSEEK_API_KEY")
+	if key == "" {
+		return nil
+	}
+	p, err := provider.New("openai", provider.Config{
+		Name:    "deepseek-keypool",
+		BaseURL: "https://api.deepseek.com",
+		Model:   "deepseek-v4-pro",
+		APIKey:  key,
+	})
+	if err != nil {
+		slog.Warn("teamix: keypool external provider build failed", "err", err)
+		return nil
+	}
+	return p
+}
+
+// refreshKeyPoolProvider 密钥池配置变更后热更新外部 provider（无需重新登录）。
+func (ts *TeamixServer) refreshKeyPoolProvider() {
+	ts.keyPool.Acquire()
+	ts.externalProvider = ts.buildKeyPoolProvider()
+	slog.Info("teamix: keypool provider refreshed", "hasExternal", ts.externalProvider != nil)
+}
+
+// loadTeamixEnv 按 Reasonix 安全模式读取项目 .env：只将 Teamix 需要的变量
+//（QWEN_* / RAGFLOW_*）注入进程环境，不污染其他变量。
+func loadTeamixEnv(workspaceRoot string) {
+	data, err := os.ReadFile(filepath.Join(workspaceRoot, ".env"))
+	if err != nil {
+		return
+	}
+	// 兼容 UTF-8 BOM（\ufeff），godotenv 解析前需要剥离
+	data = bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})
+	envMap, err := godotenv.Unmarshal(string(data))
+	if err != nil {
+		slog.Warn("teamix: cannot parse project .env", "err", err)
+		return
+	}
+	for k, v := range envMap {
+		upper := strings.ToUpper(k)
+		if strings.HasPrefix(upper, "QWEN_") || strings.HasPrefix(upper, "RAGFLOW_") {
+			if os.Getenv(k) == "" {
+				os.Setenv(k, v)
+				slog.Info("teamix: loaded from project .env", "key", k)
+			}
+		}
+	}
 }
 
 // sensitiveRulesFromCfg 把 .teamix/config.yaml 的 sensitive 段（机密黑名单）
@@ -161,8 +218,10 @@ func (ts *TeamixServer) routerCfg(user string) *modelrouter.BootConfig {
 		}
 	}
 	return &modelrouter.BootConfig{
-		Internal:  ts.internalProvider,
-		Sensitive: ts.currentSensitiveRules(), // 热加载：每次 Build 重读机密清单
+		Internal:             ts.internalProvider,
+		External:             ts.externalProvider,
+		ExternalFromKeyPool:  true,
+		Sensitive:            ts.currentSensitiveRules(), // 热加载：每次 Build 重读机密清单
 		Offline:   ts.offline.Load(),
 		Audit: func(d modelrouter.Decision) {
 			if ts.auditWriter != nil {
@@ -236,30 +295,6 @@ func (ts *TeamixServer) handleOfflineSet(w http.ResponseWriter, r *http.Request,
 	ts.offline.Store(body.Offline)
 	slog.Info("teamix: offline mode", "user", u.name, "offline", body.Offline)
 	writeJSON(w, map[string]any{"offline": body.Offline})
-}
-
-// handleRagIndex 索引一份本地机密文档（仅 architect）：全文进本地 BM25 索引，
-// 不出内网。后续 rag_search 工具按问题检索相关片段（自动走内部 Qwen）。
-func (ts *TeamixServer) handleRagIndex(w http.ResponseWriter, r *http.Request, u *userSession) {
-	if !ts.isArchitect(u) {
-		http.Error(w, "仅架构师可索引本地文档", http.StatusForbidden)
-		return
-	}
-	var body struct {
-		Content string `json:"content"`
-		Name    string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Content == "" {
-		http.Error(w, "需要 content", http.StatusBadRequest)
-		return
-	}
-	if ts.ragIndexFor(u.name) == nil {
-		// 不可能：ragIndexFor 懒创建
-	}
-	ix := ts.ragIndexFor(u.name)
-	ix.Add(body.Content)
-	slog.Info("teamix: rag indexed", "user", u.name, "name", body.Name, "chunks", ix.Len())
-	writeJSON(w, map[string]any{"ok": true, "chunks": ix.Len()})
 }
 
 // handleUserExternalToggle 切换用户的外部模型权限（仅 architect）：

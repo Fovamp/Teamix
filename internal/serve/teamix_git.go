@@ -174,10 +174,12 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 	if err := cur.Snapshot(); err != nil {
 		slog.Warn("teamix: snapshot before project switch", "err", err)
 	}
-	prevPath := cur.SessionPath()
 	carried := cur.History()
 
-	bc := NewBroadcaster()
+	bc := u.bc // 复用现有 Broadcaster
+	if bc == nil {
+		bc = NewBroadcaster()
+	}
 	// 会话目录：先类型后项目 → users/<名字>/.teamix/sessions/<项目>/
 	// （保持项目克隆纯净，运行数据不入 git 仓库）
 	projSessionDir := filepath.Join(u.userRoot, ".teamix", "sessions", body.Project)
@@ -202,13 +204,12 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 		ExcludeHomeSkills:   true,
 		WrapProvider:        ts.headroomHook,
 		Router:              ts.routerCfg(u.name),
-		RagIndex:            ts.ragIndexFor(u.name),
 	})
 	if err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "切换项目失败（重建控制器）: " + err.Error()})
 		return
 	}
-	newPath := reasonixAgent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
+	newPath := reasonixAgent.NewSessionPath(newCtrl.SessionDir(), newCtrl.Label())
 	newCtrl.AdoptHistory(carried, newPath)
 	u.ctrl = newCtrl
 	u.bc = bc

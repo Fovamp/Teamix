@@ -165,11 +165,20 @@ func TestFallbackOnFirstChunkError(t *testing.T) {
 
 func TestFailClosedNoPool(t *testing.T) {
 	r := New(Config{}) // 无任何池
-	_, err := r.Stream(context.Background(), provider.Request{})
-	if err == nil {
-		t.Fatal("expected error when no pool configured")
+	ch, err := r.Stream(context.Background(), provider.Request{})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "fail-closed") {
-		t.Errorf("err = %v, want fail-closed hint", err)
+	var text strings.Builder
+	for c := range ch {
+		if c.Type == provider.ChunkText {
+			text.WriteString(c.Text)
+		}
+	}
+	if text.Len() == 0 {
+		t.Fatal("expected non-empty error message")
+	}
+	if !strings.Contains(text.String(), "fail-closed") {
+		t.Errorf("chunk text = %q, want fail-closed hint", text.String())
 	}
 }

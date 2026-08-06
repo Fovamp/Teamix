@@ -422,6 +422,7 @@ func (ts *TeamixServer) handleSecretsSet(w http.ResponseWriter, r *http.Request,
 	if err := ts.keyPool.Save(ts.workspaceRoot); err != nil {
 		slog.Error("keypool: save failed", "err", err)
 	}
+	ts.refreshKeyPoolProvider()
 	slog.Info("keypool: key configured", "env", body.EnvName, "by", u.name)
 	writeJSON(w, map[string]bool{"ok": true})
 }
@@ -444,6 +445,7 @@ func (ts *TeamixServer) handleSecretsDelete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	ts.keyPool.Save(ts.workspaceRoot)
+	ts.refreshKeyPoolProvider()
 	slog.Info("keypool: key removed", "env", body.EnvName, "by", u.name)
 	writeJSON(w, map[string]bool{"ok": true})
 }
@@ -463,6 +465,7 @@ func (ts *TeamixServer) handleKeyPoolStrategy(w http.ResponseWriter, r *http.Req
 	}
 	ts.keyPool.SetStrategy(keypool.Strategy(body.Strategy))
 	ts.keyPool.Save(ts.workspaceRoot)
+	ts.refreshKeyPoolProvider()
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
