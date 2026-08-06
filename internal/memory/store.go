@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -73,17 +74,54 @@ type ArchivedMemory struct {
 }
 
 // StoreFor resolves the auto-memory directory for a project working dir under
-// Reasonix home, e.g. ~/.reasonix/projects/-Users-me-proj/memory.
+// Reasonix home, e.g. ~/.reasonix/memory/private/-Users-me-proj.
+// 私有记忆与全局记忆统一收在 memory/ 根下两个语义清晰的子目录：
+//   memory/private/<slug>/  ← 私有记忆（slug 按工作目录，单机多项目隔离；
+//                             Teamix 下 userDir 已含项目，slug 为冗余安全层）
+//   memory/global/          ← 全局记忆（跨项目共享）
 // A "" userDir (config dir unresolvable) yields a zero Store, which all methods
 // treat as a disabled no-op.
 func StoreFor(userDir, cwd string) Store {
 	if userDir == "" {
 		return Store{}
 	}
+	slug := config.WorkspaceSlug(absOf(cwd))
+	migrateLegacyMemoryDirs(userDir, slug)
 	return Store{
-		Dir:       filepath.Join(userDir, "projects", config.WorkspaceSlug(absOf(cwd)), "memory"),
+		Dir:       filepath.Join(userDir, "memory", "private", slug),
 		GlobalDir: filepath.Join(userDir, "memory", "global"),
 	}
+}
+
+// migratedOnce 防重复迁移（进程内 per userDir）。
+var migratedOnce sync.Map // userDir → struct{}
+
+// migrateLegacyMemoryDirs 把旧结构（userDir/projects/<slug>/memory，改造前
+// 的私有记忆位置）一次性迁移到 memory/private/<slug>。memory/global 位置
+// 不变（旧全局记忆已在正确位置）。迁移幂等：新位置已有数据时不覆盖。
+func migrateLegacyMemoryDirs(userDir, slug string) {
+	if _, ok := migratedOnce.LoadOrStore(userDir, struct{}{}); ok {
+		return
+	}
+	oldPrivate := filepath.Join(userDir, "projects", slug, "memory")
+	newPrivate := filepath.Join(userDir, "memory", "private", slug)
+	if _, err := os.Stat(oldPrivate); err != nil {
+		return // 旧私有记忆不存在，无需迁移
+	}
+	if _, err := os.Stat(newPrivate); err == nil {
+		return // 新位置已有数据（不覆盖）
+	}
+	if err := os.MkdirAll(newPrivate, 0o755); err != nil {
+		return
+	}
+	entries, err := os.ReadDir(oldPrivate)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		_ = os.Rename(filepath.Join(oldPrivate, e.Name()), filepath.Join(newPrivate, e.Name()))
+	}
+	_ = os.Remove(oldPrivate) // 清空旧空壳
 }
 
 // DirFor returns the directory a memory of the given type should be stored in.
