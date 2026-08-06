@@ -30,11 +30,10 @@ type sessionSummary struct {
 	Project      string    `json:"project,omitempty"`
 }
 
-// summaryDir 返回会话总结的存储根目录（用户私有：<userRoot>/.teamix/<project>/summaries/）。
-// 目录结构：summaries/<sessionID>.json（项目内平铺）。总结是用户私人数据，
-// 放用户目录且跟随项目（与 memory/sessions 一致：<project>/ 下），项目克隆保持纯净。
+// summaryDir 返回会话总结的存储根目录（用户私有：<userRoot>/.teamix/summaries/<project>/）。
+// 先类型后项目（与 memory/sessions 一致）：一眼看出"这是什么→归属哪个项目"。
 func (ts *TeamixServer) summaryDir(userRoot, project string) string {
-	dir := filepath.Join(userRoot, ".teamix", project, "summaries")
+	dir := filepath.Join(userRoot, ".teamix", "summaries", project)
 	_ = os.MkdirAll(dir, 0o755)
 	return dir
 }

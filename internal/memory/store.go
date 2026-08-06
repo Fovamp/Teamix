@@ -74,10 +74,10 @@ type ArchivedMemory struct {
 
 // StoreFor resolves the auto-memory directory for a project working dir under
 // Reasonix home, e.g. ~/.reasonix/memory/private/-Users-me-proj.
-// 私有记忆与全局记忆统一收在 memory/ 根下两个语义清晰的子目录：
-//   memory/private/<slug>/  ← 私有记忆（slug 按工作目录，单机多项目隔离；
-//                             Teamix 下 userDir 已含项目，slug 为冗余安全层）
-//   memory/global/          ← 全局记忆（跨项目共享）
+// 结构：先类型后项目（与全局/会话/总结一致，一眼看出"这是什么→归属哪个项目"）。
+//   userDir/private/<slug>   ← 私有记忆（userDir 由调用方传"记忆根"，Teamix 为
+//                               userRoot/.teamix/memory/<项目> → 项目在根里）
+//   userDir/global           ← 全局记忆（跨项目共享；Teamix 项目化后为项目级全局）
 // A "" userDir (config dir unresolvable) yields a zero Store, which all methods
 // treat as a disabled no-op.
 func StoreFor(userDir, cwd string) Store {
@@ -86,8 +86,8 @@ func StoreFor(userDir, cwd string) Store {
 	}
 	slug := config.WorkspaceSlug(absOf(cwd))
 	return Store{
-		Dir:       filepath.Join(userDir, "memory", "private", slug),
-		GlobalDir: filepath.Join(userDir, "memory", "global"),
+		Dir:       filepath.Join(userDir, "private", slug),
+		GlobalDir: filepath.Join(userDir, "global"),
 	}
 }
 

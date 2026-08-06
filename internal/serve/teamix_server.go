@@ -306,7 +306,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		SessionDir:          filepath.Join(userRoot, ".teamix", "sessions"),
 		SharedHost:          ts.sharedHost,
 		ExcludedPluginNames: ts.excludedMachineMCPNames(),
-		MemoryUserDir:       filepath.Join(userRoot, ".teamix"),
+		MemoryUserDir:       filepath.Join(userRoot, ".teamix", "memory"), // 记忆：未选项目默认态
 		MemoryCompilerDir:   filepath.Join(userRoot, ".teamix", "memory", "compiler"),
 		ExcludeHomeSkills:   true,
 		WrapProvider:        ts.headroomHook,

@@ -60,8 +60,8 @@ func TestSummaryFileRelativeWorkspace(t *testing.T) {
 	if filepath.Base(f) != "0805-1234.json" {
 		t.Fatalf("relative workspaceRoot: summaryFile = %q, want real session file", f)
 	}
-	// 项目隔离：路径包含 <userRoot>/.teamix/<project>/summaries/<session>.json
-	if !strings.Contains(filepath.ToSlash(f), "users/zhangsan/.teamix/proj-a/summaries/0805-1234.json") {
+	// 先类型后项目：路径包含 <userRoot>/.teamix/summaries/<project>/<session>.json
+	if !strings.Contains(filepath.ToSlash(f), "users/zhangsan/.teamix/summaries/proj-a/0805-1234.json") {
 		t.Fatalf("summaryFile should be user+project-scoped: %q", f)
 	}
 }

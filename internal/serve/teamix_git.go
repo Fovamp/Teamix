@@ -178,8 +178,9 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 	carried := cur.History()
 
 	bc := NewBroadcaster()
-	// 会话目录跟随项目但放用户 .teamix 内（保持项目克隆纯净，运行数据不入 git 仓库）
-	projSessionDir := filepath.Join(u.userRoot, ".teamix", body.Project, "sessions")
+	// 会话目录：先类型后项目 → users/<名字>/.teamix/sessions/<项目>/
+	// （保持项目克隆纯净，运行数据不入 git 仓库）
+	projSessionDir := filepath.Join(u.userRoot, ".teamix", "sessions", body.Project)
 	if err := os.MkdirAll(projSessionDir, 0o755); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "create session dir: " + err.Error()})
 		return
@@ -194,8 +195,8 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 		SessionDir:          projSessionDir,
 		SharedHost:          ts.sharedHost,
 		ExcludedPluginNames: ts.excludedMachineMCPNames(),
-		MemoryUserDir:       filepath.Join(u.userRoot, ".teamix", body.Project), // 记忆按项目隔离
-		MemoryCompilerDir:   filepath.Join(u.userRoot, ".teamix", body.Project, "memory", "compiler"),
+		MemoryUserDir:       filepath.Join(u.userRoot, ".teamix", "memory", body.Project), // 记忆：先类型后项目
+		MemoryCompilerDir:   filepath.Join(u.userRoot, ".teamix", "memory", body.Project, "compiler"),
 		ExcludeHomeSkills:   true,
 		WrapProvider:        ts.headroomHook,
 		Router:              ts.routerCfg(u.name),

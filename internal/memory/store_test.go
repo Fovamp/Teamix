@@ -607,7 +607,11 @@ func TestStoreForInitializesGlobalDir(t *testing.T) {
 	if s.GlobalDir == "" {
 		t.Fatal("StoreFor should set GlobalDir")
 	}
-	if !strings.Contains(s.GlobalDir, "memory") || !strings.Contains(s.GlobalDir, "global") {
+	// 先类型后项目：Dir 含 private 段，GlobalDir = userDir/global
+	if !strings.Contains(filepath.ToSlash(s.Dir), "/private/") {
+		t.Fatalf("unexpected Dir: %s", s.Dir)
+	}
+	if !strings.HasSuffix(s.GlobalDir, "global") {
 		t.Fatalf("unexpected GlobalDir: %s", s.GlobalDir)
 	}
 	if s.GlobalDir == s.Dir {
