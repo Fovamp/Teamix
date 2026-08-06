@@ -99,7 +99,7 @@ function fmtTime(t: string): string {
     <div style="padding:0 8px 8px;color:var(--danger);font-size:12px;min-height:0" v-if="err">{{ err }}</div>
     <div class="model-list" style="padding:0 8px 8px;flex:1;min-height:0;overflow-y:auto">
       <div v-if="loading" class="empty-note" style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">加载中…</div>
-      <div v-else-if="summaries.length === 0" class="empty-note" style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">还没有任何会话总结，点击上方按钮为当前会话生成一份</div>
+      <div v-else-if="summaries.length === 0" class="empty-note" style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">请先选择项目后查看/生成总结（总结按项目隔离）</div>
       <div v-for="s in summaries" :key="s.id" class="summary-card" @click="full = s">
         <div style="min-width:0;flex:1">
           <div class="summary-card__title" :title="s.title || summaryTitle(s)">{{ summaryTitle(s) }}</div>

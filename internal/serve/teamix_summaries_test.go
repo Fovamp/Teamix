@@ -2,6 +2,7 @@ package serve
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -55,8 +56,27 @@ func TestParseSummaryOutput(t *testing.T) {
 func TestSummaryFileRelativeWorkspace(t *testing.T) {
 	// workspaceRoot being a relative path must still yield a real session file, not _invalid
 	ts := &TeamixServer{workspaceRoot: "relative/path"}
-	f := ts.summaryFile("admin", "0805-1234")
+	f := ts.summaryFile("admin", "proj-a", "0805-1234")
 	if filepath.Base(f) != "0805-1234.json" {
 		t.Fatalf("relative workspaceRoot: summaryFile = %q, want real session file", f)
+	}
+	// 项目隔离：路径包含 <user>/<project>/<session>.json
+	if !strings.Contains(filepath.ToSlash(f), "admin/proj-a/0805-1234.json") {
+		t.Fatalf("summaryFile should be project-scoped: %q", f)
+	}
+	// 空项目 → _legacy（历史数据迁移）
+	f2 := ts.summaryFile("admin", "", "0805-1234")
+	if !strings.Contains(filepath.ToSlash(f2), "admin/_legacy/0805-1234.json") {
+		t.Fatalf("empty project should map to _legacy: %q", f2)
+	}
+}
+
+func TestAllSummariesRequiresProject(t *testing.T) {
+	// 未选择项目：总结返回空（前端提示先选项目）
+	ts := &TeamixServer{workspaceRoot: t.TempDir()}
+	u := &userSession{name: "zhangsan", selectedProject: ""}
+	out := ts.allSummaries(u)
+	if len(out) != 0 {
+		t.Fatalf("no project selected: summaries = %d, want 0", len(out))
 	}
 }
