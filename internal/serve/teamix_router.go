@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"reasonix/internal/auditlog"
 	"reasonix/internal/modelrouter"
 	"reasonix/internal/provider"
+	"reasonix/internal/rag"
 	"reasonix/internal/teamixconfig"
 )
 
@@ -61,7 +63,8 @@ func (ts *TeamixServer) currentSensitiveRules() *modelrouter.SensitiveRules {
 
 // QuotaTracker 三层配额计数（内存原子，P1）：个人日额 / 团队与全局月额。
 // 只计数"出了网"的外部请求（OnDecision 里 Pool==external 时累加）。
-// architect 角色豁免配额。
+// architect 角色豁免配额。P2 扩展：全局月额超限 = 预算降档（全降级内部 +
+// 致命告警一次）。
 type QuotaTracker struct {
 	mu             sync.Mutex
 	userDay        map[string]int // user → 当日出网次数
@@ -70,6 +73,8 @@ type QuotaTracker struct {
 	globalMonthKey string
 	perUserPerDay  int // <=0 不限
 	globalPerMonth int // <=0 不限
+
+	exceeded atomic.Bool // 预算（全局月额）超限标志，触发一次致命告警
 }
 
 func NewQuotaTracker(perUserPerDay, globalPerMonth int) *QuotaTracker {
@@ -85,6 +90,7 @@ func dayKey() string   { return time.Now().Format("2006-01-02") }
 func monthKey() string { return time.Now().Format("2006-01") }
 
 // Allow 检查当前请求是否允许出网（个人日额 + 全局月额；architect 豁免）。
+// 全局月额超限时置位 exceeded（预算降档：后续全降级内部 + 触发致命告警）。
 func (q *QuotaTracker) Allow(user string, architect bool) bool {
 	if q == nil {
 		return true
@@ -109,10 +115,19 @@ func (q *QuotaTracker) Allow(user string, architect bool) bool {
 			q.globalMonthKey = monthKey()
 		}
 		if q.globalMonth >= q.globalPerMonth {
+			q.exceeded.Store(true)
 			return false
 		}
 	}
 	return true
+}
+
+// BudgetExceeded 报告预算（全局月额）是否已超限（供致命告警触发一次）。
+func (q *QuotaTracker) BudgetExceeded() bool {
+	if q == nil {
+		return false
+	}
+	return q.exceeded.Load()
 }
 
 // Record 记录一次出网（配额消费）。
@@ -138,6 +153,13 @@ func (q *QuotaTracker) Record(user string) {
 // 每次 Build 调用独立构造，使 Audit 回调能带上当前用户（per-user 日志）。
 func (ts *TeamixServer) routerCfg(user string) *modelrouter.BootConfig {
 	architect := ts.globalCfg != nil && ts.globalCfg.IsArchitect(user)
+	// 权限细粒度：管理员可禁用指定用户的外部模型（users.yaml allow_external: false）
+	userExternalAllowed := true
+	if ts.globalCfg != nil {
+		if u := ts.globalCfg.Users.FindUser(user); u != nil {
+			userExternalAllowed = u.CanUseExternal()
+		}
+	}
 	return &modelrouter.BootConfig{
 		Internal:  ts.internalProvider,
 		Sensitive: ts.currentSensitiveRules(), // 热加载：每次 Build 重读机密清单
@@ -150,17 +172,34 @@ func (ts *TeamixServer) routerCfg(user string) *modelrouter.BootConfig {
 			if d.Pool == modelrouter.KindExternal && ts.quota != nil {
 				ts.quota.Record(user)
 			}
+			// 预算降档（P2）：全局月额超限 → 致命告警一次（审计 + slog）
+			if ts.quota != nil && ts.quota.BudgetExceeded() && ts.budgetNotified.CompareAndSwap(false, true) {
+				slog.Error("teamix: monthly external budget exceeded — all external requests degraded to internal", "user", user)
+				if ts.auditWriter != nil {
+					ts.auditWriter.Write(auditlog.Record{
+						RequestID: "budget-exceeded",
+						User:      user,
+						Time:      time.Now(),
+						Purpose:   "execute",
+						Alerts:    []string{"[critical] budget_exceeded_global_monthly"},
+					})
+				}
+			}
 		},
-		// 配额门禁：超限柔性降级内部池（用户无感，审计记 quota_exceeded）
+		// 配额门禁 + 用户级禁外网：超限/被禁用 → 柔性降级内部池（用户无感，审计记 quota_exceeded）
 		QuotaCheck: func() bool {
+			if !userExternalAllowed {
+				return false
+			}
 			return ts.quota == nil || ts.quota.Allow(user, architect)
 		},
 		// 闭环还原失败 → 致命告警 + 审计（假名化漏了/模型幻觉，泄露信号 ③）
-		OnRestoreFail: func(issue string) {
-			slog.Error("teamix: closed-loop detected (potential leak)", "user", user, "issue", issue)
+		// 关联原请求 request_id（全链路 trace：可回溯到触发请求）
+		OnRestoreFail: func(requestID, issue string) {
+			slog.Error("teamix: closed-loop detected (potential leak)", "user", user, "request_id", requestID, "issue", issue)
 			if ts.auditWriter != nil {
 				ts.auditWriter.Write(auditlog.Record{
-					RequestID: "restore-fail",
+					RequestID: requestID,
 					User:      user,
 					Time:      time.Now(),
 					Purpose:   "execute",
@@ -193,6 +232,60 @@ func (ts *TeamixServer) handleOfflineSet(w http.ResponseWriter, r *http.Request,
 	ts.offline.Store(body.Offline)
 	slog.Info("teamix: offline mode", "user", u.name, "offline", body.Offline)
 	writeJSON(w, map[string]any{"offline": body.Offline})
+}
+
+// handleRagIndex 索引一份本地机密文档（仅 architect）：全文进本地 BM25 索引，
+// 不出内网。后续 rag_search 工具按问题检索相关片段（自动走内部 Qwen）。
+func (ts *TeamixServer) handleRagIndex(w http.ResponseWriter, r *http.Request, u *userSession) {
+	if !ts.isArchitect(u) {
+		http.Error(w, "仅架构师可索引本地文档", http.StatusForbidden)
+		return
+	}
+	var body struct {
+		Content string `json:"content"`
+		Name    string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Content == "" {
+		http.Error(w, "需要 content", http.StatusBadRequest)
+		return
+	}
+	if ts.ragIndex == nil {
+		ts.ragIndex = rag.New()
+	}
+	ts.ragIndex.Add(body.Content)
+	slog.Info("teamix: rag indexed", "user", u.name, "name", body.Name, "chunks", ts.ragIndex.Len())
+	writeJSON(w, map[string]any{"ok": true, "chunks": ts.ragIndex.Len()})
+}
+
+// handleUserExternalToggle 切换用户的外部模型权限（仅 architect）：
+// users.yaml 的 allow_external（false = 该用户全部请求走内部 Qwen）。
+func (ts *TeamixServer) handleUserExternalToggle(w http.ResponseWriter, r *http.Request, u *userSession) {
+	if !ts.isArchitect(u) {
+		http.Error(w, "仅架构师可操作", http.StatusForbidden)
+		return
+	}
+	var body struct {
+		Name          string `json:"name"`
+		AllowExternal bool   `json:"allow_external"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
+		http.Error(w, "bad body", http.StatusBadRequest)
+		return
+	}
+	uc := ts.globalCfg.Users
+	target := uc.FindUser(body.Name)
+	if target == nil {
+		http.Error(w, "用户不存在", http.StatusNotFound)
+		return
+	}
+	allow := body.AllowExternal
+	target.AllowExternal = &allow
+	if err := uc.SaveUsers(ts.workspaceRoot); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	slog.Info("teamix: user external permission", "by", u.name, "user", body.Name, "allow_external", allow)
+	writeJSON(w, map[string]any{"ok": true, "name": body.Name, "allow_external": allow})
 }
 
 // auditRecord 把路由决策转成审计记录（操作流向：哪一步走哪个模型、是否出网）。

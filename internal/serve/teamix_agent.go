@@ -709,6 +709,7 @@ func (ts *TeamixServer) switchModel(u *userSession, ref string) error {
 		ExcludeHomeSkills:   true,
 		WrapProvider:        ts.headroomHook,
 		Router:              ts.routerCfg(u.name),
+		RagIndex:            ts.ragIndex,
 	})
 	if err != nil {
 		return fmt.Errorf("switch model: %w", err)

@@ -16,6 +16,14 @@ type UsersConfig struct {
 type UserEntry struct {
 	Name string `yaml:"name"`
 	Role string `yaml:"role"`
+	// AllowExternal 是否允许该用户的外部模型调用（出网）。默认 true；
+	// false = 该用户全部请求走内部 Qwen（管理员禁用外网，权限细粒度 P2）。
+	AllowExternal *bool `yaml:"allow_external,omitempty"`
+}
+
+// CanUseExternal 报告该用户是否允许出网（未配置 = 允许）。
+func (u UserEntry) CanUseExternal() bool {
+	return u.AllowExternal == nil || *u.AllowExternal
 }
 
 func (u UserEntry) RoleOr() string {

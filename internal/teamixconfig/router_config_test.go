@@ -89,3 +89,17 @@ func TestDefaultAuditConfig(t *testing.T) {
 		t.Fatalf("default roles_visible = %v", cfg.Audit.RolesVisible)
 	}
 }
+
+func TestUserCanUseExternal(t *testing.T) {
+	if (UserEntry{Name: "a"}).CanUseExternal() != true {
+		t.Error("unset allow_external should default to allowed")
+	}
+	f := false
+	if (UserEntry{Name: "a", AllowExternal: &f}).CanUseExternal() != false {
+		t.Error("allow_external=false should block external")
+	}
+	t2 := true
+	if (UserEntry{Name: "a", AllowExternal: &t2}).CanUseExternal() != true {
+		t.Error("allow_external=true should allow")
+	}
+}

@@ -45,6 +45,7 @@ import (
 	"reasonix/internal/plugin"
 	"reasonix/internal/modelrouter"
 	"reasonix/internal/provider"
+	"reasonix/internal/rag"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
 	"reasonix/internal/skill"
@@ -169,6 +170,10 @@ type Options struct {
 	// 包装：WrapProvider 先包外部池（headroom 压缩），Router 再路由到
 	// 内部/外部池。nil 时不启用（保持原有单模型行为）。
 	Router *modelrouter.BootConfig
+	// RagIndex 本地机密文档检索索引（Teamix 双模型协作，P2 本地 RAG）。
+	// 非 nil 时向 agent 注册 rag_search 工具：本地 BM25 检索相关片段，
+	// 全文不出内网（数据域钉住自动强制内部 Qwen）。nil 不注册。
+	RagIndex *rag.Index
 }
 
 // Build loads config, resolves the model(s), and returns a Controller wrapping a
@@ -422,6 +427,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	}
 
 	reg := tool.NewRegistry()
+	if opts.RagIndex != nil {
+		reg.Add(&rag.SearchTool{Index: opts.RagIndex})
+	}
 	writeRoots := cfg.WriteRootsForRoot(root)
 	writeRoots = appendUniquePaths(writeRoots, additionalDirs...)
 	forbidReadRoots := cfg.ForbidReadRootsForRoot(root)

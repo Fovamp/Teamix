@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"reasonix/internal/provider"
 )
@@ -39,13 +40,27 @@ func HasSecretPattern(content string) bool {
 type SensitiveRules struct {
 	Dirs  []string // 目录前缀，如 "tenders/"、"data/"
 	Files []string // 文件名 glob，如 "*.pem"
+
+	// cache 路径→是否命中的静态判定缓存（P2 性能项）：同一会话内
+	// 配置不变，路径敏感级判定结果可复用；随 SensitiveRules 实例
+	// 生命周期（每次 Build 重建，天然随配置热加载失效）。
+	cache sync.Map // map[string]bool
 }
 
-// MatchPath 判断路径是否命中机密清单。
+// MatchPath 判断路径是否命中机密清单（带缓存）。
 func (s *SensitiveRules) MatchPath(path string) bool {
 	if s == nil {
 		return false
 	}
+	if v, ok := s.cache.Load(path); ok {
+		return v.(bool)
+	}
+	hit := s.matchPathUncached(path)
+	s.cache.Store(path, hit)
+	return hit
+}
+
+func (s *SensitiveRules) matchPathUncached(path string) bool {
 	p := filepath.ToSlash(path)
 	for _, d := range s.Dirs {
 		d = filepath.ToSlash(d)
@@ -104,6 +119,16 @@ func hasInternalPrompt(msgs []provider.Message, marker string) bool {
 	}
 	for _, m := range msgs {
 		if m.Role == provider.RoleSystem && strings.Contains(m.Content, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasToolCalls 检查消息里是否含 assistant 工具调用（带工具调用视为复杂请求）。
+func hasToolCalls(msgs []provider.Message) bool {
+	for _, m := range msgs {
+		if len(m.ToolCalls) > 0 {
 			return true
 		}
 	}

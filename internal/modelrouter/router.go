@@ -80,10 +80,19 @@ type Config struct {
 	// QuotaCheck 外部池可用性检查（配额/预算门禁）：nil = 不限。
 	// 返回 false 时外部请求**柔性降级**到内部池（ReasonQuota），不报错。
 	QuotaCheck func() bool
+
+	// EasyThreshold 难度路由阈值（P2 轻量启发式）：execute 请求估计 token 数
+	// 低于此值且无工具调用 → 判定"简单"→ 降级内部池省成本（ReasonDifficulty）。
+	// <=0 禁用。
+	EasyThreshold int
 }
 
 // ReasonQuota = 配额/预算超限，外部请求柔性降级内部。
 const ReasonQuota = "quota_exceeded_fallback_internal"
+
+// ReasonDifficulty = 难度路由（轻量启发式）：简单 execute 请求（短、无工具调用）
+// 降级内部池省成本（RouteLLM 思想的简化版：只降级不升级，保守）。
+const ReasonDifficulty = "difficulty_route_internal"
 
 // Decision 是一次请求的路由决策结果（审计/route_reason 用）。
 type Decision struct {
@@ -106,7 +115,8 @@ type RouterProvider struct {
 	// pseudo 会话级假名化器：redact 出网时对请求假名化、对输出还原。
 	pseudo *Pseudonymizer
 	// OnRestoreFail 输出还原校验失败回调（模型幻觉新假名 → 审计告警）。
-	OnRestoreFail func(issue string)
+	// 参数：requestID（关联原请求，全链路 trace）+ issue。
+	OnRestoreFail func(requestID, issue string)
 }
 
 func New(cfg Config) *RouterProvider {
@@ -155,7 +165,7 @@ func (r *RouterProvider) Stream(ctx context.Context, req provider.Request) (<-ch
 	}
 	if redacted {
 		// 闭环 Fail-Close：缓冲外部输出 → 还原校验 → 失败丢弃并回退内部重生成（原始请求）
-		return r.streamRedactClosedLoop(ctx, orig, req, pool), nil
+		return r.streamRedactClosedLoop(ctx, orig, req, pool, d.RequestID), nil
 	}
 	// 包装 channel：首 chunk 为 ChunkError 时静默降级
 	return r.wrapFirstChunk(ctx, req, d, ch), nil
@@ -166,13 +176,13 @@ func (r *RouterProvider) Stream(ctx context.Context, req provider.Request) (<-ch
 //  2. 假名还原 + 校验；校验失败（模型幻觉新假名/输出含未假名敏感值）→
 //     丢弃污染输出，回退内部池用原始请求重新生成（fail-close，前端隐藏降级）
 //  3. 校验通过 → 还原后的文本一次性转发
-func (r *RouterProvider) streamRedactClosedLoop(ctx context.Context, orig, reqRedacted provider.Request, pool *Pool) <-chan provider.Chunk {
+func (r *RouterProvider) streamRedactClosedLoop(ctx context.Context, orig, reqRedacted provider.Request, pool *Pool, requestID string) <-chan provider.Chunk {
 	out := make(chan provider.Chunk)
 	go func() {
 		defer close(out)
 		ch, err := r.streamPool(ctx, reqRedacted, pool)
 		if err != nil {
-			r.closedLoopFallback(ctx, orig, out)
+			r.closedLoopFallback(ctx, orig, out, requestID)
 			return
 		}
 		var buf strings.Builder
@@ -184,7 +194,7 @@ func (r *RouterProvider) streamRedactClosedLoop(ctx context.Context, orig, reqRe
 			case provider.ChunkToolCall, provider.ChunkToolCallStart, provider.ChunkToolCallArgsDelta:
 				// redact 场景模型一般不回工具调用；若出现则透传并记录告警（args 还原 P2）
 				if r.OnRestoreFail != nil {
-					r.OnRestoreFail("tool_call_in_redact_stream")
+					r.OnRestoreFail(requestID, "tool_call_in_redact_stream")
 				}
 				if buf.Len() > 0 {
 					out <- provider.Chunk{Type: provider.ChunkText, Text: r.pseudo.Restore(buf.String())}
@@ -193,7 +203,7 @@ func (r *RouterProvider) streamRedactClosedLoop(ctx context.Context, orig, reqRe
 				streamed = true
 				out <- c
 			case provider.ChunkError:
-				r.closedLoopFallback(ctx, orig, out)
+				r.closedLoopFallback(ctx, orig, out, requestID)
 				return
 			}
 		}
@@ -204,9 +214,9 @@ func (r *RouterProvider) streamRedactClosedLoop(ctx context.Context, orig, reqRe
 		restored, ok := r.pseudo.RestoreWithCheck(buf.String())
 		if !ok {
 			if r.OnRestoreFail != nil {
-				r.OnRestoreFail("closed_loop_detected: " + restored)
+				r.OnRestoreFail(requestID, "closed_loop_detected: "+restored)
 			}
-			r.closedLoopFallback(ctx, orig, out)
+			r.closedLoopFallback(ctx, orig, out, requestID)
 			return
 		}
 		if restored != "" {
@@ -217,7 +227,7 @@ func (r *RouterProvider) streamRedactClosedLoop(ctx context.Context, orig, reqRe
 }
 
 // closedLoopFallback 回退内部池用原始请求（未假名化）重新生成，并记录审计。
-func (r *RouterProvider) closedLoopFallback(ctx context.Context, orig provider.Request, out chan<- provider.Chunk) {
+func (r *RouterProvider) closedLoopFallback(ctx context.Context, orig provider.Request, out chan<- provider.Chunk, requestID string) {
 	internal := r.cfg.Internal
 	if internal == nil {
 		out <- provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("modelrouter: closed-loop fallback requires internal pool")}
@@ -225,10 +235,11 @@ func (r *RouterProvider) closedLoopFallback(ctx context.Context, orig provider.R
 	}
 	if r.OnDecision != nil {
 		r.OnDecision(Decision{
-			Purpose:  orig.Purpose,
-			Reason:   ReasonClosedLoopFallback,
-			Pool:     KindInternal,
-			Model:    internal.Name,
+			RequestID:      requestID,
+			Purpose:        orig.Purpose,
+			Reason:         ReasonClosedLoopFallback,
+			Pool:           KindInternal,
+			Model:          internal.Name,
 			EstimatedTokens: EstimateTokens(orig.Messages),
 		})
 	}
@@ -312,6 +323,13 @@ func (r *RouterProvider) decide(req provider.Request) (decision, error) {
 		if r.cfg.Internal != nil {
 			return decision{Decision: Decision{RequestID: rid, Sensitivity: req.Sensitivity, Purpose: purpose, Pool: KindInternal, Model: r.cfg.Internal.Name, Reason: ReasonQuota, EstimatedTokens: est}, pool: r.cfg.Internal}, nil
 		}
+	}
+
+	// 难度路由（轻量启发式）：简单 execute 请求（token 低于阈值且无工具调用）
+	// → 降级内部池省成本；复杂/带工具调用保持外部。只降级不升级（保守）。
+	if kind == KindExternal && r.cfg.EasyThreshold > 0 && purpose == provider.PurposeExecute &&
+		est < r.cfg.EasyThreshold && !hasToolCalls(req.Messages) && r.cfg.Internal != nil {
+		return decision{Decision: Decision{RequestID: rid, Sensitivity: req.Sensitivity, Purpose: purpose, Pool: KindInternal, Model: r.cfg.Internal.Name, Reason: ReasonDifficulty, EstimatedTokens: est}, pool: r.cfg.Internal}, nil
 	}
 
 	// 窗口预检：目标内部池但内容超窗 → 升级外部池（非强制内部场景）
@@ -450,8 +468,8 @@ type BootConfig struct {
 	Audit                func(Decision)
 	// 假名化字典（真实值 → 保形假名）；redact 出网时应用。
 	PseudoDict map[string]string
-	// OnRestoreFail 输出还原校验失败回调（审计告警）。
-	OnRestoreFail func(issue string)
+	// OnRestoreFail 输出还原校验失败回调（requestID + issue，审计告警/全链路 trace）。
+	OnRestoreFail func(requestID, issue string)
 	// QuotaCheck 外部池可用性检查（配额门禁），nil = 不限。
 	QuotaCheck func() bool
 }

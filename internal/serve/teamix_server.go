@@ -25,6 +25,7 @@ import (
 	"reasonix/internal/modelrouter"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
+	"reasonix/internal/rag"
 	"reasonix/internal/teamixconfig"
 	"reasonix/internal/workflow"
 )
@@ -73,6 +74,11 @@ type TeamixServer struct {
 
 	// quota 三层配额（个人日额 / 全局月额，architect 豁免）；nil = 不限。
 	quota *QuotaTracker
+	// budgetNotified 预算超限致命告警只发一次（P2 预算降档）。
+	budgetNotified atomic.Bool
+
+	// ragIndex 本地机密文档检索索引（P2 本地 RAG）：rag_search 工具读它。
+	ragIndex *rag.Index
 }
 
 func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *TeamixServer {
@@ -88,6 +94,7 @@ func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *Tea
 	ts.globalCfg = ts.loadGlobalConfig()
 	ts.headroomHook = ts.buildHeadroomHook()
 	ts.internalProvider = buildInternalProvider()
+	ts.ragIndex = rag.New()
 	if ts.globalCfg != nil && ts.globalCfg.Config != nil {
 		ts.sensitiveRules = sensitiveRulesFromCfg(ts.globalCfg.Config)
 		auditCfg := ts.globalCfg.Config.Audit
@@ -280,6 +287,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		ExcludeHomeSkills:   true,
 		WrapProvider:        ts.headroomHook,
 		Router:              ts.routerCfg(name),
+		RagIndex:            ts.ragIndex,
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("build controller for %q: %w", name, err)
@@ -514,6 +522,8 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("GET /teamix/offline", ts.withUser(ts.handleOfflineGet))
 	mux.HandleFunc("POST /teamix/offline", ts.withUser(ts.handleOfflineSet))
 	mux.HandleFunc("GET /teamix/audit/ai-logs", ts.withUser(ts.handleAuditLogs))
+	mux.HandleFunc("POST /teamix/rag/index", ts.withUser(ts.handleRagIndex))
+	mux.HandleFunc("POST /teamix/users/external", ts.withUser(ts.handleUserExternalToggle))
 	mux.HandleFunc("GET /checkpoints", ts.withUser(ts.handleCheckpoints))
 	mux.HandleFunc("GET /branches", ts.withUser(ts.handleBranches))
 	mux.HandleFunc("POST /teamix/branch/switch", ts.withUser(ts.handleBranchSwitch))

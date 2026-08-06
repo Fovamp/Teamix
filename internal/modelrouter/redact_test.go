@@ -42,7 +42,7 @@ func redactRouter() *RouterProvider {
 func TestRedactOutboundPseudonymizesAndRestores(t *testing.T) {
 	r := redactRouter()
 	var restoreIssues []string
-	r.OnRestoreFail = func(issue string) { restoreIssues = append(restoreIssues, issue) }
+	r.OnRestoreFail = func(requestID, issue string) { restoreIssues = append(restoreIssues, issue) }
 
 	text, err := streamText(t, r, provider.Request{
 		Purpose:     provider.PurposeExecute,

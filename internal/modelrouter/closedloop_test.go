@@ -31,7 +31,7 @@ func TestClosedLoopFallbackOnHallucination(t *testing.T) {
 		},
 	})
 	var alerts []string
-	r.OnRestoreFail = func(issue string) { alerts = append(alerts, issue) }
+	r.OnRestoreFail = func(requestID, issue string) { alerts = append(alerts, requestID+":"+issue) }
 	var reasons []string
 	r.OnDecision = func(d Decision) { reasons = append(reasons, d.Reason) }
 
@@ -75,7 +75,7 @@ func TestClosedLoopPassThroughOnCleanOutput(t *testing.T) {
 		},
 	})
 	var alerts []string
-	r.OnRestoreFail = func(issue string) { alerts = append(alerts, issue) }
+	r.OnRestoreFail = func(requestID, issue string) { alerts = append(alerts, requestID+":"+issue) }
 
 	text, err := streamText(t, r, provider.Request{
 		Purpose:     provider.PurposeExecute,
