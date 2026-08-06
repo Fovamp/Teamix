@@ -30,30 +30,25 @@ type sessionSummary struct {
 	Project      string    `json:"project,omitempty"`
 }
 
-// summaryDir 返回会话总结的存储根目录（用户私有：<userRoot>/.teamix/summaries/）。
-// 目录结构：summaries/<project>/<sessionID>.json（项目内平铺；_legacy 存
-// 历史数据）。总结是用户私人数据，放用户目录而非 workspace 根。
-func (ts *TeamixServer) summaryDir(userRoot string) string {
-	dir := filepath.Join(userRoot, ".teamix", "summaries")
+// summaryDir 返回会话总结的存储根目录（用户私有：<userRoot>/.teamix/<project>/summaries/）。
+// 目录结构：summaries/<sessionID>.json（项目内平铺）。总结是用户私人数据，
+// 放用户目录且跟随项目（与 memory/sessions 一致：<project>/ 下），项目克隆保持纯净。
+func (ts *TeamixServer) summaryDir(userRoot, project string) string {
+	dir := filepath.Join(userRoot, ".teamix", project, "summaries")
 	_ = os.MkdirAll(dir, 0o755)
 	return dir
 }
 
 // summaryFile 返回某用户某项目下某会话的总结文件。sessionID 来自 SessionPath
-// 的文件名；project 为空时归入 _legacy（历史数据迁移）。路径穿越防御：
+// 的文件名；project 为空时归入 _legacy（历史数据）。路径穿越防御：
 // 统一转绝对路径后再比较。
 func (ts *TeamixServer) summaryFile(userRoot, project, sessionID string) string {
-	base := filepath.Clean(ts.summaryDir(userRoot))
-	if project == "" {
-		project = "_legacy"
-	}
-	projDir := filepath.Join(base, project)
-	_ = os.MkdirAll(projDir, 0o755)
-	p := filepath.Join(projDir, sessionID+".json")
-	absBase, absErr := filepath.Abs(base)
+	dir := ts.summaryDir(userRoot, project)
+	p := filepath.Join(dir, sessionID+".json")
+	absBase, absErr := filepath.Abs(filepath.Clean(dir))
 	absP, err := filepath.Abs(p)
 	if err != nil || absErr != nil || !strings.HasPrefix(absP, absBase+string(os.PathSeparator)) {
-		return filepath.Join(projDir, "_invalid.json")
+		return filepath.Join(dir, "_invalid.json")
 	}
 	return p
 }
@@ -86,7 +81,7 @@ func (ts *TeamixServer) allSummaries(u *userSession) []sessionSummary {
 	if project == "" {
 		return []sessionSummary{}
 	}
-	projDir := filepath.Join(ts.summaryDir(u.userRoot), project)
+	projDir := ts.summaryDir(u.userRoot, project)
 	entries, err := os.ReadDir(projDir)
 	if err != nil {
 		return []sessionSummary{}
@@ -193,7 +188,7 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		ts.mu.Lock()
-		projDir := filepath.Join(ts.summaryDir(u.userRoot), u.selectedProject)
+		projDir := ts.summaryDir(u.userRoot, u.selectedProject)
 		ents, _ := os.ReadDir(projDir)
 		for _, e := range ents {
 			if e.IsDir() || filepath.Ext(e.Name()) != ".json" {

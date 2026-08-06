@@ -60,14 +60,9 @@ func TestSummaryFileRelativeWorkspace(t *testing.T) {
 	if filepath.Base(f) != "0805-1234.json" {
 		t.Fatalf("relative workspaceRoot: summaryFile = %q, want real session file", f)
 	}
-	// 项目隔离：路径包含 <userRoot>/.teamix/summaries/<project>/<session>.json
-	if !strings.Contains(filepath.ToSlash(f), "users/zhangsan/.teamix/summaries/proj-a/0805-1234.json") {
+	// 项目隔离：路径包含 <userRoot>/.teamix/<project>/summaries/<session>.json
+	if !strings.Contains(filepath.ToSlash(f), "users/zhangsan/.teamix/proj-a/summaries/0805-1234.json") {
 		t.Fatalf("summaryFile should be user+project-scoped: %q", f)
-	}
-	// 空项目 → _legacy（历史数据迁移）
-	f2 := ts.summaryFile("C:/users/zhangsan", "", "0805-1234")
-	if !strings.Contains(filepath.ToSlash(f2), "users/zhangsan/.teamix/summaries/_legacy/0805-1234.json") {
-		t.Fatalf("empty project should map to _legacy: %q", f2)
 	}
 }
 

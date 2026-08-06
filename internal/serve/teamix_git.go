@@ -178,7 +178,8 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 	carried := cur.History()
 
 	bc := NewBroadcaster()
-	projSessionDir := filepath.Join(projPath, ".teamix", "sessions")
+	// 会话目录跟随项目但放用户 .teamix 内（保持项目克隆纯净，运行数据不入 git 仓库）
+	projSessionDir := filepath.Join(u.userRoot, ".teamix", body.Project, "sessions")
 	if err := os.MkdirAll(projSessionDir, 0o755); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "create session dir: " + err.Error()})
 		return
