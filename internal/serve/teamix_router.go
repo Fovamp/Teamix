@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -172,9 +173,9 @@ func (ts *TeamixServer) routerCfg(user string) *modelrouter.BootConfig {
 			if d.Pool == modelrouter.KindExternal && ts.quota != nil {
 				ts.quota.Record(user)
 			}
-			// 预算降档（P2）：全局月额超限 → 致命告警一次（审计 + slog）
+			// 预算降档（P2）：全局月额超限 → 致命告警一次（webhook + 审计）
 			if ts.quota != nil && ts.quota.BudgetExceeded() && ts.budgetNotified.CompareAndSwap(false, true) {
-				slog.Error("teamix: monthly external budget exceeded — all external requests degraded to internal", "user", user)
+				ts.notifyCritical("月度外部预算超限", "user="+user+"：所有外部请求已降级到内部 Qwen")
 				if ts.auditWriter != nil {
 					ts.auditWriter.Write(auditlog.Record{
 						RequestID: "budget-exceeded",
@@ -184,6 +185,10 @@ func (ts *TeamixServer) routerCfg(user string) *modelrouter.BootConfig {
 						Alerts:    []string{"[critical] budget_exceeded_global_monthly"},
 					})
 				}
+			}
+			// 泄露事故（信号 ②）：非 public 敏感级却出网 → 致命告警
+			if d.Pool == modelrouter.KindExternal && d.Sensitivity != "" && d.Sensitivity != provider.SensitivityPublic {
+				ts.notifyCritical("敏感内容出网（事故）", "request="+d.RequestID+" user="+user+" sensitivity="+string(d.Sensitivity))
 			}
 		},
 		// 配额门禁 + 用户级禁外网：超限/被禁用 → 柔性降级内部池（用户无感，审计记 quota_exceeded）
@@ -196,7 +201,7 @@ func (ts *TeamixServer) routerCfg(user string) *modelrouter.BootConfig {
 		// 闭环还原失败 → 致命告警 + 审计（假名化漏了/模型幻觉，泄露信号 ③）
 		// 关联原请求 request_id（全链路 trace：可回溯到触发请求）
 		OnRestoreFail: func(requestID, issue string) {
-			slog.Error("teamix: closed-loop detected (potential leak)", "user", user, "request_id", requestID, "issue", issue)
+			ts.notifyCritical("闭环检测命中（疑似泄露）", "request="+requestID+" user="+user+" issue="+issue)
 			if ts.auditWriter != nil {
 				ts.auditWriter.Write(auditlog.Record{
 					RequestID: requestID,
@@ -286,6 +291,31 @@ func (ts *TeamixServer) handleUserExternalToggle(w http.ResponseWriter, r *http.
 	}
 	slog.Info("teamix: user external permission", "by", u.name, "user", body.Name, "allow_external", allow)
 	writeJSON(w, map[string]any{"ok": true, "name": body.Name, "allow_external": allow})
+}
+
+// notifyCritical 致命告警：slog.Error + 企微 webhook（best-effort，配置了才发）。
+// 告警正文已脱敏（只含原因与用户，不含敏感数据——防"在报告路上泄露"）。
+func (ts *TeamixServer) notifyCritical(title, body string) {
+	slog.Error("teamix: "+title, "detail", body)
+	if ts.alertWebhook == "" {
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"msgtype": "text",
+		"text":    map[string]string{"content": "【Teamix 安全告警】" + title + "\n" + body},
+	})
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequest(http.MethodPost, ts.alertWebhook, strings.NewReader(string(payload)))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		slog.Warn("teamix: alert webhook send failed", "err", err)
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 // auditRecord 把路由决策转成审计记录（操作流向：哪一步走哪个模型、是否出网）。

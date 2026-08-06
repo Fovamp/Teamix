@@ -79,6 +79,9 @@ type TeamixServer struct {
 
 	// ragIndex 本地机密文档检索索引（P2 本地 RAG）：rag_search 工具读它。
 	ragIndex *rag.Index
+
+	// alertWebhook 企微机器人 webhook（致命告警渠道，.teamix/config.yaml alert 段）。
+	alertWebhook string
 }
 
 func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *TeamixServer {
@@ -95,6 +98,9 @@ func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *Tea
 	ts.headroomHook = ts.buildHeadroomHook()
 	ts.internalProvider = buildInternalProvider()
 	ts.ragIndex = rag.New()
+	if ts.globalCfg != nil && ts.globalCfg.Config != nil {
+		ts.alertWebhook = ts.globalCfg.Config.Alert.WebhookURL
+	}
 	if ts.globalCfg != nil && ts.globalCfg.Config != nil {
 		ts.sensitiveRules = sensitiveRulesFromCfg(ts.globalCfg.Config)
 		auditCfg := ts.globalCfg.Config.Audit
@@ -522,6 +528,7 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("GET /teamix/offline", ts.withUser(ts.handleOfflineGet))
 	mux.HandleFunc("POST /teamix/offline", ts.withUser(ts.handleOfflineSet))
 	mux.HandleFunc("GET /teamix/audit/ai-logs", ts.withUser(ts.handleAuditLogs))
+	mux.HandleFunc("GET /teamix/audit/report", ts.withUser(ts.handleAuditReport))
 	mux.HandleFunc("POST /teamix/rag/index", ts.withUser(ts.handleRagIndex))
 	mux.HandleFunc("POST /teamix/users/external", ts.withUser(ts.handleUserExternalToggle))
 	mux.HandleFunc("GET /checkpoints", ts.withUser(ts.handleCheckpoints))

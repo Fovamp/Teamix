@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"reasonix/internal/provider"
 )
@@ -50,14 +51,89 @@ type Pool struct {
 
 	initOnce sync.Once
 	sem      chan struct{}
+
+	// 被动健康检查（P3）：每候选熔断状态。失败标记 unhealthy（冷却期跳过），
+	// 冷却后自动恢复；成功标记 healthy。rr 轮询做负载均衡。
+	rr     atomic.Uint64
+	health []*candidateHealth
 }
+
+// candidateHealth 单个候选的健康状态（熔断）。
+type candidateHealth struct {
+	healthy atomic.Bool
+	until   atomic.Int64 // 熔断截止 unixnano；0 = 未熔断
+}
+
+const circuitCooldown = 30 * time.Second
 
 func (p *Pool) ensure() {
 	p.initOnce.Do(func() {
 		if p.MaxParallel > 0 {
 			p.sem = make(chan struct{}, p.MaxParallel)
 		}
+		p.health = make([]*candidateHealth, len(p.Providers))
+		for i := range p.health {
+			h := &candidateHealth{}
+			h.healthy.Store(true)
+			p.health[i] = h
+		}
 	})
+}
+
+// SelectProvider 轮询选择健康候选（跳过熔断中的），返回候选下标与 provider。
+// 全部熔断时退化为轮询第一个（由调用方的降级链兜底）。
+func (p *Pool) SelectProvider() (int, provider.Provider) {
+	p.ensure()
+	n := len(p.Providers)
+	if n == 0 {
+		return -1, nil
+	}
+	start := int(p.rr.Add(1)-1) % n
+	for i := 0; i < n; i++ {
+		idx := (start + i) % n
+		h := p.health[idx]
+		if h.healthy.Load() && (h.until.Load() == 0 || time.Now().UnixNano() >= h.until.Load()) {
+			if !h.healthy.Load() {
+				h.healthy.Store(true) // 冷却结束自动恢复
+			}
+			return idx, p.Providers[idx]
+		}
+	}
+	// 全部熔断：返回轮询首个（由上层 fallback 处理）
+	return start, p.Providers[start]
+}
+
+// MarkFailed 熔断指定候选（30s 冷却）。
+func (p *Pool) MarkFailed(idx int) {
+	p.ensure()
+	if idx < 0 || idx >= len(p.health) {
+		return
+	}
+	h := p.health[idx]
+	h.healthy.Store(false)
+	h.until.Store(time.Now().Add(circuitCooldown).UnixNano())
+}
+
+// MarkHealthy 恢复指定候选（熔断前也立即恢复）。
+func (p *Pool) MarkHealthy(idx int) {
+	p.ensure()
+	if idx < 0 || idx >= len(p.health) {
+		return
+	}
+	h := p.health[idx]
+	h.healthy.Store(true)
+	h.until.Store(0)
+}
+
+// Health 返回每候选健康状态（诊断接口用）：name → healthy。
+func (p *Pool) Health() map[string]bool {
+	p.ensure()
+	out := make(map[string]bool, len(p.Providers))
+	for i, prov := range p.Providers {
+		h := p.health[i]
+		out[prov.Name()] = h.healthy.Load() && (h.until.Load() == 0 || time.Now().UnixNano() >= h.until.Load())
+	}
+	return out
 }
 
 // Config 是路由配置。Internal/External 可独立为空（对应池不可用时 fail-closed 兜底）。
@@ -85,7 +161,14 @@ type Config struct {
 	// 低于此值且无工具调用 → 判定"简单"→ 降级内部池省成本（ReasonDifficulty）。
 	// <=0 禁用。
 	EasyThreshold int
+
+	// AcquireTimeout 池并发闸排队超时（过载保护，P3）：超过此时间仍未获得
+	// 并发槽 → 视为池过载（ErrPoolBusy），由 Stream 降级或报错。<=0 默认 15s。
+	AcquireTimeout time.Duration
 }
+
+// ErrPoolBusy 表示池并发闸排队超时（过载）。
+var ErrPoolBusy = fmt.Errorf("modelrouter: pool busy (overloaded)")
 
 // ReasonQuota = 配额/预算超限，外部请求柔性降级内部。
 const ReasonQuota = "quota_exceeded_fallback_internal"
@@ -155,11 +238,14 @@ func (r *RouterProvider) Stream(ctx context.Context, req provider.Request) (<-ch
 	}
 	ch, err := r.streamPool(ctx, req, pool)
 	if err != nil {
-		// 启动即失败 → 降级到另一池（fail-closed 语义）
-		if alt := r.altPool(d); alt != nil {
-			d2 := d.withPool(alt, reasonForFallback(pool.Kind))
-			r.emit(d2.Decision)
-			return r.streamPool(ctx, req, alt)
+		// 启动即失败（含过载 ErrPoolBusy）→ 降级另一池（fail-closed 语义）。
+		// forceInternal 的请求（guard/敏感/离线/配额）禁止降级外部——直接报错。
+		if !d.forceInternal {
+			if alt := r.altPool(d); alt != nil {
+				d2 := d.withPool(alt, reasonForFallback(pool.Kind))
+				r.emit(d2.Decision)
+				return r.streamPool(ctx, req, alt)
+			}
 		}
 		return nil, err
 	}
@@ -257,6 +343,9 @@ func (r *RouterProvider) closedLoopFallback(ctx context.Context, orig provider.R
 type decision struct {
 	Decision
 	pool *Pool
+	// forceInternal 强制内部：guard/compress、敏感裁决、离线模式、配额降级等。
+	// true 时过载/失败**禁止降级外部池**（fail-closed，防泄露）。
+	forceInternal bool
 }
 
 func (d decision) withPool(p *Pool, reason string) decision {
@@ -279,7 +368,7 @@ func (r *RouterProvider) decide(req provider.Request) (decision, error) {
 	// 强制内部用途：guardian/compress（内容天然敏感，fail-closed）
 	if purpose == provider.PurposeGuard || purpose == provider.PurposeCompress {
 		if r.cfg.Internal != nil {
-			return decision{Decision: Decision{RequestID: rid, Sensitivity: req.Sensitivity, Purpose: purpose, Pool: KindInternal, Model: r.cfg.Internal.Name, Reason: ReasonGuardInternal, EstimatedTokens: est}, pool: r.cfg.Internal}, nil
+			return decision{Decision: Decision{RequestID: rid, Sensitivity: req.Sensitivity, Purpose: purpose, Pool: KindInternal, Model: r.cfg.Internal.Name, Reason: ReasonGuardInternal, EstimatedTokens: est}, pool: r.cfg.Internal, forceInternal: true}, nil
 		}
 		return decision{}, fmt.Errorf("modelrouter: %s requires internal pool but none configured", purpose)
 	}
@@ -288,7 +377,7 @@ func (r *RouterProvider) decide(req provider.Request) (decision, error) {
 	// system 提示词含内部标记 → 一律强制内部池（fail-closed）。
 	if reason := r.securityForceReason(req); reason != "" {
 		if r.cfg.Internal != nil {
-			return decision{Decision: Decision{RequestID: rid, Sensitivity: req.Sensitivity, Purpose: purpose, Pool: KindInternal, Model: r.cfg.Internal.Name, Reason: reason, EstimatedTokens: est}, pool: r.cfg.Internal}, nil
+			return decision{Decision: Decision{RequestID: rid, Sensitivity: req.Sensitivity, Purpose: purpose, Pool: KindInternal, Model: r.cfg.Internal.Name, Reason: reason, EstimatedTokens: est}, pool: r.cfg.Internal, forceInternal: true}, nil
 		}
 		return decision{}, fmt.Errorf("modelrouter: sensitive content requires internal pool but none configured")
 	}
@@ -296,7 +385,7 @@ func (r *RouterProvider) decide(req provider.Request) (decision, error) {
 	// 离线模式：全走内部
 	if r.cfg.Offline {
 		if r.cfg.Internal != nil {
-			return decision{Decision: Decision{RequestID: rid, Sensitivity: req.Sensitivity, Purpose: purpose, Pool: KindInternal, Model: r.cfg.Internal.Name, Reason: ReasonOffline, EstimatedTokens: est}, pool: r.cfg.Internal}, nil
+			return decision{Decision: Decision{RequestID: rid, Sensitivity: req.Sensitivity, Purpose: purpose, Pool: KindInternal, Model: r.cfg.Internal.Name, Reason: ReasonOffline, EstimatedTokens: est}, pool: r.cfg.Internal, forceInternal: true}, nil
 		}
 	}
 
@@ -321,7 +410,7 @@ func (r *RouterProvider) decide(req provider.Request) (decision, error) {
 	// 配额门禁：外部池不可用（配额超限）→ 柔性降级内部池（不报错，用户无感）
 	if kind == KindExternal && r.cfg.QuotaCheck != nil && !r.cfg.QuotaCheck() {
 		if r.cfg.Internal != nil {
-			return decision{Decision: Decision{RequestID: rid, Sensitivity: req.Sensitivity, Purpose: purpose, Pool: KindInternal, Model: r.cfg.Internal.Name, Reason: ReasonQuota, EstimatedTokens: est}, pool: r.cfg.Internal}, nil
+			return decision{Decision: Decision{RequestID: rid, Sensitivity: req.Sensitivity, Purpose: purpose, Pool: KindInternal, Model: r.cfg.Internal.Name, Reason: ReasonQuota, EstimatedTokens: est}, pool: r.cfg.Internal, forceInternal: true}, nil
 		}
 	}
 
@@ -379,10 +468,16 @@ func (r *RouterProvider) streamPool(ctx context.Context, req provider.Request, p
 		return nil, fmt.Errorf("modelrouter: pool %s has no providers", pool.Name)
 	}
 	if pool.sem != nil {
+		timeout := r.cfg.AcquireTimeout
+		if timeout <= 0 {
+			timeout = 15 * time.Second
+		}
 		select {
 		case pool.sem <- struct{}{}:
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case <-time.After(timeout):
+			return nil, ErrPoolBusy
 		}
 	}
 	// 故障分层：外部池短时抖动自动重试最多 2 次（仅非机密请求）；
@@ -391,10 +486,12 @@ func (r *RouterProvider) streamPool(ctx context.Context, req provider.Request, p
 	if pool.Kind == KindExternal && (req.Sensitivity == "" || req.Sensitivity == provider.SensitivityPublic) {
 		maxRetries = 2
 	}
-	p := pool.Providers[0]
+	idx, p := pool.SelectProvider()
+	var lastErr error
 	for attempt := 0; ; attempt++ {
 		ch, err := p.Stream(ctx, req)
 		if err == nil {
+			pool.MarkHealthy(idx)
 			// 流生命周期结束（channel 关闭）时释放并发闸
 			out := make(chan provider.Chunk)
 			go func() {
@@ -410,11 +507,14 @@ func (r *RouterProvider) streamPool(ctx context.Context, req provider.Request, p
 			}()
 			return out, nil
 		}
+		lastErr = err
 		if attempt >= maxRetries {
 			if pool.sem != nil {
 				<-pool.sem
 			}
-			return nil, err
+			// 被动健康检查：连续失败 → 熔断该候选（30s 冷却跳过）
+			pool.MarkFailed(idx)
+			return nil, lastErr
 		}
 	}
 }

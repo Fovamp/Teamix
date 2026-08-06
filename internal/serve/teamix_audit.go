@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"reasonix/internal/auditlog"
 )
@@ -55,6 +57,74 @@ func (ts *TeamixServer) handleAuditLogs(w http.ResponseWriter, r *http.Request, 
 		out = []auditlog.Record{}
 	}
 	writeJSON(w, map[string]any{"records": out, "total": len(out)})
+}
+
+// auditReportDay 单日聚合。
+type auditReportDay struct {
+	Date        string `json:"date"`
+	Total       int    `json:"total"`
+	Outbound    int    `json:"outbound"`    // 出了网的外部调用
+	Critical    int    `json:"critical"`    // [critical] 告警数（含事故/闭环）
+	ClosedLoop  int    `json:"closed_loop"` // 闭环检测命中数
+}
+
+// handleAuditReport 审计周报（仅 architect）：按天聚合最近 N 天（默认 7）
+// 的 AI 调用记录——出网/内部次数、致命告警、闭环命中。泄露审计日常视图。
+func (ts *TeamixServer) handleAuditReport(w http.ResponseWriter, r *http.Request, u *userSession) {
+	if !ts.isArchitect(u) {
+		http.Error(w, "仅架构师可查看审计周报", http.StatusForbidden)
+		return
+	}
+	days := 7
+	if v := r.URL.Query().Get("days"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 90 {
+			days = n
+		}
+	}
+	records, err := ts.readAuditLogs("", "")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	cutoff := time.Now().AddDate(0, 0, -days)
+	byDay := map[string]*auditReportDay{}
+	var order []string
+	for _, rec := range records {
+		if rec.Time.Before(cutoff) {
+			continue
+		}
+		key := rec.Time.Format("2006-01-02")
+		d, ok := byDay[key]
+		if !ok {
+			d = &auditReportDay{Date: key}
+			byDay[key] = d
+			order = append(order, key)
+		}
+		d.Total++
+		if rec.Outbound.Sent {
+			d.Outbound++
+		}
+		for _, a := range rec.Alerts {
+			if strings.HasPrefix(a, "[critical]") {
+				d.Critical++
+				if strings.Contains(a, "closed_loop") {
+					d.ClosedLoop++
+				}
+			}
+		}
+	}
+	sort.Strings(order)
+	out := make([]auditReportDay, 0, len(order))
+	totals := auditReportDay{Date: "合计"}
+	for _, k := range order {
+		d := byDay[k]
+		out = append(out, *d)
+		totals.Total += d.Total
+		totals.Outbound += d.Outbound
+		totals.Critical += d.Critical
+		totals.ClosedLoop += d.ClosedLoop
+	}
+	writeJSON(w, map[string]any{"days": out, "totals": totals})
 }
 
 // readAuditLogs 读取审计目录下的 JSONL 记录，按时间倒序（最新在前）。

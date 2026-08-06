@@ -28,6 +28,12 @@ type Config struct {
 	Sensitive SensitiveConfig `yaml:"sensitive,omitempty"`
 	Audit     AuditConfig     `yaml:"audit,omitempty"`
 	Quota     QuotaConfig     `yaml:"quota,omitempty"`
+	Alert     AlertConfig     `yaml:"alert,omitempty"`
+}
+
+// AlertConfig 致命告警渠道（P3）：企微机器人 webhook URL。空 = 仅日志/审计。
+type AlertConfig struct {
+	WebhookURL string `yaml:"webhook_url,omitempty"` // 企业微信群机器人 webhook
 }
 
 // QuotaConfig 三层配额（出网请求次数）：个人日额 + 全局月额（architect 豁免）。
