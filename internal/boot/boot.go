@@ -180,6 +180,9 @@ type Options struct {
 	// MemoryGlobalDir 覆盖全局记忆目录（Teamix：GlobalProject/.teamix/memory/<项目>，
 	// 架构师经 UI 维护，agent 只读引用）。空 = 默认用户级。
 	MemoryGlobalDir string
+	// MemorySlugFlat Teamix：项目已由 MemoryUserDir 表达，拍平 private 下的
+	// 路径哈希层（Dir = userDir/private/）。单机不设（保留 private/<slug>）。
+	MemorySlugFlat bool
 }
 
 // Build loads config, resolves the model(s), and returns a Controller wrapping a
@@ -409,6 +412,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if opts.MemoryGlobalDir != "" {
 		mem.Store.GlobalDir = opts.MemoryGlobalDir
 		mem.Store.ReadOnlyGlobal = true
+	}
+	// Teamix：项目已由 MemoryUserDir 表达（memory/<项目> 或 tmp），
+	// private 下的路径哈希层冗余 → 拍平为 userDir/private/（目录名清晰）。
+	// 单机 reasonix 不设此标志，保留 private/<slug>（userDir 固定需 slug 区分项目）。
+	if opts.MemorySlugFlat {
+		mem.Store.Dir = filepath.Dir(mem.Store.Dir)
 	}
 	projectChecks := instruction.ExtractHostChecks(mem.Docs)
 	sysPrompt = memory.Compose(sysPrompt, mem)

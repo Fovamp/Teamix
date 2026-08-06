@@ -303,11 +303,12 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		Stderr:              os.Stderr,
 		TokenMode:           ts.profile,
 		WorkspaceRoot:       userRoot,
-		SessionDir:          filepath.Join(userRoot, ".teamix", "sessions"),
+		SessionDir:          filepath.Join(userRoot, ".teamix", "tmp", "sessions"), // 未选项目：临时会话进 tmp
 		SharedHost:          ts.sharedHost,
 		ExcludedPluginNames: ts.excludedMachineMCPNames(),
-		MemoryUserDir:       filepath.Join(userRoot, ".teamix", "memory"), // 记忆：未选项目默认态
-		MemoryCompilerDir:   filepath.Join(userRoot, ".teamix", "memory", "compiler"),
+		MemoryUserDir:       filepath.Join(userRoot, ".teamix", "tmp", "memory"), // 未选项目：临时记忆进 tmp（与项目隔离不互通）
+		MemoryCompilerDir:   filepath.Join(userRoot, ".teamix", "tmp", "memory", "compiler"),
+		MemorySlugFlat:      true,
 		ExcludeHomeSkills:   true,
 		WrapProvider:        ts.headroomHook,
 		Router:              ts.routerCfg(name),
