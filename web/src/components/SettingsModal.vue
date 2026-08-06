@@ -355,7 +355,7 @@ async function renderMemory() {
 // 安全 tab：机密清单（dirs/files）可视化编辑，仅 architect 可写。
 async function renderSensitive() {
   const q = tokenQuery()
-  contentHtml.value = '<div class="section"><h3>\ud83d\udee1\ufe0f \u5b89\u5168</h3><p class="desc">\u673a\u5bc6\u6e05\u5355\uff1aAI \u5de5\u5177\u8bd5\u56fe\u8bbf\u95ee\u4ee5\u4e0b\u76ee\u5f55/\u6587\u4ef6\u65f6\u5c06\u76f4\u63a5\u62e6\u622a\uff08\u4e0d\u8bfb\u53d6\u5185\u5bb9\uff09\u3002</p></div><div id="sensitive-render">\u52a0\u8f7d\u4e2d...</div>'
+  contentHtml.value = '<div class="section"><h3>🛡 安全</h3><p class="desc">机密清单：AI 工具试图访问以下目录/文件时将直接拦截（不读取内容）。修改后下次新会话/切模型生效。</p></div><div id="sensitive-render">加载中...</div>'
   try {
     let role = ""
     try {
@@ -367,19 +367,23 @@ async function renderSensitive() {
     const data = await resp.json()
     const dirs: string[] = data.dirs || []
     const files: string[] = data.files || []
-    let h = '<div class="section"><h3>\ud83d\udee1\ufe0f \u5b89\u5168</h3><p class="desc">\u673a\u5bc6\u6e05\u5355\uff1aAI \u5de5\u5177\u8bd5\u56fe\u8bbf\u95ee\u4ee5\u4e0b\u76ee\u5f55/\u6587\u4ef6\u65f6\u5c06\u76f4\u63a5\u62e6\u622a\uff08\u4e0d\u8bfb\u53d6\u5185\u5bb9\uff09\u3002\u66f4\u6539\u540e\u4e0b\u6b21\u65b0\u4f1a\u8bdd/\u5207\u6a21\u578b\u751f\u6548\u3002</p></div>'
-    h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u673a\u5bc6\u76ee\u5f55\uff08\u6bcf\u884c\u4e00\u4e2a\uff0c\u524d\u7f00\u5339\u914d\uff0c\u5982 tenders/ data/ secrets/）</label><textarea id="sens-dirs" style="min-height:90px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)" placeholder="tenders/">' + escH(dirs.join("\n")) + '</textarea></div>'
-    h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u673a\u5bc6\u6587\u4ef6\uff08\u6bcf\u884c\u4e00\u4e2a\uff0cglob \u5339\u914d\uff0c\u5982 .env *.pem）</label><textarea id="sens-files" style="min-height:70px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)" placeholder=".env">' + escH(files.join("\n")) + '</textarea></div>'
+    const taStyle = 'width:100%;min-height:96px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono);box-sizing:border-box;resize:vertical;line-height:1.6'
+    const labStyle = 'display:block;font-size:12px;color:var(--fg);font-weight:500;margin:0 0 4px'
+    const hintStyle = 'font-size:11px;color:var(--muted-2);font-weight:400;margin-left:6px'
+    let h = '<div class="section"><h3>🛡 安全</h3><p class="desc">机密清单：AI 工具试图访问以下目录/文件时将直接拦截（不读取内容）。修改后下次新会话/切模型生效。</p></div>'
+    h += '<div style="margin-bottom:14px"><label style="' + labStyle + '">机密目录<span style="' + hintStyle + '">每行一个，前缀匹配，如 tenders/ data/ secrets/</span></label><textarea id="sens-dirs" style="' + taStyle + '" placeholder="tenders/">' + escH(dirs.join("\n")) + '</textarea></div>'
+    h += '<div style="margin-bottom:14px"><label style="' + labStyle + '">机密文件<span style="' + hintStyle + '">每行一个，glob 匹配，如 .env *.pem</span></label><textarea id="sens-files" style="' + taStyle + '" placeholder=".env">' + escH(files.join("\n")) + '</textarea></div>'
     if (isArch) {
-      h += '<div style="margin-top:6px"><button class="btn primary" onclick="saveSensitive()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58\u673a\u5bc6\u6e05\u5355</button> <span id="sens-msg" style="font-size:12px;color:var(--muted-2);margin-left:8px"></span></div>'
+      h += '<div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:4px"><span id="sens-msg" style="font-size:12px;color:var(--muted-2)"></span><button class="btn primary" onclick="saveSensitive()" style="padding:7px 20px;border:none;border-radius:6px;background:var(--accent);color:#000;font-size:12px;font-weight:500;cursor:pointer">保存机密清单</button></div>'
     } else {
-      h += '<div style="color:var(--muted-2);font-size:12px;margin-top:8px">\u4ec5\u67b6\u6784\u5e08\u53ef\u4fee\u6539\u673a\u5bc6\u6e05\u5355</div>'
+      h += '<div style="color:var(--muted-2);font-size:12px;margin-top:8px">仅架构师可修改机密清单</div>'
     }
     contentHtml.value = h
   } catch (e: any) {
-    contentHtml.value = '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25: ' + e.message + '</div>'
+    contentHtml.value = '<div style="color:#f44336;padding:12px">加载失败: ' + e.message + '</div>'
   }
 }
+
 
 function personaCard(p: any, canEdit: boolean) {
   const scope = p.scope
@@ -459,13 +463,14 @@ async function renderSoul() {
 // AI 审计面板（仅架构师）：AI 调用操作流向 + 泄露三信号（出网/事故/告警）。
 async function renderAudit() {
   const q = tokenQuery()
-  let h = '<div class="section"><h3>🛡️ AI 审计</h3><p class="desc">AI 调用操作流向：每次模型请求走了哪个模型、是否出网、如何脱敏（仅架构师）。红色 = 泄露事故（非 public 却出网 / 闭环检测命中）。</p></div>'
-  h += '<div class="section" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
-  h += '<input id="audit-user" placeholder="用户（空=全部）" style="padding:4px 8px;font-size:12px;width:110px">'
-  h += '<input id="audit-date" placeholder="日期 YYYY-MM-DD" style="padding:4px 8px;font-size:12px;width:130px">'
-  h += '<label style="font-size:12px"><input type="checkbox" id="audit-outbound"> 只看出了网的</label>'
-  h += '<label style="font-size:12px"><input type="checkbox" id="audit-alert"> 只看告警</label>'
-  h += '<button class="btn primary" onclick="auditLoad()" style="padding:4px 12px;font-size:12px">查询</button>'
+  let h = '<div class="section"><h3>🛡 AI 审计</h3><p class="desc">AI 调用操作流向：每次模型请求走了哪个模型、是否出网、如何脱敏（仅架构师）。红色 = 泄露事故（非 public 却出网 / 闭环检测命中）。</p></div>'
+  const inpStyle = 'padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);outline:none'
+  h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
+  h += '<input id="audit-user" placeholder="用户（空=全部）" style="' + inpStyle + ';width:120px">'
+  h += '<input id="audit-date" placeholder="日期 YYYY-MM-DD" style="' + inpStyle + ';width:140px">'
+  h += '<label style="font-size:12px;color:var(--fg);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="audit-outbound"> 只看出了网的</label>'
+  h += '<label style="font-size:12px;color:var(--fg);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="audit-alert"> 只看告警</label>'
+  h += '<button class="btn primary" onclick="auditLoad()" style="margin-left:auto;padding:6px 18px;border:none;border-radius:6px;background:var(--accent);color:#000;font-size:12px;font-weight:500;cursor:pointer">查询</button>'
   h += '</div><div id="audit-render" style="margin-top:8px">'
   h += await auditRows(q, "", "", false, false)
   h += '</div>'
@@ -479,6 +484,7 @@ async function renderAudit() {
     if (box) box.innerHTML = await auditRows(q, u, d, ob, al)
   }
 }
+
 
 async function auditRows(q: string, user: string, date: string, outbound: boolean, alert: boolean): Promise<string> {
   const params = new URLSearchParams()
@@ -496,13 +502,24 @@ async function auditRows(q: string, user: string, date: string, outbound: boolea
     let h = ''
     for (const r of recs) {
       const critical = (r.alerts || []).some((a: string) => a.includes("[critical]"))
-      const sent = r.outbound?.sent ? "✅ 出网" : "🔒 内网"
+      const sent = r.outbound?.sent
       const sens = r.sensitivity || "未标记"
+      const sentBadge = sent
+        ? '<span style="font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(76,175,80,.15);color:#4caf50;margin-left:8px">出网</span>'
+        : '<span style="font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(150,150,150,.15);color:var(--muted-2);margin-left:8px">内网</span>'
+      const sensColor = sens === "public" ? '#4caf50' : sens === "redact" ? '#2196f3' : '#ff9800'
+      const sensBadge = sens !== "未标记"
+        ? '<span style="font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(128,128,128,.12);color:' + sensColor + ';margin-left:6px">' + escH(sens) + '</span>'
+        : ''
       const trace = (r.trace || []).map((s: any) => `${s.step}:${s.model || ""}(${s.reason || ""})`).join(" → ")
-      h += '<div style="border:1px solid ' + (critical ? "#f44336" : "var(--border,rgba(128,128,128,.2))") + ';border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:12px;line-height:1.5">'
-      h += '<div><b>' + escH(r.time ? new Date(r.time).toLocaleString() : "") + '</b> · ' + escH(r.user || "") + ' · ' + escH(r.purpose || "") + ' · ' + sent + ' · 敏感级:' + escH(sens) + '</div>'
-      h += '<div style="color:var(--muted-2)">' + escH(trace) + '</div>'
-      if (r.alerts && r.alerts.length) h += '<div style="color:' + (critical ? "#f44336" : "#e6a23c") + '">⚠ ' + escH(r.alerts.join("; ")) + '</div>'
+      h += '<div style="border:1px solid ' + (critical ? "rgba(244,67,54,.5)" : "var(--border,rgba(128,128,128,.2))") + ';border-radius:8px;padding:10px 12px;margin-bottom:8px;font-size:12px;line-height:1.6;background:' + (critical ? "rgba(244,67,54,.05)" : "var(--bg-2)") + '">'
+      h += '<div style="display:flex;align-items:center;flex-wrap:wrap"><b>' + escH(r.time ? new Date(r.time).toLocaleString() : "") + '</b>'
+      h += '<span style="margin-left:8px;color:var(--muted-2)">' + escH(r.user || "") + '</span>'
+      h += '<span style="margin-left:8px;color:var(--fg)">' + escH(r.purpose || "") + '</span>'
+      h += sentBadge + sensBadge
+      h += '</div>'
+      h += '<div style="color:var(--muted-2);margin-top:4px;font-size:11px;word-break:break-all">' + escH(trace) + '</div>'
+      if (r.alerts && r.alerts.length) h += '<div style="color:' + (critical ? "#f44336" : "#e6a23c") + ';margin-top:4px;font-weight:500">⚠ ' + escH(r.alerts.join("; ")) + '</div>'
       h += '</div>'
     }
     return h
