@@ -7,15 +7,78 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 	"reasonix/internal/config"
 	"reasonix/internal/keypool"
+	"reasonix/internal/teamixconfig"
+	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 // Configuration, MCP, Skills, and Secrets management handlers.
+
+// GET /teamix/sensitive 返回当前生效的机密清单（dirs/files，所有人可读）。
+func (ts *TeamixServer) handleSensitiveGet(w http.ResponseWriter, _ *http.Request, _ *userSession) {
+	dirs, files := []string{}, []string{}
+	if ts.globalCfg != nil && ts.globalCfg.Config != nil {
+		dirs, files = ts.globalCfg.Config.Sensitive.Dirs, ts.globalCfg.Config.Sensitive.Files
+	}
+	if dirs == nil {
+		dirs = []string{}
+	}
+	if files == nil {
+		files = []string{}
+	}
+	writeJSON(w, map[string]any{"dirs": dirs, "files": files})
+}
+
+// POST /teamix/sensitive {dirs, files} 保存机密清单（仅 architect）。
+// 写入独立文件 .teamix/sensitive.yaml（不碰 config.yaml 其他段），
+// 下次会话构建热加载生效（currentSensitiveRules 每次 Build 重读）。
+func (ts *TeamixServer) handleSensitiveSet(w http.ResponseWriter, r *http.Request, u *userSession) {
+	if !ts.isArchitect(u) {
+		http.Error(w, "仅架构师可修改机密清单", http.StatusForbidden)
+		return
+	}
+	var body struct {
+		Dirs  []string `json:"dirs"`
+		Files []string `json:"files"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// 服务端校验（与前端一致）：去空白、去空条目、去注释——空字符串条目会让
+	// 前缀匹配恒真（HasPrefix(p,"")==true），导致全部文件工具被拦（功能瘫痪）。
+	sc := teamixconfig.SensitiveConfig{
+		Dirs:  cleanSensitiveList(body.Dirs),
+		Files: cleanSensitiveList(body.Files),
+	}
+	if err := teamixconfig.SaveSensitiveOverlay(ts.workspaceRoot, sc); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// 即时更新内存快照（新会话构建时 currentSensitiveRules 重读 Load 也会带上）
+	if ts.globalCfg != nil && ts.globalCfg.Config != nil {
+		ts.globalCfg.Config.Sensitive = sc
+	}
+	slog.Info("teamix: sensitive list updated", "by", u.name, "dirs", len(sc.Dirs), "files", len(sc.Files))
+	writeJSON(w, map[string]any{"ok": true, "dirs": sc.Dirs, "files": sc.Files})
+}
+
+// cleanSensitiveList 过滤空白/注释条目，防止空串进机密清单。
+func cleanSensitiveList(items []string) []string {
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		it = strings.TrimSpace(it)
+		if it == "" || strings.HasPrefix(it, "#") {
+			continue
+		}
+		out = append(out, it)
+	}
+	return out
+}
 
 // globalSoulPath 返回全局 AI 人格（Soul）配置文件路径。
 // 仿 mcp.json：全局单文件，架构师维护，全员继承（用户私有 soul 可覆盖）。
@@ -375,9 +438,6 @@ func (ts *TeamixServer) handleSoulActivate(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-
-
-
 func (ts *TeamixServer) handleSecretsStatus(w http.ResponseWriter, r *http.Request, u *userSession) {
 	keys := ts.keyPool.List()
 	enabled := make(map[string]bool)
@@ -391,7 +451,6 @@ func (ts *TeamixServer) handleSecretsStatus(w http.ResponseWriter, r *http.Reque
 		"target":   ts.keyPool.TargetEnv(),
 	})
 }
-
 
 func (ts *TeamixServer) handleSecretsSet(w http.ResponseWriter, r *http.Request, u *userSession) {
 	if !ts.isArchitect(u) {
@@ -427,7 +486,6 @@ func (ts *TeamixServer) handleSecretsSet(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-
 func (ts *TeamixServer) handleSecretsDelete(w http.ResponseWriter, r *http.Request, u *userSession) {
 	if !ts.isArchitect(u) {
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -450,7 +508,6 @@ func (ts *TeamixServer) handleSecretsDelete(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-
 func (ts *TeamixServer) handleKeyPoolStrategy(w http.ResponseWriter, r *http.Request, u *userSession) {
 	if !ts.isArchitect(u) {
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -469,23 +526,24 @@ func (ts *TeamixServer) handleKeyPoolStrategy(w http.ResponseWriter, r *http.Req
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-
 func (ts *TeamixServer) handleMCPServers(w http.ResponseWriter, r *http.Request, u *userSession) {
 	type toolInfo struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 	}
 	type serverView struct {
-		Name      string     `json:"name"`
-		Transport string     `json:"transport"`
-		Tools     int        `json:"tools"`
-		ToolList  []toolInfo `json:"toolList"`
-		Status    string     `json:"status"`
-		Error     string     `json:"error"`
-		Source    string     `json:"source"` // "global" | "user"
+		Name        string     `json:"name"`
+		Transport   string     `json:"transport"`
+		Tools       int        `json:"tools"`
+		ToolList    []toolInfo `json:"toolList"`
+		Status      string     `json:"status"`
+		Error       string     `json:"error"`
+		Source      string     `json:"source"`      // "global" | "user"
+		Sensitivity string     `json:"sensitivity"` // 数据源敏感级声明（空 = 未声明 → internal 兜底）
 	}
 	// 真实来源：name 在公共 mcp.json 中 → global，否则 user（私有）。
 	global := ts.loadGlobalMCPServers()
+	sensByServer := ts.mcpSensitivityMap(u.userRoot)
 	var out []serverView
 	host := u.ctrl.Host()
 	if host != nil {
@@ -500,6 +558,7 @@ func (ts *TeamixServer) handleMCPServers(w http.ResponseWriter, r *http.Request,
 			}
 			out = append(out, serverView{
 				Name: s.Name, Transport: s.Transport, Tools: s.Tools, ToolList: tools, Status: "connected", Source: src,
+				Sensitivity: string(sensByServer[s.Name]),
 			})
 		}
 		for _, f := range host.Failures() {
@@ -509,6 +568,7 @@ func (ts *TeamixServer) handleMCPServers(w http.ResponseWriter, r *http.Request,
 			}
 			out = append(out, serverView{
 				Name: f.Name, Transport: f.Transport, Status: "failed", Error: f.Error, Source: src,
+				Sensitivity: string(sensByServer[f.Name]),
 			})
 		}
 	}
@@ -518,15 +578,15 @@ func (ts *TeamixServer) handleMCPServers(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, out)
 }
 
-
 func (ts *TeamixServer) handleSkillsList(w http.ResponseWriter, r *http.Request, u *userSession) {
 	type skillView struct {
 		Name        string `json:"name"`
 		Enabled     bool   `json:"enabled"`
 		Scope       string `json:"scope"`
 		Description string `json:"description"`
-		Source      string `json:"source"` // "global" | "user"
-		mod         int64  `json:"-"`      // 文件修改时间，用于排序
+		Sensitivity string `json:"sensitivity"` // 数据源敏感级声明（空 = 未声明）
+		Source      string `json:"source"`      // "global" | "user"
+		mod         int64  `json:"-"`           // 文件修改时间，用于排序
 	}
 	var out []skillView
 	for _, s := range u.ctrl.AllSkills() {
@@ -538,7 +598,8 @@ func (ts *TeamixServer) handleSkillsList(w http.ResponseWriter, r *http.Request,
 		}
 		out = append(out, skillView{
 			Name: s.Name, Enabled: u.ctrl.SkillEnabled(s.Name), Scope: string(s.Scope), Description: s.Description, Source: string(s.Scope),
-			mod: mod,
+			Sensitivity: s.Sensitivity,
+			mod:         mod,
 		})
 	}
 	// 按文件修改时间 旧→新 排序（内置 skill 无文件排最前）：新增 skill 显示在列表末尾。
@@ -549,14 +610,14 @@ func (ts *TeamixServer) handleSkillsList(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, out)
 }
 
-
 func (ts *TeamixServer) handleMCPAdd(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
-		Name      string          `json:"name"`
-		Command   string          `json:"command"`
-		Args      json.RawMessage `json:"args"` // string 或 []string 均兼容
-		Transport string          `json:"transport"`
-		Scope     string          `json:"scope"` // "private" (default) | "global"
+		Name        string          `json:"name"`
+		Command     string          `json:"command"`
+		Args        json.RawMessage `json:"args"` // string 或 []string 均兼容
+		Transport   string          `json:"transport"`
+		Scope       string          `json:"scope"`       // "private" (default) | "global"
+		Sensitivity string          `json:"sensitivity"` // public/internal/redact/confidential
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -572,7 +633,7 @@ func (ts *TeamixServer) handleMCPAdd(w http.ResponseWriter, r *http.Request, u *
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		if err := ts.saveGlobalMCP(body.Name, body.Command, args, body.Transport); err != nil {
+		if err := ts.saveGlobalMCP(body.Name, body.Command, args, body.Transport, body.Sensitivity); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -589,7 +650,7 @@ func (ts *TeamixServer) handleMCPAdd(w http.ResponseWriter, r *http.Request, u *
 		return
 	}
 	// Persist private MCP into users/<name>/.teamix/config.yaml so it survives restart.
-	if err := ts.saveUserMCP(u, body.Name, body.Command, args, body.Transport); err != nil {
+	if err := ts.saveUserMCP(u, body.Name, body.Command, args, body.Transport, body.Sensitivity); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -619,11 +680,10 @@ func parseMCPArgs(raw json.RawMessage) []string {
 	return nil
 }
 
-
 // saveUserMCP upserts a private MCP entry into users/<name>/.reasonix/mcp-private.json.
-func (ts *TeamixServer) saveUserMCP(u *userSession, name, command string, args []string, transport string) error {
+func (ts *TeamixServer) saveUserMCP(u *userSession, name, command string, args []string, transport, sensitivity string) error {
 	specs := loadUserMCPServers(u.userRoot)
-	specs[name] = mcpServerSpec{Command: command, Args: args, Type: transport}
+	specs[name] = mcpServerSpec{Command: command, Args: args, Type: transport, Sensitivity: sensitivity}
 	return writeMCPFile(userMCPPath(u.userRoot), specs)
 }
 
@@ -636,7 +696,6 @@ func (ts *TeamixServer) removeUserMCP(u *userSession, name string) (bool, error)
 	delete(specs, name)
 	return true, writeMCPFile(userMCPPath(u.userRoot), specs)
 }
-
 
 func (ts *TeamixServer) handleMCPRemove(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {
@@ -670,7 +729,6 @@ func (ts *TeamixServer) handleMCPRemove(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-
 func (ts *TeamixServer) handleSkillToggle(w http.ResponseWriter, r *http.Request, u *userSession) {
 	if !ts.isArchitect(u) {
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -691,41 +749,27 @@ func (ts *TeamixServer) handleSkillToggle(w http.ResponseWriter, r *http.Request
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-
-
 // globalMCPPath returns the path to global/.reasonix/mcp.json
 func (ts *TeamixServer) globalMCPPath() string {
 	return filepath.Join(ts.workspaceRoot, ".reasonix", "mcp.json")
 }
 
 // saveGlobalMCP adds an MCP server entry to the global mcp.json file.
-func (ts *TeamixServer) saveGlobalMCP(name, command string, args []string, transport string) error {
+func (ts *TeamixServer) saveGlobalMCP(name, command string, args []string, transport, sensitivity string) error {
 	path := ts.globalMCPPath()
 	os.MkdirAll(filepath.Dir(path), 0o755)
 
 	// Read existing
 	doc := struct {
-		MCPServers map[string]struct {
-			Command string   `json:"command"`
-			Args    []string `json:"args"`
-			Type    string   `json:"type"`
-		} `json:"mcpServers"`
-	}{MCPServers: make(map[string]struct {
-		Command string   `json:"command"`
-		Args    []string `json:"args"`
-		Type    string   `json:"type"`
-	})}
+		MCPServers map[string]mcpServerSpec `json:"mcpServers"`
+	}{MCPServers: make(map[string]mcpServerSpec)}
 
 	if f, err := os.Open(path); err == nil {
 		defer f.Close()
 		json.NewDecoder(f).Decode(&doc)
 	}
 
-	doc.MCPServers[name] = struct {
-		Command string   `json:"command"`
-		Args    []string `json:"args"`
-		Type    string   `json:"type"`
-	}{Command: command, Args: args, Type: transport}
+	doc.MCPServers[name] = mcpServerSpec{Command: command, Args: args, Type: transport, Sensitivity: sensitivity}
 
 	f, err := os.Create(path)
 	if err != nil {

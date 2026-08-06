@@ -8,40 +8,43 @@ import (
 	"reasonix/internal/provider"
 )
 
+// 机密清单命中 → 拦截该次工具调用（返回 true），不执行、不降级会话
 func TestMarkToolSensitivityConfidential(t *testing.T) {
 	a := &Agent{
 		sensitiveRules: &modelrouter.SensitiveRules{
-			Dirs:  []string{"tenders/", "data/"},
-			Files: []string{"*.pem"},
+			Dirs: []string{"tenders/"}, Files: []string{"*.pem"},
 		},
+		sensitive: provider.SensitivityPublic,
 	}
-	a.markToolSensitivity(nil, json.RawMessage(`{"path": "tenders/项目A.docx"}`))
-	if a.sensitive != provider.SensitivityConfidential {
-		t.Fatalf("sensitive = %q, want confidential (data residency pinning)", a.sensitive)
+	blocked := a.markToolSensitivity("read_file", json.RawMessage(`{"path": "tenders/项目A.docx"}`))
+	if !blocked {
+		t.Fatal("read_file on tenders/ should be blocked")
+	}
+	// 拦截后会话敏感级不降级（机密内容未进上下文，本地窗口不被挤占）
+	if a.sensitive != provider.SensitivityPublic {
+		t.Fatalf("sensitive = %q, want public (blocked call must not downgrade session)", a.sensitive)
 	}
 }
 
 func TestMarkToolSensitivityPublicPath(t *testing.T) {
 	a := &Agent{
 		sensitiveRules: &modelrouter.SensitiveRules{
-			Dirs: []string{"tenders/"},
+			Dirs: []string{"tenders/"}, Files: []string{"*.pem"},
 		},
 	}
-	a.markToolSensitivity(nil, json.RawMessage(`{"path": "internal/risk/analyzer.go"}`))
-	if a.sensitive != "" {
-		t.Fatalf("sensitive = %q, want empty (code is not confidential)", a.sensitive)
+	if blocked := a.markToolSensitivity("read_file", json.RawMessage(`{"path": "internal/risk/analyzer.go"}`)); blocked {
+		t.Fatal("code path must not be blocked")
 	}
 }
 
 func TestMarkToolSensitivityGlobFile(t *testing.T) {
 	a := &Agent{
 		sensitiveRules: &modelrouter.SensitiveRules{
-			Files: []string{"*.pem"},
+			Dirs: []string{"tenders/"}, Files: []string{"*.pem"},
 		},
 	}
-	a.markToolSensitivity(nil, json.RawMessage(`{"file": "deploy/keys.pem"}`))
-	if a.sensitive != provider.SensitivityConfidential {
-		t.Fatalf("sensitive = %q, want confidential for *.pem", a.sensitive)
+	if !a.markToolSensitivity("glob", json.RawMessage(`{"file": "deploy/keys.pem"}`)) {
+		t.Fatal("glob on *.pem should be blocked")
 	}
 }
 
@@ -49,8 +52,62 @@ func TestMarkToolSensitivityBadArgs(t *testing.T) {
 	a := &Agent{
 		sensitiveRules: &modelrouter.SensitiveRules{Dirs: []string{"tenders/"}},
 	}
-	a.markToolSensitivity(nil, json.RawMessage(`not-json`))
-	if a.sensitive != "" {
-		t.Fatalf("bad args should not mark sensitive: %q", a.sensitive)
+	if a.markToolSensitivity("read_file", json.RawMessage(`not-json`)) {
+		t.Fatal("unparseable args must not block (cannot determine path)")
+	}
+}
+
+// MCP 工具不拦截（声明级经消息标记聚合，internal/confidential 内容可进上下文但锁内部）
+func TestMarkToolSensitivityMCPServerNotBlocked(t *testing.T) {
+	a := &Agent{sensitiveRules: &modelrouter.SensitiveRules{Dirs: []string{"tenders/"}}}
+	if a.markToolSensitivity("mcp__customer-db__query", json.RawMessage(`{"path": "tenders/x"}`)) {
+		t.Fatal("MCP tools must not be blocked by the path blacklist")
+	}
+}
+
+// 未声明 MCP 工具 → internal（数据入口默认兜底）
+func TestToolResultSensitivityUndeclaredMCP(t *testing.T) {
+	a := &Agent{}
+	if s := a.toolResultSensitivity("mcp__customer-db__query", json.RawMessage(`{}`)); s != provider.SensitivityInternal {
+		t.Fatalf("undeclared MCP tool = %q, want internal (default fallback)", s)
+	}
+}
+
+// 声明了 public 的 MCP 工具 → public（可出网）
+func TestToolResultSensitivityDeclaredMCP(t *testing.T) {
+	a := &Agent{mcpSensitivity: map[string]provider.Sensitivity{"customer-db": provider.SensitivityPublic}}
+	if s := a.toolResultSensitivity("mcp__customer-db__query", json.RawMessage(`{}`)); s != provider.SensitivityPublic {
+		t.Fatalf("declared public MCP tool = %q, want public", s)
+	}
+}
+
+// 声明了 confidential 的 MCP 工具 → confidential（内容锁内部，不拦截）
+func TestToolResultSensitivityConfidentialMCP(t *testing.T) {
+	a := &Agent{mcpSensitivity: map[string]provider.Sensitivity{"tender-db": provider.SensitivityConfidential}}
+	if s := a.toolResultSensitivity("mcp__tender-db__list", json.RawMessage(`{}`)); s != provider.SensitivityConfidential {
+		t.Fatalf("declared confidential MCP tool = %q, want confidential", s)
+	}
+}
+
+// 非文件类、非 MCP 工具（bash）→ 不设标记
+func TestToolResultSensitivityOtherTool(t *testing.T) {
+	a := &Agent{sensitiveRules: &modelrouter.SensitiveRules{Dirs: []string{"tenders/"}}}
+	if s := a.toolResultSensitivity("bash", json.RawMessage(`{"command":"ls"}`)); s != "" {
+		t.Fatalf("bash tool = %q, want empty (no marker)", s)
+	}
+}
+
+// 会话初始敏感级（skill/记忆声明聚合）：internal 起会话即锁内部，读代码文件不降级也不升级
+func TestBaseSensitivityInitial(t *testing.T) {
+	a := &Agent{
+		sensitiveRules:  &modelrouter.SensitiveRules{Dirs: []string{"tenders/"}},
+		baseSensitivity: provider.SensitivityInternal,
+		sensitive:       provider.SensitivityInternal,
+	}
+	if a.markToolSensitivity("read_file", json.RawMessage(`{"path": "internal/risk/analyzer.go"}`)) {
+		t.Fatal("code path must not be blocked")
+	}
+	if a.sensitive != provider.SensitivityInternal {
+		t.Fatalf("sensitive = %q, want internal (base pins session)", a.sensitive)
 	}
 }

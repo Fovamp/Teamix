@@ -123,8 +123,8 @@ func TestSensitiveRulesMatchPath(t *testing.T) {
 func TestSensitiveDefaultNoConfig(t *testing.T) {
 	// 未配置敏感规则时，入参扫描不触发（默认行为，不误伤）
 	r := New(Config{
-		Internal: pool(KindInternal, "qwen", 0, 0, &fakeProvider{name: "qwen", text: "internal-ok"}),
-		External: pool(KindExternal, "deepseek", 0, 0, &fakeProvider{name: "deepseek", text: "external-ok"}),
+		Internal:    pool(KindInternal, "qwen", 0, 0, &fakeProvider{name: "qwen", text: "internal-ok"}),
+		External:    pool(KindExternal, "deepseek", 0, 0, &fakeProvider{name: "deepseek", text: "external-ok"}),
 		RoleDefault: map[provider.Purpose]Kind{provider.PurposeExecute: KindExternal},
 	})
 	text, err := streamText(t, r, provider.Request{
@@ -169,5 +169,40 @@ func TestHasSecretPattern(t *testing.T) {
 	}
 	if HasSecretPattern("正常的技术讨论内容") {
 		t.Error("false positive on normal content")
+	}
+}
+
+// bash command 含机密目录名 → 拦截（防 `bash cat tenders/x` 绕过文件工具）
+func TestScanToolArgsBashCommandSensitive(t *testing.T) {
+	s := &SensitiveRules{Dirs: []string{"tenders/"}}
+	if !s.scanToolArgs([]provider.Message{{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "t1", Name: "bash", Arguments: `{"command":"cat tenders/项目A.docx"}`}}}}) {
+		t.Fatal("bash command containing tenders/ should be flagged")
+	}
+}
+
+// bash command 不含机密目录 → 放行
+func TestScanToolArgsBashCommandPublic(t *testing.T) {
+	s := &SensitiveRules{Dirs: []string{"tenders/"}}
+	if s.scanToolArgs([]provider.Message{{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "t1", Name: "bash", Arguments: `{"command":"ls internal/"}`}}}}) {
+		t.Fatal("bash command without sensitive dir should pass")
+	}
+}
+
+// MCP 工具参数名不可预期（file_path）→ 全部字符串值路径匹配
+func TestScanToolArgsMCPCustomKey(t *testing.T) {
+	s := &SensitiveRules{Dirs: []string{"tenders/"}}
+	if !s.scanToolArgs([]provider.Message{{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "t1", Name: "mcp__fs__read", Arguments: `{"file_path":"tenders/项目A.docx"}`}}}}) {
+		t.Fatal("MCP tool custom key file_path hitting tenders/ should be flagged")
+	}
+}
+
+// ContainsDir 宽松匹配：自由文本含机密目录名即命中
+func TestContainsDir(t *testing.T) {
+	s := &SensitiveRules{Dirs: []string{"tenders/"}}
+	if !s.ContainsDir("cat tenders/x") {
+		t.Fatal("ContainsDir should match embedded dir name")
+	}
+	if s.ContainsDir("ls internal/") {
+		t.Fatal("ContainsDir should not match unrelated text")
 	}
 }

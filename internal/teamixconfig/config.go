@@ -1,4 +1,4 @@
-﻿package teamixconfig
+package teamixconfig
 
 import (
 	"fmt"
@@ -39,8 +39,8 @@ type AlertConfig struct {
 // QuotaConfig 三层配额（出网请求次数）：个人日额 + 全局月额（architect 豁免）。
 // 超限柔性降级：外部请求自动切内部池（不报错，审计记 quota_exceeded）。
 type QuotaConfig struct {
-	PerUserPerDay  int `yaml:"per_user_per_day,omitempty"`  // <=0 不限
-	GlobalPerMonth int `yaml:"global_per_month,omitempty"`  // <=0 不限
+	PerUserPerDay  int `yaml:"per_user_per_day,omitempty"` // <=0 不限
+	GlobalPerMonth int `yaml:"global_per_month,omitempty"` // <=0 不限
 }
 
 // ModelsConfig 是双模型协作的模型池配置（.teamix/config.yaml 的 models 段）。
@@ -53,10 +53,10 @@ type ModelsConfig struct {
 // ModelPool 声明一个模型池条目：ref 引用现有 providers 体系（provider/model），
 // roles 列出该池服务的用途角色，max_input_tokens 用于窗口预检，max_parallel 限并发。
 type ModelPool struct {
-	Ref                string   `yaml:"ref"`
-	Roles              []string `yaml:"roles,omitempty"`
-	MaxInputTokens     int      `yaml:"max_input_tokens,omitempty"`
-	MaxParallel        int      `yaml:"max_parallel,omitempty"`
+	Ref                 string   `yaml:"ref"`
+	Roles               []string `yaml:"roles,omitempty"`
+	MaxInputTokens      int      `yaml:"max_input_tokens,omitempty"`
+	MaxParallel         int      `yaml:"max_parallel,omitempty"`
 	BudgetPerUserPerDay float64  `yaml:"budget_per_user_per_day,omitempty"`
 }
 
@@ -78,11 +78,11 @@ type AuditConfig struct {
 // HeadroomConfig 是 headroom 上下文压缩层配置（.teamix/config.yaml 的 headroom 段）。
 // 压缩只作用于发给 LLM 的 tool 结果消息，system/用户输入保持原样（前缀缓存稳定）。
 type HeadroomConfig struct {
-	Enabled  bool   `yaml:"enabled"`
-	URL      string `yaml:"url"`
-	Model    string `yaml:"model,omitempty"`
-	MinChars int    `yaml:"min_content_chars,omitempty"`
-	TimeoutMs int   `yaml:"timeout_ms,omitempty"`
+	Enabled   bool   `yaml:"enabled"`
+	URL       string `yaml:"url"`
+	Model     string `yaml:"model,omitempty"`
+	MinChars  int    `yaml:"min_content_chars,omitempty"`
+	TimeoutMs int    `yaml:"timeout_ms,omitempty"`
 }
 
 type ProjectConfig struct {
@@ -104,9 +104,9 @@ type WorkflowConfig struct {
 
 func DefaultConfig() *Config {
 	return &Config{
-		Teamix:  TeamixConfig{},
-		Project: ProjectConfig{},
-		Modules: []ModuleConfig{},
+		Teamix:   TeamixConfig{},
+		Project:  ProjectConfig{},
+		Modules:  []ModuleConfig{},
 		Workflow: WorkflowConfig{AutoAdvance: true},
 		Audit: AuditConfig{
 			Dir:           ".teamix/logs/ai-audit",
@@ -142,7 +142,48 @@ func Load(workspaceRoot string) (*Config, error) {
 	if len(cfg.Modules) == 0 {
 		cfg.discoverModules(workspaceRoot)
 	}
+	// 独立敏感清单（前端可视化编辑）优先覆盖 config.yaml 的 sensitive 段。
+	if overlay, err := LoadSensitiveOverlay(workspaceRoot); err == nil && overlay != nil {
+		cfg.Sensitive = *overlay
+	}
 	return &cfg, nil
+}
+
+// sensitiveOverlayFile 独立机密清单文件名（前端「安全」设置页写入，避免手改 config.yaml）。
+const sensitiveOverlayFile = ".teamix/sensitive.yaml"
+
+// SensitiveOverlayPath 返回独立敏感清单文件路径。
+func SensitiveOverlayPath(workspaceRoot string) string {
+	return filepath.Join(workspaceRoot, sensitiveOverlayFile)
+}
+
+// LoadSensitiveOverlay 读取独立敏感清单（前端写入）；文件不存在返回 nil。
+func LoadSensitiveOverlay(workspaceRoot string) (*SensitiveConfig, error) {
+	b, err := os.ReadFile(SensitiveOverlayPath(workspaceRoot))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var sc SensitiveConfig
+	if err := yaml.Unmarshal(b, &sc); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", sensitiveOverlayFile, err)
+	}
+	return &sc, nil
+}
+
+// SaveSensitiveOverlay 写独立敏感清单（前端「安全」设置页保存，architect 可写）。
+func SaveSensitiveOverlay(workspaceRoot string, sc SensitiveConfig) error {
+	data, err := yaml.Marshal(sc)
+	if err != nil {
+		return err
+	}
+	path := SensitiveOverlayPath(workspaceRoot)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }
 
 func resolveFile(globalRoot, fileRef, defaultName string) string {

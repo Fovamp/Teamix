@@ -38,12 +38,12 @@ import (
 	"reasonix/internal/memory"
 	"reasonix/internal/memorycompiler"
 	"reasonix/internal/migration"
+	"reasonix/internal/modelrouter"
 	"reasonix/internal/netclient"
 	"reasonix/internal/outputstyle"
 	"reasonix/internal/permission"
 	"reasonix/internal/planmode"
 	"reasonix/internal/plugin"
-	"reasonix/internal/modelrouter"
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/secrets"
@@ -169,6 +169,12 @@ type Options struct {
 	// 包装：WrapProvider 先包外部池（headroom 压缩），Router 再路由到
 	// 内部/外部池。nil 时不启用（保持原有单模型行为）。
 	Router *modelrouter.BootConfig
+	// BaseSensitivity 会话初始敏感级（Teamix：加载的 skill/记忆声明敏感级聚合，
+	// 只升不降）。空 = 不预设。经 agent.Options 传入，与 Router.Sensitive 配合。
+	BaseSensitivity provider.Sensitivity
+	// MCPSensitivity MCP server 声明敏感级（Teamix：mcp.json sensitivity 字段，
+	// server 名 → 档位）。未声明的 MCP 工具结果默认 internal（数据入口兜底）。
+	MCPSensitivity map[string]provider.Sensitivity
 	// MemoryCompilerDir 覆盖 Memory v5 编译状态目录（Teamix 按项目：
 	// userRoot/.teamix/memory/<project>/compiler）。空 = 默认机器级。
 	MemoryCompilerDir string
@@ -1322,6 +1328,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		MemoryCompilerVerbosity:            cfg.MemoryCompilerVerbosity(),
 		UseMemoryCompilerLLMClassification: strings.TrimSpace(os.Getenv("REASONIX_MEMORY_COMPILER_LLM_CLASSIFICATION")) == "true",
 		SensitiveRules:                     sensitiveRulesForAgent(opts),
+		BaseSensitivity:                    opts.BaseSensitivity,
+		MCPSensitivity:                     opts.MCPSensitivity,
 	}, sink)
 
 	var runner agent.Runner = executor

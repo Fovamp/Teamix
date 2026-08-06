@@ -745,6 +745,8 @@ func (ts *TeamixServer) switchModel(u *userSession, ref string) error {
 		ExcludeHomeSkills:   true,
 		WrapProvider:        ts.headroomHook,
 		Router:              ts.routerCfg(u.name),
+		BaseSensitivity:     ts.baseSensitivityFor(u.userRoot, u.selectedProject),
+		MCPSensitivity:      ts.mcpSensitivityMap(u.userRoot),
 	})
 	if err != nil {
 		return fmt.Errorf("switch model: %w", err)

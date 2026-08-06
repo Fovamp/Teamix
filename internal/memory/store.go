@@ -65,6 +65,7 @@ type Memory struct {
 	Title       string // human-readable index label; falls back to a de-kebabed Name
 	Description string // one-line summary used for the index and recall
 	Type        Type
+	Sensitivity string // 数据源敏感级声明（public/internal/redact/confidential；frontmatter sensitivity）
 	Body        string // the fact itself (Markdown)
 }
 
@@ -79,9 +80,11 @@ type ArchivedMemory struct {
 // StoreFor resolves the auto-memory directory for a project working dir under
 // Reasonix home, e.g. ~/.reasonix/memory/private/-Users-me-proj.
 // 结构：先类型后项目（与全局/会话/总结一致，一眼看出"这是什么→归属哪个项目"）。
-//   userDir/private/<slug>   ← 私有记忆（userDir 由调用方传"记忆根"，Teamix 为
-//                               userRoot/.teamix/memory/<项目> → 项目在根里）
-//   userDir/global           ← 全局记忆（跨项目共享；Teamix 项目化后为项目级全局）
+//
+//	userDir/private/<slug>   ← 私有记忆（userDir 由调用方传"记忆根"，Teamix 为
+//	                            userRoot/.teamix/memory/<项目> → 项目在根里）
+//	userDir/global           ← 全局记忆（跨项目共享；Teamix 项目化后为项目级全局）
+//
 // A "" userDir (config dir unresolvable) yields a zero Store, which all methods
 // treat as a disabled no-op.
 func StoreFor(userDir, cwd string) Store {
@@ -404,17 +407,18 @@ func repairOwnerWrite(root *os.Root, path string, dir bool) {
 // the next load. Plain values render byte-identically to the previous
 // hand-built format.
 type memoryFrontmatter struct {
-	Name     string `yaml:"name"`
-	Title    string `yaml:"title,omitempty"`
-	Desc     string `yaml:"description"`
-	Metadata struct {
+	Name        string `yaml:"name"`
+	Title       string `yaml:"title,omitempty"`
+	Desc        string `yaml:"description"`
+	Sensitivity string `yaml:"sensitivity,omitempty"`
+	Metadata    struct {
 		Type string `yaml:"type"`
 	} `yaml:"metadata"`
 }
 
 // render serializes a memory to frontmatter + body.
 func render(m Memory, name string) string {
-	fm := memoryFrontmatter{Name: name, Title: oneLine(m.Title), Desc: oneLine(m.Description)}
+	fm := memoryFrontmatter{Name: name, Title: oneLine(m.Title), Desc: oneLine(m.Description), Sensitivity: m.Sensitivity}
 	fm.Metadata.Type = string(NormalizeType(string(m.Type)))
 	var b strings.Builder
 	b.WriteString("---\n")
@@ -629,6 +633,7 @@ func loadMemory(path string) (Memory, bool) {
 		Title:       fm["title"],
 		Description: fm["description"],
 		Type:        NormalizeType(fm["type"]),
+		Sensitivity: fm["sensitivity"],
 		Body:        strings.TrimSpace(body),
 	}
 	if m.Name == "" {

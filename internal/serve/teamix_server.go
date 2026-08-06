@@ -77,7 +77,6 @@ type TeamixServer struct {
 	// budgetNotified 预算超限致命告警只发一次（P2 预算降档）。
 	budgetNotified atomic.Bool
 
-
 	// alertWebhook 企微机器人 webhook（致命告警渠道，.teamix/config.yaml alert 段）。
 	alertWebhook string
 }
@@ -296,6 +295,8 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		ExcludeHomeSkills:   true,
 		WrapProvider:        ts.headroomHook,
 		Router:              ts.routerCfg(name),
+		BaseSensitivity:     ts.baseSensitivityFor(userRoot, ""),
+		MCPSensitivity:      ts.mcpSensitivityMap(userRoot),
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("build controller for %q: %w", name, err)
@@ -411,10 +412,13 @@ func (ts *TeamixServer) loadGlobalConfig() *teamixconfig.GlobalConfig {
 }
 
 // mcpServerSpec 描述一个 MCP 服务器（公共 mcp.json / 私有 config.yaml 通用）。
+// Sensitivity 是数据源敏感级声明（public/internal/redact/confidential）；
+// 未声明（空）= 运行期按 internal 兜底（数据入口不出网）。
 type mcpServerSpec struct {
-	Command string   `json:"command" yaml:"command"`
-	Args    []string `json:"args" yaml:"args"`
-	Type    string   `json:"type" yaml:"type"`
+	Command     string   `json:"command" yaml:"command"`
+	Args        []string `json:"args" yaml:"args"`
+	Type        string   `json:"type" yaml:"type"`
+	Sensitivity string   `json:"sensitivity,omitempty" yaml:"sensitivity,omitempty"`
 }
 
 // loadGlobalMCPServers 读取公共 .reasonix/mcp.json 的 MCP 服务器列表。
@@ -539,6 +543,8 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("POST /teamix/offline", ts.withUser(ts.handleOfflineSet))
 	mux.HandleFunc("GET /teamix/audit/ai-logs", ts.withUser(ts.handleAuditLogs))
 	mux.HandleFunc("GET /teamix/audit/report", ts.withUser(ts.handleAuditReport))
+	mux.HandleFunc("GET /teamix/sensitive", ts.withUser(ts.handleSensitiveGet))
+	mux.HandleFunc("POST /teamix/sensitive", ts.withUser(ts.handleSensitiveSet))
 	mux.HandleFunc("POST /teamix/users/external", ts.withUser(ts.handleUserExternalToggle))
 	mux.HandleFunc("GET /checkpoints", ts.withUser(ts.handleCheckpoints))
 	mux.HandleFunc("GET /branches", ts.withUser(ts.handleBranches))

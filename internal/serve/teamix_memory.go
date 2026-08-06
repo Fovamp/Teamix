@@ -49,6 +49,7 @@ type memEntry struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Type        string `json:"type"`
+	Sensitivity string `json:"sensitivity"` // 数据源敏感级声明（空 = 未声明）
 	Body        string `json:"body"`
 }
 
@@ -58,7 +59,8 @@ func memJSON(all []memory.Memory) []memEntry {
 		out[i] = memEntry{
 			Name: m.Name, Title: m.Title,
 			Description: m.Description, Type: string(m.Type),
-			Body: m.Body,
+			Sensitivity: m.Sensitivity,
+			Body:        m.Body,
 		}
 	}
 	return out
@@ -70,6 +72,7 @@ func (ts *TeamixServer) handleMemorySave(w http.ResponseWriter, r *http.Request,
 		Title       string `json:"title"`
 		Description string `json:"description"`
 		Type        string `json:"type"`
+		Sensitivity string `json:"sensitivity"` // public/internal/redact/confidential
 		Body        string `json:"body"`
 		Scope       string `json:"scope"` // "global" (architect) | "private" (default)
 	}
@@ -85,6 +88,7 @@ func (ts *TeamixServer) handleMemorySave(w http.ResponseWriter, r *http.Request,
 		Name: body.Name, Title: body.Title,
 		Description: body.Description,
 		Type:        memory.NormalizeType(body.Type),
+		Sensitivity: body.Sensitivity,
 		Body:        body.Body,
 	}
 	// 全局记忆仅架构师可写（按项目隔离：未选项目拒绝）

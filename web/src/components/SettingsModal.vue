@@ -7,11 +7,11 @@ const emit = defineEmits<{ (e: "close"): void }>()
 const { toast } = useToast()
 const isArch = ref(false)
 const tab = ref("keys")
-const allTabs = ["users", "projects", "keys", "mcp", "soul", "skills", "memory", "audit"]
-// 普通用户可见：MCP/Skills/记忆/人格（人格=全局只读可选 + 私有可编辑）；用户/项目/密钥池为架构师专属
+const allTabs = ["users", "projects", "keys", "mcp", "soul", "skills", "memory", "sensitive", "audit"]
+// 普通用户可见：MCP/Skills/记忆/人格（人格=全局只读可选 + 私有可编辑）；用户/项目/密钥池/安全为架构师专属
 const visibleTabs = ref<string[]>(allTabs)
-const tabLbl: Record<string, string> = { users: "\u7528\u6237", projects: "\u9879\u76ee", keys: "\u5bc6\u94a5\u6c60", mcp: "MCP", soul: "AI \u4eba\u683c", skills: "Skills", memory: "\u8bb0\u5fc6", audit: "AI \u5ba1\u8ba1" }
-const tabIcon: Record<string, string> = { users: "\ud83d\udc65", projects: "\ud83d\udce6", keys: "\ud83d\udd11", mcp: "\ud83d\udd27", soul: "\ud83e\udde0", skills: "\ud83d\udcdc", memory: "\ud83e\udde0", audit: "\ud83d\udee1\ufe0f" }
+const tabLbl: Record<string, string> = { users: "\u7528\u6237", projects: "\u9879\u76ee", keys: "\u5bc6\u94a5\u6c60", mcp: "MCP", soul: "AI \u4eba\u683c", skills: "Skills", memory: "\u8bb0\u5fc6", sensitive: "\u5b89\u5168", audit: "AI \u5ba1\u8ba1" }
+const tabIcon: Record<string, string> = { users: "\ud83d\udc65", projects: "\ud83d\udce6", keys: "\ud83d\udd11", mcp: "\ud83d\udd27", soul: "\ud83e\udde0", skills: "\ud83d\udcdc", memory: "\ud83e\udde0", sensitive: "\ud83d\udee1\ufe0f", audit: "\ud83d\udee1\ufe0f" }
 
 onMounted(async () => {
   try {
@@ -43,6 +43,7 @@ async function switchTab(t: string) {
     else if (t === "mcp") { await renderMCP() }
     else if (t === "skills") { await renderSkills() }
     else if (t === "memory") { await renderMemory() }
+    else if (t === "sensitive") { await renderSensitive() }
     else if (t === "audit") { await renderAudit() }
     else { await renderSoul() }
   } catch (e: any) {
@@ -152,6 +153,24 @@ async function renderKeys() {
   contentHtml.value = h
 }
 
+// 敏感级徽章 HTML（数据源声明分级展示）：空 = 未声明
+function sensBadge(s: string): string {
+  if (!s) return ''
+  const colors: Record<string, string> = {
+    public: 'background:rgba(76,175,80,.15);color:#4caf50',
+    internal: 'background:rgba(255,152,0,.15);color:#ff9800',
+    redact: 'background:rgba(33,150,243,.15);color:#2196f3',
+    confidential: 'background:rgba(244,67,54,.15);color:#f44336'
+  }
+  const c = colors[s] || colors.internal
+  return '<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;' + c + '">' + escH(s) + '</span>'
+}
+// 敏感级下拉 HTML（数据源声明分级表单）：3 档出网策略，默认 internal（禁止出网）。
+// 原 confidential 已并入 internal（行为相同，仅保留兼容）。
+function sensSelect(id: string): string {
+  return '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u6570\u636e\u654f\u611f\u7ea7</label><select id="' + id + '" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="internal" selected>internal\uff08\u7981\u6b62\u51fa\u7f51\uff0c\u9ed8\u8ba4\uff09</option><option value="public">public\uff08\u53ef\u51fa\u7f51\uff09</option><option value="redact">redact\uff08\u5047\u540d\u5316\u540e\u53ef\u51fa\u7f51\uff09</option></select></div>'
+}
+
 async function renderMCP() {
   const q = tokenQuery()
   contentHtml.value = '<div class="section"><h3>🔧 MCP 服务器</h3><p class="desc">管理 MCP 服务器，扩展 Agent 的工具能力。</p><div style="color:var(--muted-2);text-align:center;padding:16px;font-size:13px">加载中...</div>'
@@ -184,7 +203,7 @@ async function renderMCP() {
       h += '<div class="card" style="flex-direction:column;align-items:stretch" data-open="false">'
       h += '<div class="card-head" onclick="const c=this.closest(\'.card\');const b=c.querySelector(\'.card-body\');const o=c.dataset.open===\'true\';c.dataset.open=o?\'false\':\'true\';b.style.display=o?\'none\':\'\'">'
       h += '<span class="chev" style="color:var(--muted-2);transition:transform .15s;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>'
-      h += '<div class="card-main"><div class="card-title"><span class="name"><code>' + escH(s.name) + '</code></span>' + srcBadge + '</div>'
+      h += '<div class="card-main"><div class="card-title"><span class="name"><code>' + escH(s.name) + '</code></span>' + srcBadge + sensBadge(s.sensitivity) + '</div>'
       h += '<span class="subject">' + (s.transport || "stdio") + ' \u00b7 ' + s.tools + ' \u4e2a\u5de5\u5177' + (isFailed ? ' <span style="color:#f44336">\u79bb\u7ebf</span>' : '') + '</span></div>'
       h += '</div>'
       h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2)">' + (isFailed && s.error ? '<span style="color:#f44336;font-size:11px">' + escH(s.error) + '</span>' : (toolHtml || '<span style="color:var(--muted-2)">\u65e0\u5de5\u5177</span>')) + '<div style="margin-top:8px;text-align:right"><button class="btn danger sm" data-mcp-remove="' + escAttr(s.name) + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u79fb\u9664</button></div></div>'
@@ -198,6 +217,7 @@ async function renderMCP() {
     if (isArch) {
       h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u8303\u56f4</label><select id="mcp-scope" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="private">\u79c1\u6709\uff08\u4ec5\u81ea\u5df1\u53ef\u7528\uff09</option><option value="global">\u5168\u5c40\uff08\u5199\u5165\u516c\u5171\u914d\u7f6e\uff0c\u5168\u5458\u53ef\u7528\uff09</option></select></div>'
     }
+    h += sensSelect("mcp-sens")
     h += '<button class="btn primary" onclick="addMCPServer()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0\u670d\u52a1\u5668</button></div>'
   } catch (e: any) {
     h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25: ' + e.message + '</div>'
@@ -229,7 +249,7 @@ async function renderSkills() {
       h += '<div class="card" style="flex-direction:column;align-items:stretch" data-open="false">'
       h += '<div class="card-head" onclick="const c=this.closest(\'.card\');const b=c.querySelector(\'.card-body\');const o=c.dataset.open===\'true\';c.dataset.open=o?\'false\':\'true\';b.style.display=o?\'none\':\'\'">'
       h += '<span class="chev" style="color:var(--muted-2);transition:transform .15s;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>'
-      h += '<div class="card-main"><div class="card-title"><span class="name">' + escH(s.name) + '</span>' + scopeBadge + '</div>'
+      h += '<div class="card-main"><div class="card-title"><span class="name">' + escH(s.name) + '</span>' + scopeBadge + sensBadge(s.sensitivity) + '</div>'
       h += '<span class="subject">' + (s.scope || "project") + '</span></div>'
       h += '<button class="btn danger sm" data-skill-del="' + escAttr(s.name) + '" data-skill-scope="' + (isGlobalScope ? "global" : "private") + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>'
       h += '</div>'
@@ -243,6 +263,7 @@ async function renderSkills() {
     if (isArch) {
       h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u8303\u56f4</label><select id="skill-scope" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="private">\u79c1\u6709\uff08\u4ec5\u81ea\u5df1\u53ef\u7528\uff09</option><option value="global">\u5168\u5c40\uff08\u5168\u5458\u7ee7\u627f\uff09</option></select></div>'
     }
+    h += sensSelect("skill-sens")
     h += '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u5185\u5bb9</label><textarea id="skill-body" style="min-height:100px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)" placeholder="\u64cd\u4f5c\u6307\u5357 markdown..."></textarea></div>'
     h += '<button class="btn primary" onclick="addSkill()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58 Skill</button></div>'
   } catch (e) {
@@ -280,7 +301,7 @@ async function renderMemory() {
       h += '<div class="card-head" onclick="const c=this.closest(\'.card\');const b=c.querySelector(\'.card-body\');const o=c.dataset.open===\'true\';c.dataset.open=o?\'false\':\'true\';b.style.display=o?\'none\':\'\'">'
       h += '<span class="chev" style="color:var(--muted-2);transition:transform .15s;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>'
       h += '<div class="card-main"><div class="card-title"><span class="name">' + escH(m.title || m.name) + '</span>'
-      h += '<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(76,175,80,.15);color:#4caf50">\u5168\u5c40</span></div>'
+      h += '<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(76,175,80,.15);color:#4caf50">\u5168\u5c40</span>' + sensBadge(m.sensitivity) + '</div>'
       if (m.description) h += '<span class="subject">' + escH(m.description) + '</span>'
       else if (bodyPreview) h += '<span class="subject">' + bodyPreview + (hasMore ? "..." : "") + '</span>'
       h += '</div>'
@@ -304,7 +325,7 @@ async function renderMemory() {
       h += '<div class="card-head" onclick="const c=this.closest(\'.card\');const b=c.querySelector(\'.card-body\');const o=c.dataset.open===\'true\';c.dataset.open=o?\'false\':\'true\';b.style.display=o?\'none\':\'\'">'
       h += '<span class="chev" style="color:var(--muted-2);transition:transform .15s;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>'
       h += '<div class="card-main"><div class="card-title"><span class="name">' + escH(m.title || m.name) + '</span>'
-      h += '<span class="badge" style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:var(--accent-soft);color:var(--accent)">' + typeLabel + '</span></div>'
+      h += '<span class="badge" style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:var(--accent-soft);color:var(--accent)">' + typeLabel + '</span>' + sensBadge(m.sensitivity) + '</div>'
       if (m.description) h += '<span class="subject">' + escH(m.description) + '</span>'
       else if (bodyPreview) h += '<span class="subject">' + bodyPreview + (hasMore ? "..." : "") + '</span>'
       h += '</div>'
@@ -321,6 +342,7 @@ async function renderMemory() {
     if (isArch) {
       h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u8303\u56f4</label><select id="mem-scope" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="private">\u79c1\u6709\uff08\u4ec5\u81ea\u5df1\u53ef\u89c1\uff09</option><option value="global">\u5168\u5c40\uff08\u56e2\u961f\u5171\u4eab\uff09</option></select></div>'
     }
+    h += sensSelect("mem-sens")
     h += '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u5185\u5bb9</label><textarea id="mem-body" style="min-height:100px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)" placeholder="Markdown \u683c\u5f0f..."></textarea></div>'
     h += '<button class="btn primary" onclick="addMemory()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58\u8bb0\u5fc6</button></div>'
   } catch (e) {
@@ -328,6 +350,35 @@ async function renderMemory() {
   }
   h += '</div>'
   contentHtml.value = h
+}
+
+// 安全 tab：机密清单（dirs/files）可视化编辑，仅 architect 可写。
+async function renderSensitive() {
+  const q = tokenQuery()
+  contentHtml.value = '<div class="section"><h3>\ud83d\udee1\ufe0f \u5b89\u5168</h3><p class="desc">\u673a\u5bc6\u6e05\u5355\uff1aAI \u5de5\u5177\u8bd5\u56fe\u8bbf\u95ee\u4ee5\u4e0b\u76ee\u5f55/\u6587\u4ef6\u65f6\u5c06\u76f4\u63a5\u62e6\u622a\uff08\u4e0d\u8bfb\u53d6\u5185\u5bb9\uff09\u3002</p></div><div id="sensitive-render">\u52a0\u8f7d\u4e2d...</div>'
+  try {
+    let role = ""
+    try {
+      const rr = await fetch("/teamix/user/role" + q)
+      role = ((await rr.json()).role || "") as string
+    } catch (e) { }
+    const isArch = role === "architect"
+    const resp = await fetch("/teamix/sensitive" + q)
+    const data = await resp.json()
+    const dirs: string[] = data.dirs || []
+    const files: string[] = data.files || []
+    let h = '<div class="section"><h3>\ud83d\udee1\ufe0f \u5b89\u5168</h3><p class="desc">\u673a\u5bc6\u6e05\u5355\uff1aAI \u5de5\u5177\u8bd5\u56fe\u8bbf\u95ee\u4ee5\u4e0b\u76ee\u5f55/\u6587\u4ef6\u65f6\u5c06\u76f4\u63a5\u62e6\u622a\uff08\u4e0d\u8bfb\u53d6\u5185\u5bb9\uff09\u3002\u66f4\u6539\u540e\u4e0b\u6b21\u65b0\u4f1a\u8bdd/\u5207\u6a21\u578b\u751f\u6548\u3002</p></div>'
+    h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u673a\u5bc6\u76ee\u5f55\uff08\u6bcf\u884c\u4e00\u4e2a\uff0c\u524d\u7f00\u5339\u914d\uff0c\u5982 tenders/ data/ secrets/）</label><textarea id="sens-dirs" style="min-height:90px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)" placeholder="tenders/">' + escH(dirs.join("\n")) + '</textarea></div>'
+    h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u673a\u5bc6\u6587\u4ef6\uff08\u6bcf\u884c\u4e00\u4e2a\uff0cglob \u5339\u914d\uff0c\u5982 .env *.pem）</label><textarea id="sens-files" style="min-height:70px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)" placeholder=".env">' + escH(files.join("\n")) + '</textarea></div>'
+    if (isArch) {
+      h += '<div style="margin-top:6px"><button class="btn primary" onclick="saveSensitive()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58\u673a\u5bc6\u6e05\u5355</button> <span id="sens-msg" style="font-size:12px;color:var(--muted-2);margin-left:8px"></span></div>'
+    } else {
+      h += '<div style="color:var(--muted-2);font-size:12px;margin-top:8px">\u4ec5\u67b6\u6784\u5e08\u53ef\u4fee\u6539\u673a\u5bc6\u6e05\u5355</div>'
+    }
+    contentHtml.value = h
+  } catch (e: any) {
+    contentHtml.value = '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25: ' + e.message + '</div>'
+  }
 }
 
 function personaCard(p: any, canEdit: boolean) {
@@ -470,6 +521,25 @@ function escAttr(s: any) { return String(s).replace(/&/g, "&amp;").replace(/"/g,
 
 // Global functions needed by inline onclick handlers
 const w = window as any
+w.saveSensitive = async function() {
+  const dirsText = (document.getElementById("sens-dirs") as HTMLTextAreaElement)?.value || ""
+  const filesText = (document.getElementById("sens-files") as HTMLTextAreaElement)?.value || ""
+  const dirs = dirsText.split("\n").map(s => s.trim()).filter(s => s && !s.startsWith("#"))
+  const files = filesText.split("\n").map(s => s.trim()).filter(s => s && !s.startsWith("#"))
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  const resp = await fetch("/teamix/sensitive?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dirs, files })
+  })
+  const msg = document.getElementById("sens-msg")
+  if (resp.ok) {
+    if (msg) msg.textContent = "\u2713 \u5df2\u4fdd\u5b58\uff08\u4e0b\u6b21\u65b0\u4f1a\u8bdd/\u5207\u6a21\u578b\u751f\u6548\uff09"
+    toast("机密清单已保存")
+  } else {
+    if (msg) msg.textContent = "\u2717 \u4fdd\u5b58\u5931\u8d25"
+  }
+}
 w.saveKeyStrategy = async function() {
   const sel = document.getElementById("key-strategy-select") as HTMLSelectElement
   if (!sel) return
@@ -509,12 +579,14 @@ w.addMCPServer = async function() {
   const args = (document.getElementById("mcp-args") as HTMLInputElement)?.value.trim()
   const scopeSel = document.getElementById("mcp-scope") as HTMLSelectElement
   const scope = scopeSel ? scopeSel.value : "private"
+  const sensSel = document.getElementById("mcp-sens") as HTMLSelectElement
+  const sensitivity = sensSel ? sensSel.value : "internal"
   if (!name || !cmd) return
   const t = localStorage.getItem("teamix_token")
   if (!t) return
   await fetch("/teamix/mcp/add?token=" + encodeURIComponent(t), {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, command: cmd, transport, args, scope })
+    body: JSON.stringify({ name, command: cmd, transport, args, scope, sensitivity })
   })
   tab.value = "mcp"
   await refreshTab("mcp")
@@ -725,13 +797,15 @@ w.addMemory = async function() {
   const mtype = (document.getElementById("mem-type") as HTMLSelectElement)?.value
   const scopeSel = document.getElementById("mem-scope") as HTMLSelectElement
   const scope = scopeSel ? scopeSel.value : "private"
+  const sensSel = document.getElementById("mem-sens") as HTMLSelectElement
+  const sensitivity = sensSel ? sensSel.value : "internal"
   const body = (document.getElementById("mem-body") as HTMLTextAreaElement)?.value
   if (!name) return
   const t = localStorage.getItem("teamix_token")
   if (!t) return
   await fetch("/teamix/memory/save?token=" + encodeURIComponent(t), {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, title, description: desc, type: mtype || "user", body: body || "", scope })
+    body: JSON.stringify({ name, title, description: desc, type: mtype || "user", sensitivity, body: body || "", scope })
   })
   tab.value = "memory"
   await refreshTab("memory")
@@ -866,13 +940,15 @@ w.addSkill = async function() {
   const desc = (document.getElementById("skill-desc") as HTMLInputElement)?.value.trim()
   const scopeSel = document.getElementById("skill-scope") as HTMLSelectElement
   const scope = scopeSel ? scopeSel.value : "private"
+  const sensSel = document.getElementById("skill-sens") as HTMLSelectElement
+  const sensitivity = sensSel ? sensSel.value : "internal"
   const body = (document.getElementById("skill-body") as HTMLTextAreaElement)?.value
   if (!name) return
   const t = localStorage.getItem("teamix_token")
   if (!t) return
   await fetch("/teamix/skills/save?token=" + encodeURIComponent(t), {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, description: desc, body: body || "", scope })
+    body: JSON.stringify({ name, description: desc, sensitivity, body: body || "", scope })
   })
   tab.value = "skills"
   await refreshTab("skills")

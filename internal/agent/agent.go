@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,12 +17,12 @@ import (
 	"reasonix/internal/capability"
 	"reasonix/internal/diff"
 	"reasonix/internal/event"
-	"reasonix/internal/modelrouter"
 	"reasonix/internal/evidence"
 	"reasonix/internal/instruction"
 	"reasonix/internal/jobs"
 	"reasonix/internal/memory"
 	"reasonix/internal/memorycompiler"
+	"reasonix/internal/modelrouter"
 	"reasonix/internal/nilutil"
 	"reasonix/internal/planmode"
 	"reasonix/internal/provider"
@@ -271,8 +272,16 @@ type Agent struct {
 	// 后续所有请求标记敏感 → 路由强制内部。sensitiveRules 为机密黑名单。
 	sensitive      provider.Sensitivity
 	sensitiveRules *modelrouter.SensitiveRules
-	responseLanguage     atomic.Value // string: auto|zh|en
-	reasoningLanguage    atomic.Value // string: auto|zh|en
+	// baseSensitivity 会话初始敏感级（skill/记忆声明聚合，boot 传入）；
+	// mcpSensitivity MCP server 声明敏感级（server 名 → 档位，未声明默认 internal）。
+	baseSensitivity provider.Sensitivity
+	mcpSensitivity  map[string]provider.Sensitivity
+	// confidentialBlocked 记录被机密清单拦截的调用 ID（executeOne 并行执行，需锁）：
+	// 拦截调用的内容未进入上下文，回填时其消息不设敏感标记，防止会话被锁 internal。
+	confidentialMu      sync.Mutex
+	confidentialBlocked map[string]bool
+	responseLanguage    atomic.Value // string: auto|zh|en
+	reasoningLanguage   atomic.Value // string: auto|zh|en
 
 	// sink receives the turn's typed event stream (reasoning/text deltas, tool
 	// dispatch/results, usage, notices). The agent no longer formats output
@@ -1016,6 +1025,14 @@ type Options struct {
 	// 会话标记为敏感（数据域钉住），后续请求强制走内部模型。nil 不启用。
 	SensitiveRules *modelrouter.SensitiveRules
 
+	// BaseSensitivity 会话初始敏感级：加载的 skill/记忆声明敏感级聚合
+	// （只升不降）。空 = 不预设（默认未标记，走正常路由）。
+	BaseSensitivity provider.Sensitivity
+
+	// MCPSensitivity MCP server 声明敏感级（server 名 → 档位，配置来源 mcp.json
+	// 的 sensitivity 字段）。未声明的 MCP 工具结果默认 internal（数据入口兜底）。
+	MCPSensitivity map[string]provider.Sensitivity
+
 	// Jobs is the session's background-job manager (nil disables background tools).
 	Jobs *jobs.Manager
 
@@ -1148,6 +1165,9 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		pricing:                  opts.Pricing,
 		usageSource:              usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
 		sensitiveRules:           opts.SensitiveRules,
+		baseSensitivity:          opts.BaseSensitivity,
+		mcpSensitivity:           opts.MCPSensitivity,
+		sensitive:                opts.BaseSensitivity,
 		sink:                     sink,
 		gate:                     gate,
 		planModeReadOnlyTrust:    planModeReadOnlyTrust,
@@ -1200,7 +1220,8 @@ func usageSourceOrDefault(source, fallback string) string {
 
 // purposeFromUsageSource 把 billable usage source 映射为路由用途标签。
 // 主对话与子代理共用 agent 循环，靠 UsageSource 区分路由去向。
-func purposeFromUsageSource(source string) provider.Purpose {	switch source {
+func purposeFromUsageSource(source string) provider.Purpose {
+	switch source {
 	case event.UsageSourcePlanner:
 		return provider.PurposePlan
 	case event.UsageSourceSubagent:
@@ -1216,26 +1237,96 @@ func purposeFromUsageSource(source string) provider.Purpose {	switch source {
 	}
 }
 
-// markToolSensitivity 在工具执行前扫描参数：路径命中机密清单 → 会话标记为
-// confidential（数据域钉住）。此后所有请求带敏感标记，路由强制内部模型。
-// 覆盖文件类工具（read_file/grep/glob/ls 等的 path/dir/file/src/target 参数）。
-func (a *Agent) markToolSensitivity(t tool.Tool, args json.RawMessage) {
-	if a.sensitiveRules == nil || a.sensitive == provider.SensitivityConfidential {
-		return
+// fileAccessTools 是结果内容来自本地文件系统的 builtin 工具集合（数据源=文件，
+// 路径自动判定：命中机密清单→confidential，未命中→public 代码默认可出网）。
+var fileAccessTools = map[string]bool{
+	"read_file": true, "grep": true, "glob": true, "ls": true,
+	"edit_file": true, "write_file": true, "delete_range": true,
+	"delete_symbol": true, "move_file": true, "multi_edit": true,
+	"notebook_edit": true,
+}
+
+// toolResultSensitivity 判定一次工具调用结果消息的敏感级（数据源分类，非内容检测）：
+//   - MCP 工具（mcp__<server>__<tool>）：按 MCP 声明级；未声明默认 internal（数据入口兜底）
+//   - 文件访问类 builtin：参数路径命中机密清单 → confidential；未命中 → public
+//   - 其他（bash/web_fetch 等）：不设标记（空）
+func (a *Agent) toolResultSensitivity(name string, args json.RawMessage) provider.Sensitivity {
+	if server, _, ok := tool.SplitMCPName(name); ok {
+		if a.mcpSensitivity != nil {
+			if s, found := a.mcpSensitivity[server]; found && s != "" {
+				return s
+			}
+		}
+		return provider.SensitivityInternal
 	}
+	if !fileAccessTools[name] {
+		return ""
+	}
+	if a.sensitiveRules != nil && a.argsContainSensitivePath(args) {
+		return provider.SensitivityConfidential
+	}
+	return provider.SensitivityPublic
+}
+
+// argsContainSensitivePath 检查工具参数里的路径字段（path/dir/file/src/target）
+// 是否命中机密清单（Tool 入参扫描，P0 机制；agent 侧镜像 modelrouter 的实现）。
+func (a *Agent) argsContainSensitivePath(args json.RawMessage) bool {
 	if len(args) == 0 {
-		return
+		return false
 	}
 	var m map[string]any
 	if err := json.Unmarshal(args, &m); err != nil {
-		return
+		return a.sensitiveRules.MatchPath(string(args))
 	}
 	for _, key := range []string{"path", "dir", "file", "src", "target"} {
 		if v, ok := m[key].(string); ok && v != "" && a.sensitiveRules.MatchPath(v) {
-			a.sensitive = provider.SensitivityConfidential
-			return
+			return true
 		}
 	}
+	// 任意访问类工具（bash/web_fetch）的 command/url 文本含机密目录名也视为命中
+	// （防 `bash cat tenders/x` 绕过文件工具的拦截）。
+	for _, key := range []string{"command", "cmd", "url"} {
+		if v, ok := m[key].(string); ok && v != "" && a.sensitiveRules.ContainsDir(v) {
+			return true
+		}
+	}
+	return false
+}
+
+// markToolSensitivity 在工具执行前扫描参数：文件工具路径命中机密清单 → 返回 true，
+// 调用方应**拦截该次工具调用**（机密内容不进入上下文，因此也不触发会话降级——
+// 本地窗口不被机密内容挤占，正常代码请求继续走大窗口外部模型）。
+// 注意：仅文件访问类工具拦截；MCP 工具不拦截（其声明敏感级经消息标记聚合，
+// internal/confidential 内容仍可进上下文但锁内部处理——那是数据域钉住语义，不是禁止读取）。
+func (a *Agent) markToolSensitivity(name string, args json.RawMessage) bool {
+	if !fileAccessTools[name] {
+		return false
+	}
+	return a.sensitiveRules != nil && a.argsContainSensitivePath(args)
+}
+
+// recordConfidentialBlocked 记录被机密清单拦截的调用 ID（executeOne 并行，需锁）。
+func (a *Agent) recordConfidentialBlocked(id string) {
+	if id == "" {
+		return
+	}
+	a.confidentialMu.Lock()
+	if a.confidentialBlocked == nil {
+		a.confidentialBlocked = make(map[string]bool)
+	}
+	a.confidentialBlocked[id] = true
+	a.confidentialMu.Unlock()
+}
+
+// isConfidentialBlocked 查询拦截调用 ID（回填时用，顺带清除）。
+func (a *Agent) isConfidentialBlocked(id string) bool {
+	a.confidentialMu.Lock()
+	defer a.confidentialMu.Unlock()
+	if a.confidentialBlocked[id] {
+		delete(a.confidentialBlocked, id)
+		return true
+	}
+	return false
 }
 
 // Run appends the user input and drives the tool loop until the model returns a
@@ -1516,12 +1607,17 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 
 		results, images := a.executeBatch(ctx, calls)
 		for i, call := range calls {
+			sens := a.toolResultSensitivity(call.Name, json.RawMessage(call.Arguments))
+			if a.isConfidentialBlocked(call.ID) {
+				sens = "" // 拦截调用：内容未进上下文，不设标记（防会话被锁 internal）
+			}
 			a.session.Add(provider.Message{
-				Role:       provider.RoleTool,
-				Content:    results[i],
-				Images:     images[i],
-				ToolCallID: call.ID,
-				Name:       call.Name,
+				Role:        provider.RoleTool,
+				Content:     results[i],
+				Images:      images[i],
+				ToolCallID:  call.ID,
+				Name:        call.Name,
+				Sensitivity: sens,
 			})
 		}
 		// If the context was cancelled during tool execution, return after storing
@@ -2259,6 +2355,13 @@ func (a *Agent) stream(ctx context.Context, turn int) (string, string, string, [
 	ctx = provider.WithRetryNotify(ctx, func(info provider.RetryInfo) {
 		a.sink.Emit(event.Event{Kind: event.Retrying, RetryAttempt: info.Attempt, RetryMax: info.Max})
 	})
+	// 聚合会话内消息级敏感标记（数据源声明 → 上下文 → 请求级，只升不降）：
+	// MCP/文件工具结果带声明/自动敏感级，进上下文后升格会话敏感状态。
+	for _, m := range a.session.Messages {
+		if m.Sensitivity != "" {
+			a.sensitive = provider.MaxSensitivity(a.sensitive, m.Sensitivity)
+		}
+	}
 	ch, err := a.prov.Stream(ctx, provider.Request{
 		Messages:    a.session.Messages,
 		Tools:       a.tools.Schemas(),
@@ -3062,9 +3165,13 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 	if it, ok := runTool.(tool.ImageTool); ok {
 		result, images, err = it.ExecuteWithImages(cctx, runArgs)
+	} else if a.markToolSensitivity(runTool.Name(), runArgs) {
+		// 机密清单拦截：不执行工具，机密内容不进入上下文（也不触发会话降级）。
+		a.recordConfidentialBlocked(call.ID)
+		result = "⚠️ 访问被拦截：该路径位于系统机密清单（sensitive 配置）中，已拒绝读取，未获取任何内容。如需访问请架构师调整机密清单。"
+		err = nil
+		slog.Info("[Teamix] sensitive path blocked", "tool", runTool.Name())
 	} else {
-		// 数据域钉住：执行前扫描工具参数，路径命中机密清单 → 会话标记机密
-		a.markToolSensitivity(runTool, runArgs)
 		result, err = runTool.Execute(cctx, runArgs)
 	}
 	result = secrets.RedactToolOutput(result)

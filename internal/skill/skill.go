@@ -101,6 +101,9 @@ type Skill struct {
 	// InvalidProfiles preserves rejected profiles frontmatter values so doctor
 	// can warn about typos; the parser drops them from Profiles silently.
 	InvalidProfiles []string
+	// Sensitivity 数据源敏感级声明（public/internal/redact/confidential；
+	// frontmatter `sensitivity:`）。空 = 未声明（不进会话初始敏感级，保持原行为）。
+	Sensitivity string
 }
 
 // SlashName returns the user-facing slash identifier. Plugin skills use a
@@ -742,6 +745,7 @@ func (s *Store) parseSkill(path, stem string, scope Scope, requireSkillMarker bo
 		Color:          strings.TrimSpace(fm[skillFrontmatterColor]),
 		Invocation:     parseInvocation(fm[skillFrontmatterInvocation]),
 		Requires:       parseCSVFrontmatter(fm[skillFrontmatterRequires]),
+		Sensitivity:    strings.TrimSpace(fm[skillFrontmatterSensitivity]),
 	}
 	sk.Profiles, sk.InvalidProfiles = parseProfilesFrontmatter(fm[skillFrontmatterProfiles])
 	return sk, true
@@ -766,6 +770,7 @@ const (
 	skillFrontmatterInvocation       = "invocation"
 	skillFrontmatterRequires         = "requires"
 	skillFrontmatterProfiles         = "profiles"
+	skillFrontmatterSensitivity      = "sensitivity"
 )
 
 var skillMarkerFrontmatterKeys = []string{
@@ -787,6 +792,7 @@ var skillMarkerFrontmatterKeys = []string{
 	skillFrontmatterInvocation,
 	skillFrontmatterRequires,
 	skillFrontmatterProfiles,
+	skillFrontmatterSensitivity,
 }
 
 func hasSkillMarker(content string, fm map[string]string) bool {

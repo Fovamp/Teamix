@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"reasonix/internal/auditlog"
+	"reasonix/internal/frontmatter"
 	"reasonix/internal/modelrouter"
 	"reasonix/internal/provider"
 	"reasonix/internal/teamixconfig"
@@ -72,7 +73,7 @@ func (ts *TeamixServer) refreshKeyPoolProvider() {
 }
 
 // loadTeamixEnv 按 Reasonix 安全模式读取项目 .env：只将 Teamix 需要的变量
-//（QWEN_* / RAGFLOW_*）注入进程环境，不污染其他变量。
+// （QWEN_* / RAGFLOW_*）注入进程环境，不污染其他变量。
 func loadTeamixEnv(workspaceRoot string) {
 	data, err := os.ReadFile(filepath.Join(workspaceRoot, ".env"))
 	if err != nil {
@@ -94,6 +95,77 @@ func loadTeamixEnv(workspaceRoot string) {
 			}
 		}
 	}
+}
+
+// mcpSensitivityMap 聚合全局+私有 MCP 的声明敏感级（server 名 → 档位）。
+// 未声明（旧配置无字段）不加入 → 运行期按未声明处理（internal 兜底）。
+func (ts *TeamixServer) mcpSensitivityMap(userRoot string) map[string]provider.Sensitivity {
+	out := make(map[string]provider.Sensitivity)
+	add := func(specs map[string]mcpServerSpec) {
+		for name, srv := range specs {
+			if s := provider.NormalizeSensitivity(srv.Sensitivity); s != "" {
+				out[name] = s
+			}
+		}
+	}
+	add(ts.loadGlobalMCPServers())
+	add(loadUserMCPServers(userRoot))
+	return out
+}
+
+// mcpSensitivityOf 从 spec map 取一个 server 的声明敏感级（空 = 未声明）。
+func mcpSensitivityOf(specs map[string]mcpServerSpec, name string) string {
+	if srv, ok := specs[name]; ok {
+		return srv.Sensitivity
+	}
+	return ""
+}
+
+// readFrontmatterSensitivity 从 markdown 文件 frontmatter 读 sensitivity 字段（空 = 未声明）。
+func readFrontmatterSensitivity(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	fm, _ := frontmatter.Split(strings.TrimPrefix(string(b), "\uFEFF"))
+	return strings.TrimSpace(fm["sensitivity"])
+}
+
+// scanDirSensitivity 扫描目录下所有 <name>/SKILL.md 与 *.md 的 frontmatter
+// sensitivity，聚合最高档（只升不降）。目录不存在返回空。
+func scanDirSensitivity(dir string) provider.Sensitivity {
+	var base provider.Sensitivity
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if name == "SKILL.md" || strings.HasSuffix(name, ".md") {
+			if s := provider.NormalizeSensitivity(readFrontmatterSensitivity(path)); s != "" {
+				base = provider.MaxSensitivity(base, s)
+			}
+		}
+		return nil
+	})
+	return base
+}
+
+// baseSensitivityFor 计算会话初始敏感级（只升不降）：加载的 skill 与记忆的
+// 声明敏感级聚合。来源：
+//   - skill：全局 .reasonix/skills/ + 用户私有 .reasonix/skills/
+//   - 记忆：用户私有 .teamix/memory/<project>/private/ + 全局 .teamix/memory/<project>/
+//     （project 为空 = 未选项目，记忆暂不参与）
+//
+// 未声明（空）不参与；声明 internal+ 的 skill/记忆使会话初始即锁内部。
+func (ts *TeamixServer) baseSensitivityFor(userRoot, project string) provider.Sensitivity {
+	var base provider.Sensitivity
+	base = provider.MaxSensitivity(base, scanDirSensitivity(filepath.Join(ts.workspaceRoot, ".reasonix", "skills")))
+	base = provider.MaxSensitivity(base, scanDirSensitivity(filepath.Join(userRoot, ".reasonix", "skills")))
+	if project != "" {
+		base = provider.MaxSensitivity(base, scanDirSensitivity(filepath.Join(userRoot, ".teamix", "memory", project, "private")))
+		base = provider.MaxSensitivity(base, scanDirSensitivity(filepath.Join(ts.workspaceRoot, ".teamix", "memory", project)))
+	}
+	return base
 }
 
 // sensitiveRulesFromCfg 把 .teamix/config.yaml 的 sensitive 段（机密黑名单）
@@ -218,11 +290,11 @@ func (ts *TeamixServer) routerCfg(user string) *modelrouter.BootConfig {
 		}
 	}
 	return &modelrouter.BootConfig{
-		Internal:             ts.internalProvider,
-		External:             ts.externalProvider,
-		ExternalFromKeyPool:  true,
-		Sensitive:            ts.currentSensitiveRules(), // 热加载：每次 Build 重读机密清单
-		Offline:   ts.offline.Load(),
+		Internal:            ts.internalProvider,
+		External:            ts.externalProvider,
+		ExternalFromKeyPool: true,
+		Sensitive:           ts.currentSensitiveRules(), // 热加载：每次 Build 重读机密清单
+		Offline:             ts.offline.Load(),
 		Audit: func(d modelrouter.Decision) {
 			if ts.auditWriter != nil {
 				ts.auditWriter.Write(auditRecord(user, d))

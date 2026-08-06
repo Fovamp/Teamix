@@ -46,13 +46,16 @@ type statusError struct {
 
 func (e *statusError) Error() string { return e.msg }
 
-// renderSkillFile 组装 <name>/SKILL.md：frontmatter description + body。
-func renderSkillFile(name, description, body string) string {
+// renderSkillFile 组装 <name>/SKILL.md：frontmatter description + sensitivity + body。
+func renderSkillFile(name, description, sensitivity, body string) string {
 	desc := strings.TrimSpace(description)
 	desc = strings.ReplaceAll(desc, "\n", " ")
 	var sb strings.Builder
 	sb.WriteString("---\n")
 	sb.WriteString("description: " + desc + "\n")
+	if s := strings.TrimSpace(sensitivity); s != "" {
+		sb.WriteString("sensitivity: " + s + "\n")
+	}
 	sb.WriteString("---\n\n")
 	sb.WriteString(strings.TrimLeft(body, "\n"))
 	return sb.String()
@@ -64,6 +67,7 @@ func (ts *TeamixServer) handleSkillSave(w http.ResponseWriter, r *http.Request, 
 		Name        string `json:"name"`
 		Scope       string `json:"scope"` // "global" | "private" (default)
 		Description string `json:"description"`
+		Sensitivity string `json:"sensitivity"` // public/internal/redact/confidential
 		Body        string `json:"body"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
@@ -92,7 +96,7 @@ func (ts *TeamixServer) handleSkillSave(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "create skill dir failed", http.StatusInternalServerError)
 		return
 	}
-	content := renderSkillFile(body.Name, body.Description, body.Body)
+	content := renderSkillFile(body.Name, body.Description, body.Sensitivity, body.Body)
 	if err := os.WriteFile(folder, []byte(content), 0o644); err != nil {
 		http.Error(w, "write skill failed", http.StatusInternalServerError)
 		return

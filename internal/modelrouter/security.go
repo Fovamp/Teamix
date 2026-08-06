@@ -77,15 +77,39 @@ func (s *SensitiveRules) matchPathUncached(path string) bool {
 	return false
 }
 
+// ContainsDir 宽松判定：文本中是否包含任一机密目录名（含尾斜杠前缀匹配）。
+// 用于任意访问类工具（bash command / web_fetch url）的**自由文本**参数——
+// `bash cat tenders/x` 虽不是合法路径，但文本含机密目录名即视为命中（防绕过）。
+func (s *SensitiveRules) ContainsDir(text string) bool {
+	if s == nil || len(s.Dirs) == 0 {
+		return false
+	}
+	for _, d := range s.Dirs {
+		d = filepath.ToSlash(strings.TrimSpace(d))
+		if d == "" {
+			continue
+		}
+		if strings.Contains(text, d) {
+			return true
+		}
+	}
+	return false
+}
+
 // scanToolArgs 扫描 assistant 消息中的 tool call 参数：若 Arguments JSON 里出现
 // 命中机密清单的路径，则该请求整体升级为 confidential（强制内部，fail-closed）。
+// MCP 工具（参数名不可预期）对全部字符串值做路径匹配。
 func (s *SensitiveRules) scanToolArgs(msgs []provider.Message) bool {
 	if s == nil {
 		return false
 	}
 	for _, m := range msgs {
 		for _, tc := range m.ToolCalls {
-			if s.argsContainSensitivePath(tc.Arguments) {
+			if strings.HasPrefix(tc.Name, "mcp__") {
+				if s.argsAllValuesSensitive(tc.Arguments) {
+					return true
+				}
+			} else if s.argsContainSensitivePath(tc.Arguments) {
 				return true
 			}
 		}
@@ -93,7 +117,9 @@ func (s *SensitiveRules) scanToolArgs(msgs []provider.Message) bool {
 	return false
 }
 
-// argsContainSensitivePath 解析 tool 参数 JSON，检查常见的路径字段（path/dir/file/src）。
+// argsContainSensitivePath 解析 tool 参数 JSON，检查路径字段与任意访问类工具的
+// 自由文本字段：path/dir/file/src/target 严格路径匹配；command/cmd/url 宽松包含
+// 目录名（防 `bash cat tenders/x` 绕过文件工具的拦截）。
 func (s *SensitiveRules) argsContainSensitivePath(args string) bool {
 	if args == "" {
 		return false
@@ -108,7 +134,37 @@ func (s *SensitiveRules) argsContainSensitivePath(args string) bool {
 			return true
 		}
 	}
+	for _, key := range []string{"command", "cmd", "url"} {
+		if v, ok := m[key].(string); ok && v != "" && s.ContainsDir(v) {
+			return true
+		}
+	}
 	return false
+}
+
+// argsAllValuesSensitive 用于 MCP 工具（参数名不可预期，如 file_path/uri/location）：
+// 对全部字符串值做路径匹配（值含路径特征才查，防误伤普通字段）。
+func (s *SensitiveRules) argsAllValuesSensitive(args string) bool {
+	if args == "" {
+		return false
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(args), &m); err != nil {
+		return s.MatchPath(args)
+	}
+	for _, v := range m {
+		if sv, ok := v.(string); ok && sv != "" && looksLikePath(sv) && s.MatchPath(sv) {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikePath 粗判字符串像路径（含斜杠或已知路径扩展名），避免对任意字段值误伤。
+func looksLikePath(s string) bool {
+	return strings.Contains(s, "/") || strings.Contains(s, "\\") ||
+		strings.Contains(s, ".docx") || strings.Contains(s, ".pdf") ||
+		strings.Contains(s, ".xlsx") || strings.Contains(s, ".pem") || strings.Contains(s, ".key")
 }
 
 // hasInternalPrompt 检查 system 消息是否含内部提示词标记（System Prompt 分级机制）。

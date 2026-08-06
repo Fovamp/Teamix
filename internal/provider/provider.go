@@ -42,6 +42,7 @@ type Message struct {
 	ToolCallID         string           `json:"tool_call_id,omitempty"`    // links a tool result to its call
 	Name               string           `json:"name,omitempty"`            // tool message: tool name
 	MemoryCitations    []MemoryCitation `json:"memoryCitations,omitempty"` // local UI metadata; provider requests ignore it
+	Sensitivity        Sensitivity      `json:"sensitivity,omitempty"`     // local metadata: 数据源敏感级（声明/自动），provider 请求忽略
 	WorkDurationMs     int64            `json:"workDurationMs,omitempty"`  // local UI metadata; provider requests ignore it
 	Edited             bool             `json:"edited,omitempty"`          // local UI metadata; provider requests ignore it
 	Original           string           `json:"original,omitempty"`        // user prompt before inline edit
@@ -108,16 +109,45 @@ const (
 	PurposeCheap    Purpose = "cheap"    // 高频廉价任务
 )
 
-// Sensitivity 标记一次请求的数据敏感级（数据源分类，非内容检测）。
+// Sensitivity 标记一次请求/消息的数据敏感级（数据源分类，非内容检测）。
 // 空值 = 未标记（走正常路由）；非 public 由安全层强制走内部池。
 type Sensitivity string
 
 const (
-	SensitivityPublic        Sensitivity = "public"        // 可原文出网（显式声明）
-	SensitivityInternal      Sensitivity = "internal"     // 不出网（默认兜底档）
-	SensitivityRedact        Sensitivity = "redact"       // 假名化后出网（P1 实现假名化）
-	SensitivityConfidential  Sensitivity = "confidential" // 禁止出网 + 审计告警
+	SensitivityPublic   Sensitivity = "public"    // 可原文出网（显式声明）
+	SensitivityInternal Sensitivity = "internal" // 禁止出网（默认兜底档）
+	SensitivityRedact   Sensitivity = "redact"   // 假名化后出网
+	// SensitivityConfidential 已并入 internal（出网行为相同：强制内部）。
+	// 保留常量与 rank 仅为兼容旧存储数据（前端已不提供该选项，新声明归一 internal）。
+	SensitivityConfidential Sensitivity = "confidential"
 )
+
+// sensitivityRank 敏感级强度（聚合用，只升不降）：redact > internal(=confidential) > public > 空。
+var sensitivityRank = map[Sensitivity]int{
+	"":                      0,
+	SensitivityPublic:       1,
+	SensitivityInternal:     2,
+	SensitivityRedact:       3,
+	SensitivityConfidential: 4,
+}
+
+// MaxSensitivity 返回两者中更严格的敏感级（只升不降）：
+// MaxSensitivity("public", "internal") = "internal"；MaxSensitivity("", "") = ""。
+func MaxSensitivity(a, b Sensitivity) Sensitivity {
+	if sensitivityRank[a] >= sensitivityRank[b] {
+		return a
+	}
+	return b
+}
+
+// NormalizeSensitivity 把任意字符串归一为已知敏感级；空串/未知值返回空（未标记）。
+func NormalizeSensitivity(s string) Sensitivity {
+	t := Sensitivity(strings.ToLower(strings.TrimSpace(s)))
+	if _, ok := sensitivityRank[t]; ok {
+		return t
+	}
+	return ""
+}
 
 // Request is a single completion request.
 type Request struct {
