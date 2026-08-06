@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -86,42 +85,10 @@ func StoreFor(userDir, cwd string) Store {
 		return Store{}
 	}
 	slug := config.WorkspaceSlug(absOf(cwd))
-	migrateLegacyMemoryDirs(userDir, slug)
 	return Store{
 		Dir:       filepath.Join(userDir, "memory", "private", slug),
 		GlobalDir: filepath.Join(userDir, "memory", "global"),
 	}
-}
-
-// migratedOnce 防重复迁移（进程内 per userDir）。
-var migratedOnce sync.Map // userDir → struct{}
-
-// migrateLegacyMemoryDirs 把旧结构（userDir/projects/<slug>/memory，改造前
-// 的私有记忆位置）一次性迁移到 memory/private/<slug>。memory/global 位置
-// 不变（旧全局记忆已在正确位置）。迁移幂等：新位置已有数据时不覆盖。
-func migrateLegacyMemoryDirs(userDir, slug string) {
-	if _, ok := migratedOnce.LoadOrStore(userDir, struct{}{}); ok {
-		return
-	}
-	oldPrivate := filepath.Join(userDir, "projects", slug, "memory")
-	newPrivate := filepath.Join(userDir, "memory", "private", slug)
-	if _, err := os.Stat(oldPrivate); err != nil {
-		return // 旧私有记忆不存在，无需迁移
-	}
-	if _, err := os.Stat(newPrivate); err == nil {
-		return // 新位置已有数据（不覆盖）
-	}
-	if err := os.MkdirAll(newPrivate, 0o755); err != nil {
-		return
-	}
-	entries, err := os.ReadDir(oldPrivate)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		_ = os.Rename(filepath.Join(oldPrivate, e.Name()), filepath.Join(newPrivate, e.Name()))
-	}
-	_ = os.Remove(oldPrivate) // 清空旧空壳
 }
 
 // DirFor returns the directory a memory of the given type should be stored in.

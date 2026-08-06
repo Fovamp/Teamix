@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/config"
 	fileencoding "reasonix/internal/fileutil/encoding"
 )
 
@@ -453,30 +452,6 @@ func TestNormalizeType(t *testing.T) {
 	}
 }
 
-// TestStoreForMigratesLegacyProjectsDir ensures old projects/<slug>/memory
-// data moves into memory/private/<slug> on first StoreFor.
-func TestStoreForMigratesLegacyProjectsDir(t *testing.T) {
-	dir := t.TempDir()
-	slug := config.WorkspaceSlug(absOf("/Users/me/proj"))
-	oldPrivate := filepath.Join(dir, "projects", slug, "memory")
-	if err := os.MkdirAll(oldPrivate, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(oldPrivate, "legacy-fact.md"), []byte("body: old"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s := StoreFor(dir, "/Users/me/proj")
-	want := filepath.Join(dir, "memory", "private", slug)
-	if s.Dir != want {
-		t.Fatalf("StoreFor.Dir = %q, want %q", s.Dir, want)
-	}
-	if _, err := os.Stat(filepath.Join(s.Dir, "legacy-fact.md")); err != nil {
-		t.Fatalf("legacy memory not migrated: %v", err)
-	}
-	if _, err := os.Stat(oldPrivate); !os.IsNotExist(err) {
-		t.Fatalf("legacy dir should be removed after migration, err=%v", err)
-	}
-}
 func TestStoreForSlug(t *testing.T) {
 	s := StoreFor("/home/me/.reasonix", "/Users/me/proj")
 	if strings.Count(filepath.Base(filepath.Dir(s.Dir)), "/") != 0 {
