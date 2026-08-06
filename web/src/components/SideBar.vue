@@ -147,36 +147,36 @@ function openCtx(e: MouseEvent, s: any) {
   ctxMenu.value = { x: e.clientX, y: e.clientY, session: s }
 }
 function closeCtx() { ctxMenu.value = null }
-function confirmDelete(s: any) {
+function confirmArchive(s: any) {
   deleteMode.value = 'one'
   deleteName.value = s.name || ''
   showDelete.value = true
   ctxMenu.value = null
 }
-function askDeleteOthers() {
+function askArchiveOthers() {
   deleteMode.value = 'others'
   deleteName.value = ''
   showDelete.value = true
   ctxMenu.value = null
 }
-function askDeleteAll() {
+function askArchiveAll() {
   deleteMode.value = 'all'
   deleteName.value = ''
   showDelete.value = true
   ctxMenu.value = null
 }
-async function doDelete() {
+async function doArchive() {
   const name = deleteName.value
   try {
     if (deleteMode.value === 'one') {
       if (!name) return
-      await api.deleteSession(name)
+      await api.archiveSession(name)
     } else {
-      await api.deleteSessions(deleteMode.value)
+      await api.archiveSessions(deleteMode.value)
     }
   } catch (err) {
-    console.error('deleteSession error:', err)
-    window.alert(deleteMode.value === 'one' ? '删除会话失败' : '批量删除会话失败，请重试')
+    console.error('archiveSession error:', err)
+    window.alert(deleteMode.value === 'one' ? '归档会话失败' : '批量归档会话失败，请重试')
   }
   showDelete.value = false
   try {
@@ -219,6 +219,7 @@ async function resumeSession(s: any, e?: Event) {
       <div class="sidebar__item" id="btn-rewind" @click="rewind" :class="{ 'sidebar__item--disabled': !hasVisibleHistory }"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg><span>回退</span></div>
       <div class="sidebar__item" id="btn-tree" @click="emit('branches')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><span>分支</span></div>
       <div class="sidebar__item" id="btn-summaries" @click="emit('summaries')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg><span>总结</span></div>
+      <div class="sidebar__item" id="btn-archive" @click="emit('archive')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span>会话</span></div>
       <div class="sidebar__item" id="btn-models" @click="emit('models')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3"/><path d="M15 1v3"/><path d="M9 20v3"/><path d="M15 20v3"/><path d="M20 9h3"/><path d="M20 14h3"/><path d="M1 9h3"/><path d="M1 14h3"/></svg><span>模型</span></div>
       <div class="sidebar__item" id="btn-workflows" @click="emit('workflows')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>工作流</span></div>
       <div class="sidebar__item" id="btn-settings" @click="emit('settings')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>设置</span></div>
@@ -231,7 +232,7 @@ async function resumeSession(s: any, e?: Event) {
       <div v-for="s in filteredSessions" :key="s.path" class="session-item" :class="{ 'session-item--active': s.current }" @click="resumeSession(s, $event)" @contextmenu.prevent="openCtx($event, s)">
         <svg class="session-item__icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         <div class="session-item__body"><div class="session-item__title">{{ s.title || s.name }}</div><div class="session-item__meta">{{ s.turns ? s.turns + " 轮" : "" }}</div></div>
-        <button type="button" class="session-del" :data-name="s.name" title="删除会话" @click.stop="confirmDelete(s)">&times;</button>
+        <button type="button" class="session-del" :data-name="s.name" title="归档会话" @click.stop="confirmArchive(s)">&times;</button>
       </div>
       <div v-if="sessions.length === 0" style="padding:10px;color:var(--muted-2);font-size:12px">暂无会话</div>
     </div>
@@ -247,20 +248,20 @@ async function resumeSession(s: any, e?: Event) {
       <div style="padding:0 10px 6px"><button id="teamix-logout-btn" @click="lgout()" style="width:100%;padding:5px 0;border:1px solid var(--border);border-radius:6px;background:var(--bg-2);color:var(--muted-2);font-size:11px;cursor:pointer">{{ token ? "Logout" : "Login" }}</button></div>
     </div>
   </aside>
-  <!-- 会话右键菜单：删除当前 / 删除其他 / 删除全部 -->
+  <!-- 会话右键菜单：归档当前 / 归档其他 / 归档全部 -->
   <div v-if="ctxMenu" class="ctx-menu" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }" @mousedown.stop>
-    <div class="ctx-menu__item" @click="confirmDelete(ctxMenu.session)">删除此会话</div>
-    <div class="ctx-menu__item" @click="askDeleteOthers">删除其他会话</div>
-    <div class="ctx-menu__item ctx-menu__item--danger" @click="askDeleteAll">删除所有会话</div>
+    <div class="ctx-menu__item" @click="confirmArchive(ctxMenu.session)">归档此会话</div>
+    <div class="ctx-menu__item" @click="askArchiveOthers">归档其他会话</div>
+    <div class="ctx-menu__item ctx-menu__item--danger" @click="askArchiveAll">归档所有会话</div>
   </div>
   <div class="modal-overlay" v-if="showDelete" @click.self="showDelete = false" style="display:flex;z-index:300">
     <div class="modal" style="width:360px">
-      <div class="modal__head"><span>删除会话</span><span class="modal__close" @click="showDelete = false">&times;</span></div>
+      <div class="modal__head"><span>归档会话</span><span class="modal__close" @click="showDelete = false">&times;</span></div>
       <div class="modal__body">
-        <p v-if="deleteMode === 'one'">确定删除 "{{ deleteName }}"？</p>
-        <p v-else-if="deleteMode === 'others'">确定删除除当前会话外的所有会话？此操作不可恢复。</p>
-        <p v-else>确定删除所有会话？此操作不可恢复，删除后将自动新建一个会话。</p>
-        <div class="dialog-actions"><button class="dialog-btn" @click="showDelete = false">取消</button><button class="dialog-btn dialog-btn--danger" @click="doDelete">删除</button></div>
+        <p v-if="deleteMode === 'one'">确定归档 "{{ deleteName }}"？归档后可在左侧「会话」中查看或恢复。</p>
+        <p v-else-if="deleteMode === 'others'">确定归档除当前会话外的所有会话？可在「会话」面板中查看或恢复。</p>
+        <p v-else>确定归档所有会话？可在「会话」面板中查看或恢复，归档后将自动新建一个会话。</p>
+        <div class="dialog-actions"><button class="dialog-btn" @click="showDelete = false">取消</button><button class="dialog-btn dialog-btn--danger" @click="doArchive">归档</button></div>
       </div>
     </div>
   </div>

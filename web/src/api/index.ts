@@ -133,6 +133,14 @@ export const api = {
     }).then(async (r) => { if (!r.ok) throw new Error(await r.text()); return r.json() }),
   // 批量删除会话：others=除当前会话外全部，all=全部
   deleteSessions: (mode: "others" | "all"): Promise<void> => post("/delete-sessions", { mode }),
+  // 会话归档（假删除）：红叉/右键删除 = 移入归档，可在「会话」面板查看/恢复；归档里的删除才是真删
+  archiveList: (): Promise<{ archives: Array<{ name: string; title: string; turns: number; time: string; project: string }> }> => get("/teamix/archive"),
+  archiveSession: (name: string): Promise<any> => post("/teamix/archive", { name }),
+  archiveSessions: (mode: "current" | "others" | "all"): Promise<any> => post("/teamix/archive", { mode }),
+  archiveRead: (name: string): Promise<{ turns: Array<Array<{ role: string; content: string }>> }> =>
+    get("/teamix/archive/read?name=" + encodeURIComponent(name)),
+  archiveRestore: (name: string): Promise<any> => post("/teamix/archive/restore", { name }),
+  archiveDelete: (name: string): Promise<any> => post("/teamix/archive/delete", { name }),
   // Workflow
   workflow: (): Promise<import("../types").WorkflowState> => get("/teamix/workflow"),
   workflowTemplates: (): Promise<any> => get("/teamix/workflows/templates"),

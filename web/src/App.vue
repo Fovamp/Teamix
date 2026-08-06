@@ -13,6 +13,7 @@ import WorkflowsModal from "./components/WorkflowsModal.vue"
 import SettingsModal from "./components/SettingsModal.vue"
 import ProjectModal from "./components/ProjectModal.vue"
 import SummaryModal from "./components/SummaryModal.vue"
+import ArchiveModal from "./components/ArchiveModal.vue"
 import ToastContainer from "./components/ToastContainer.vue"
 
 const showLogin = ref(!api.isLoggedIn())
@@ -23,6 +24,7 @@ const showWorkflows = ref(false)
 const showSettings = ref(false)
 const showProject = ref(false)
 const showSummaries = ref(false)
+const showArchive = ref(false)
 const summarySeed = ref<any[] | null>(null) // 消息按钮"总结"刚生成的结果，直接喂给面板
 
 // 左右两侧拖拽竖线（resize-divider）：
@@ -93,7 +95,7 @@ onUnmounted(() => {
     <div class="resize-divider app-divider" id="app-divider-left" @mousedown="onDividerDown($event, 'left')"></div>
     <div class="resize-divider app-divider" id="app-divider-right" @mousedown="onDividerDown($event, 'right')"></div>
 
-    <SideBar @stats="showStats = true" @branches="showBranches = true" @models="showModels = true" @workflows="showWorkflows = true" @settings="showSettings = true" @summaries="showSummaries = true" />
+    <SideBar @stats="showStats = true" @branches="showBranches = true" @models="showModels = true" @workflows="showWorkflows = true" @settings="showSettings = true" @summaries="showSummaries = true" @archive="showArchive = true" />
     <ChatArea />
     <RightPanel @open-projects="showProject = true" />
     <StatsModal :visible="showStats" @close="showStats = false" />
@@ -103,6 +105,7 @@ onUnmounted(() => {
     <SettingsModal :visible="showSettings" @close="showSettings = false" />
     <ProjectModal :visible="showProject" @close="showProject = false" @selected="onProjectSelected" />
     <SummaryModal :visible="showSummaries" :seed="summarySeed" @close="showSummaries = false" />
+    <ArchiveModal :visible="showArchive" @close="showArchive = false" @restored="showArchive = false" />
     <ToastContainer />
   </div>
 </template>
