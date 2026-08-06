@@ -105,7 +105,7 @@ onUnmounted(() => {
     <SettingsModal :visible="showSettings" @close="showSettings = false" />
     <ProjectModal :visible="showProject" @close="showProject = false" @selected="onProjectSelected" />
     <SummaryModal :visible="showSummaries" :seed="summarySeed" @close="showSummaries = false" />
-    <ArchiveModal :visible="showArchive" @close="showArchive = false" @restored="showArchive = false" />
+    <ArchiveModal :visible="showArchive" @close="showArchive = false" />
     <ToastContainer />
   </div>
 </template>

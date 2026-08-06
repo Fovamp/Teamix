@@ -79,7 +79,7 @@ async function renderUsers() {
     h += '<div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px">'
     h += '<div style="flex:1"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u6635\u79f0</label><input id="user-name" type="text" placeholder="\u5982 alice" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
     h += '<div style="flex:1"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u89d2\u8272</label><select id="user-role" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="developer">developer</option><option value="architect">architect</option></select></div>'
-    h += '<button class="btn primary" onclick="addUser()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0</button></div>'
+    h += '<div style="text-align:right"><button class="btn primary" onclick="addUser()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0</button></div></div>'
     h += '<div style="font-size:11px;color:var(--muted-2);margin-bottom:4px">Git HTTPS \u51ed\u8bc1\uff08\u53ef\u9009\uff09\uff1a\u586b\u5199\u540e\u8be5\u7528\u6237\u767b\u5f55\u5373\u53ef\u76f4\u63a5\u62c9\u53d6\u4ee3\u7801</div>'
     h += '<div style="display:flex;gap:8px;margin-bottom:8px">'
     h += '<div style="flex:1"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u8d26\u53f7 / \u4ee4\u724c\u7528\u6237\u540d</label><input id="user-https-user" type="text" placeholder="\u5e73\u53f0\u8d26\u53f7 \u6216 oauth2" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
@@ -117,7 +117,7 @@ async function renderProjects() {
     h += '<div style="display:flex;gap:8px;margin-bottom:8px"><div style="flex:1"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u540d\u79f0</label><input id="proj-name" type="text" placeholder="mall-system" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div><div style="flex:2"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">Git \u94fe\u63a5</label><input id="proj-git" type="text" placeholder="git@github.com:team/mall-system.git" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div></div>'
     h += '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u63cf\u8ff0</label><input id="proj-desc" type="text" placeholder="\u7535\u5546\u7cfb\u7edf" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
     h += '<div class="cfg-progress" id="proj-add-bar" style="display:none"><div class="cfg-progress__bar"></div><span>\u6b63\u5728\u9a8c\u8bc1 git \u94fe\u63a5\u5e76\u62c9\u53d6\u4ee3\u7801...</span></div>'
-    h += '<button class="btn primary" onclick="addProject()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0\u9879\u76ee</button></div>'
+    h += '<div style="text-align:right"><button class="btn primary" onclick="addProject()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0\u9879\u76ee</button></div></div>'
   } catch (e) {
     h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
   }
@@ -137,7 +137,7 @@ async function renderKeys() {
   h += '<option value="round-robin"' + (data.strategy === "round-robin" ? " selected" : "") + '>Round Robin</option>'
   h += '<option value="random"' + (data.strategy === "random" ? " selected" : "") + '>Random</option>'
   h += '</select>'
-  h += '<button class="btn" onclick="saveKeyStrategy()" style="padding:5px 12px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:12px;cursor:pointer">\u5e94\u7528</button></div></div>'
+  h += '<div style="text-align:right"><button class="btn" onclick="saveKeyStrategy()" style="padding:5px 12px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:12px;cursor:pointer">\u5e94\u7528</button></div></div></div>'
   h += '<div class="section"><div class="section-title">\u5bc6\u94a5\u5217\u8868 (' + keys.length + ')</div>'
   if (keys.length === 0) h += '<div style="color:var(--muted-2);text-align:center;padding:16px 0;font-size:13px">\u5c1a\u65e0\u5bc6\u94a5</div>'
   keys.forEach((k: any) => {
@@ -148,7 +148,7 @@ async function renderKeys() {
   })
   h += '<div class="section"><div class="section-title">\u6dfb\u52a0\u5bc6\u94a5</div>'
   h += '<div style="display:flex;gap:8px;margin-bottom:8px"><input id="new-key-env" type="text" placeholder="\u73af\u5883\u53d8\u91cf\u540d" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><input id="new-key-value" type="password" placeholder="API Key" style="flex:2;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
-  h += '<button class="btn primary" onclick="addKey()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0\u5bc6\u94a5</button></div>'
+  h += '<div style="text-align:right"><button class="btn primary" onclick="addKey()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0\u5bc6\u94a5</button></div></div>'
   h += '</div>'
   contentHtml.value = h
 }
@@ -218,7 +218,7 @@ async function renderMCP() {
       h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u8303\u56f4</label><select id="mcp-scope" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"><option value="private">\u79c1\u6709\uff08\u4ec5\u81ea\u5df1\u53ef\u7528\uff09</option><option value="global">\u5168\u5c40\uff08\u5199\u5165\u516c\u5171\u914d\u7f6e\uff0c\u5168\u5458\u53ef\u7528\uff09</option></select></div>'
     }
     h += sensSelect("mcp-sens")
-    h += '<button class="btn primary" onclick="addMCPServer()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0\u670d\u52a1\u5668</button></div>'
+    h += '<div style="text-align:right"><button class="btn primary" onclick="addMCPServer()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u6dfb\u52a0\u670d\u52a1\u5668</button></div></div>'
   } catch (e: any) {
     h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25: ' + e.message + '</div>'
   }
@@ -265,7 +265,7 @@ async function renderSkills() {
     }
     h += sensSelect("skill-sens")
     h += '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u5185\u5bb9</label><textarea id="skill-body" style="min-height:100px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)" placeholder="\u64cd\u4f5c\u6307\u5357 markdown..."></textarea></div>'
-    h += '<button class="btn primary" onclick="addSkill()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58 Skill</button></div>'
+    h += '<div style="text-align:right"><button class="btn primary" onclick="addSkill()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58 Skill</button></div></div>'
   } catch (e) {
     h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
   }
@@ -344,7 +344,7 @@ async function renderMemory() {
     }
     h += sensSelect("mem-sens")
     h += '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u5185\u5bb9</label><textarea id="mem-body" style="min-height:100px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)" placeholder="Markdown \u683c\u5f0f..."></textarea></div>'
-    h += '<button class="btn primary" onclick="addMemory()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58\u8bb0\u5fc6</button></div>'
+    h += '<div style="text-align:right"><button class="btn primary" onclick="addMemory()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58\u8bb0\u5fc6</button></div></div>'
   } catch (e) {
     h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
   }
@@ -374,7 +374,7 @@ async function renderSensitive() {
     h += '<div style="margin-bottom:14px"><label style="' + labStyle + '">机密目录<span style="' + hintStyle + '">每行一个，前缀匹配，如 tenders/ data/ secrets/</span></label><textarea id="sens-dirs" style="' + taStyle + '" placeholder="tenders/">' + escH(dirs.join("\n")) + '</textarea></div>'
     h += '<div style="margin-bottom:14px"><label style="' + labStyle + '">机密文件<span style="' + hintStyle + '">每行一个，glob 匹配，如 .env *.pem</span></label><textarea id="sens-files" style="' + taStyle + '" placeholder=".env">' + escH(files.join("\n")) + '</textarea></div>'
     if (isArch) {
-      h += '<div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:4px"><span id="sens-msg" style="font-size:12px;color:var(--muted-2)"></span><button class="btn primary" onclick="saveSensitive()" style="padding:7px 20px;border:none;border-radius:6px;background:var(--accent);color:#000;font-size:12px;font-weight:500;cursor:pointer">保存机密清单</button></div>'
+      h += '<div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:4px"><button class="btn primary" onclick="saveSensitive()" style="padding:7px 20px;border:none;border-radius:6px;background:var(--accent);color:#000;font-size:12px;font-weight:500;cursor:pointer">保存机密清单</button><span id="sens-msg" style="font-size:12px;color:var(--muted-2)"></span></div>'
     } else {
       h += '<div style="color:var(--muted-2);font-size:12px;margin-top:8px">仅架构师可修改机密清单</div>'
     }
@@ -453,7 +453,7 @@ async function renderSoul() {
     }
     h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u540d\u79f0</label><input id="soul-name" type="text" placeholder="\u5982\uff1a\u6211\u7684\u5f00\u53d1\u98ce\u683c" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
     h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u7cfb\u7edf\u63d0\u793a\u8bcd</label><textarea id="soul-prompt" style="min-height:120px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)"></textarea></div>'
-    h += '<button class="btn primary" onclick="saveSoul()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58\u4eba\u683c</button></div>'
+    h += '<div style="text-align:right"><button class="btn primary" onclick="saveSoul()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58\u4eba\u683c</button></div></div>'
   } catch (e) {
     h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
   }
