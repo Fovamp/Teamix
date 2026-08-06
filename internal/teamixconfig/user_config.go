@@ -10,10 +10,9 @@ import (
 
 // UserConfig 对应用户私有配置 users/<name>/.teamix/config.yaml
 type UserConfig struct {
-	Git         GitConfig    `yaml:"git"`
-	MCP         []PluginRef  `yaml:"mcp,omitempty"`    // 兼容遗留：新代码写 .reasonix/mcp-private.json
-	Skills      []SkillRef   `yaml:"skills,omitempty"` // 兼容遗留：新代码写 .reasonix/skills/
-	Preferences Preferences  `yaml:"preferences"`
+	Git         GitConfig   `yaml:"git"`
+	MCP         []PluginRef `yaml:"mcp,omitempty"` // 兼容遗留：新代码写 .reasonix/mcp-private.json
+	Preferences Preferences `yaml:"preferences"`
 }
 
 type GitConfig struct {
@@ -41,9 +40,8 @@ type Preferences struct {
 // DefaultUserConfig returns a minimal user config template.
 func DefaultUserConfig() *UserConfig {
 	return &UserConfig{
-		Git: GitConfig{},
-		MCP: []PluginRef{},
-		Skills: []SkillRef{},
+		Git:         GitConfig{},
+		MCP:         []PluginRef{},
 		Preferences: Preferences{Language: "zh"},
 	}
 }

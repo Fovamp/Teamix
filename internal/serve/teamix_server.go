@@ -234,11 +234,19 @@ func (ts *TeamixServer) regenerateUserTOML(root string) {
 	// Inject global MCP plugins from global/.reasonix/mcp.json
 	// plus user-private MCPs from users/<name>/.reasonix/mcp-private.json
 	tomlContent += ts.mcpPluginsTOML(root)
-	// Inject effective Soul (AI personality) into [agent] system_prompt:
-	// user-private overrides global, same rule as MCP/Skills.
+	// Inject effective Soul (AI personality) via system_prompt_file：
+	// 与 skills 一致——reasonix.toml 只写路径，指向实体文件
+	// （.reasonix/persona-current.md，引擎启动时读取）。soul.yaml 仍是
+	// 人格库（可存多个人格），persona-current.md 是"当前生效的那份"。
+	personaFile := filepath.Join(root, ".reasonix", "persona-current.md")
 	if p := effectiveSoul(ts.workspaceRoot, root); p != nil && strings.TrimSpace(p.SystemPrompt) != "" {
-		tomlContent += "\n[agent]\n" +
-			"system_prompt = \"" + tomlStr(p.SystemPrompt) + "\"\n"
+		if err := os.MkdirAll(filepath.Dir(personaFile), 0o755); err == nil {
+			_ = os.WriteFile(personaFile, []byte(p.SystemPrompt), 0o644)
+			tomlContent += "\n[agent]\n" +
+				"system_prompt_file = \".reasonix/persona-current.md\"\n"
+		}
+	} else {
+		_ = os.Remove(personaFile) // 无生效人格：清理旧文件，回落默认提示词
 	}
 	reasonixTOML := filepath.Join(root, "reasonix.toml")
 	if err := os.WriteFile(reasonixTOML, []byte(tomlContent), 0o644); err != nil {
