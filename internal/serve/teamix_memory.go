@@ -8,18 +8,32 @@ import (
 	"reasonix/internal/memory"
 )
 
-// 私有记忆：每个用户的 controller memory store（users/<name>/...）。
-// 全局记忆：workspaceRoot/.teamix/memory/（架构师维护，全员只读继承）。
+// 私有记忆：每个用户的 controller memory store（users/<name>/.teamix/<project>/…，
+// 切项目重建 controller 后按项目隔离）。
+// 全局记忆：workspaceRoot/.teamix/memory/<project>/（架构师按项目维护，
+// 全员在对应项目只读继承）。
 
-func (ts *TeamixServer) globalMemoryStore() memory.Store {
-	return memory.Store{Dir: filepath.Join(ts.workspaceRoot, ".teamix", "memory")}
+// globalMemoryStore 返回某项目下的全局记忆存储（架构师维护，全员只读）。
+// project 为空时归入根目录（历史数据）；未选项目的读写由调用方拒绝。
+func (ts *TeamixServer) globalMemoryStore(project string) memory.Store {
+	base := filepath.Join(ts.workspaceRoot, ".teamix", "memory")
+	if project != "" {
+		base = filepath.Join(base, project)
+	}
+	return memory.Store{Dir: base}
 }
 
 func (ts *TeamixServer) handleMemoryList(w http.ResponseWriter, r *http.Request, u *userSession) {
+	// 记忆按项目隔离：未选择项目时一律返回空（前端提示先选项目，
+	// 与总结一致——点进对应项目后才加载该项目的记忆）。
+	if u.selectedProject == "" {
+		writeJSON(w, map[string]any{"memories": []any{}, "dir": "", "scope": r.URL.Query().Get("scope")})
+		return
+	}
 	scope := r.URL.Query().Get("scope") // "global" → 全局记忆（全员可读）
 	if scope == "global" {
-		all := ts.globalMemoryStore().List()
-		writeJSON(w, map[string]any{"memories": memJSON(all), "dir": ts.globalMemoryStore().Dir, "scope": "global"})
+		all := ts.globalMemoryStore(u.selectedProject).List()
+		writeJSON(w, map[string]any{"memories": memJSON(all), "dir": ts.globalMemoryStore(u.selectedProject).Dir, "scope": "global"})
 		return
 	}
 	memSet := u.ctrl.Memory()
@@ -73,13 +87,17 @@ func (ts *TeamixServer) handleMemorySave(w http.ResponseWriter, r *http.Request,
 		Type:        memory.NormalizeType(body.Type),
 		Body:        body.Body,
 	}
-	// 全局记忆仅架构师可写
+	// 全局记忆仅架构师可写（按项目隔离：未选项目拒绝）
 	if body.Scope == "global" {
 		if !ts.isArchitect(u) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		path, err := ts.globalMemoryStore().Save(m)
+		if u.selectedProject == "" {
+			http.Error(w, "请先选择项目再维护全局记忆", http.StatusBadRequest)
+			return
+		}
+		path, err := ts.globalMemoryStore(u.selectedProject).Save(m)
 		if err != nil {
 			http.Error(w, "save failed", http.StatusInternalServerError)
 			return
@@ -114,7 +132,11 @@ func (ts *TeamixServer) handleMemoryDelete(w http.ResponseWriter, r *http.Reques
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		if err := ts.globalMemoryStore().Delete(body.Name); err != nil {
+		if u.selectedProject == "" {
+			http.Error(w, "请先选择项目", http.StatusBadRequest)
+			return
+		}
+		if err := ts.globalMemoryStore(u.selectedProject).Delete(body.Name); err != nil {
 			http.Error(w, "delete failed", http.StatusInternalServerError)
 			return
 		}

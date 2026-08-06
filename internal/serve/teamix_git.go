@@ -3,6 +3,7 @@ package serve
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,7 +16,9 @@ import (
 	"regexp"
 	"strings"
 
+	"reasonix/internal/boot"
 	"reasonix/internal/teamixconfig"
+	reasonixAgent "reasonix/internal/agent"
 )
 
 func (ts *TeamixServer) handleGitCredentials(w http.ResponseWriter, r *http.Request, u *userSession) {
@@ -156,20 +159,56 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 		cloned = true
 	}
 
-	// Switch user session to this project
-	u.selectedProject = body.Project
-
 	// 项目内 Teamix 配置不入 git：.teamix/ 与 .reasonix/ 全部忽略（幂等追加）。
 	ensureProjectGitignore(projPath)
 
-	// Switch controller session directory to the project's .teamix/sessions,
-	// so new sessions and session listings are project-scoped.
-	sessionDir := filepath.Join(projPath, ".teamix", "sessions")
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+	// 记忆/工作区按项目隔离：切换项目 = 重建 controller（复用 switchModel
+	// 的 Snapshot+AdoptHistory 模式）。MemoryUserDir 带项目段 → agent 的
+	// memory store（私有+全局 recall）全部按项目隔离；会话目录切到项目；
+	// 历史消息迁移保留，继续对话不中断。
+	if u.ctrl.Running() {
+		writeJSON(w, map[string]any{"ok": false, "error": "当前有轮次在运行，请等待完成后再切换项目"})
+		return
+	}
+	cur := u.ctrl
+	if err := cur.Snapshot(); err != nil {
+		slog.Warn("teamix: snapshot before project switch", "err", err)
+	}
+	prevPath := cur.SessionPath()
+	carried := cur.History()
+
+	bc := NewBroadcaster()
+	projSessionDir := filepath.Join(projPath, ".teamix", "sessions")
+	if err := os.MkdirAll(projSessionDir, 0o755); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "create session dir: " + err.Error()})
 		return
 	}
-	u.ctrl.SetSessionDir(sessionDir)
+	newCtrl, err := boot.Build(context.Background(), boot.Options{
+		Model:               u.model,
+		RequireKey:          true,
+		Sink:                bc,
+		Stderr:              os.Stderr,
+		TokenMode:           ts.profile,
+		WorkspaceRoot:       u.userRoot,
+		SessionDir:          projSessionDir,
+		SharedHost:          ts.sharedHost,
+		ExcludedPluginNames: ts.excludedMachineMCPNames(),
+		MemoryUserDir:       filepath.Join(u.userRoot, ".teamix", body.Project), // 记忆按项目隔离
+		ExcludeHomeSkills:   true,
+		WrapProvider:        ts.headroomHook,
+		Router:              ts.routerCfg(u.name),
+		RagIndex:            ts.ragIndexFor(u.name),
+	})
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "切换项目失败（重建控制器）: " + err.Error()})
+		return
+	}
+	newPath := reasonixAgent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
+	newCtrl.AdoptHistory(carried, newPath)
+	u.ctrl = newCtrl
+	u.bc = bc
+	u.selectedProject = body.Project
+	cur.Close()
 
 	writeJSON(w, map[string]any{
 		"ok":      true,
