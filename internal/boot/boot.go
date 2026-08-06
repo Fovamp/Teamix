@@ -175,8 +175,11 @@ type Options struct {
 	// 全文不出内网（数据域钉住自动强制内部 Qwen）。nil 不注册。
 	RagIndex *rag.Index
 	// MemoryCompilerDir 覆盖 Memory v5 编译状态目录（Teamix 按项目：
-	// userRoot/.teamix/<project>/memory/compiler）。空 = 默认机器级。
+	// userRoot/.teamix/memory/<project>/compiler）。空 = 默认机器级。
 	MemoryCompilerDir string
+	// MemoryGlobalDir 覆盖全局记忆目录（Teamix：GlobalProject/.teamix/memory/<项目>，
+	// 架构师经 UI 维护，agent 只读引用）。空 = 默认用户级。
+	MemoryGlobalDir string
 }
 
 // Build loads config, resolves the model(s), and returns a Controller wrapping a
@@ -401,6 +404,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		memoryUserDir = config.MemoryUserDir()
 	}
 	mem := memory.Load(memory.Options{CWD: root, UserDir: memoryUserDir})
+	// 全局记忆只读引用（Teamix）：GlobalDir 指向团队全局（架构师 UI 维护），
+	// agent 只能读不能写；ReadOnlyGlobal 让 remember/delete 落到私有目录。
+	if opts.MemoryGlobalDir != "" {
+		mem.Store.GlobalDir = opts.MemoryGlobalDir
+		mem.Store.ReadOnlyGlobal = true
+	}
 	projectChecks := instruction.ExtractHostChecks(mem.Docs)
 	sysPrompt = memory.Compose(sysPrompt, mem)
 

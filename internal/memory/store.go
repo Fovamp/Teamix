@@ -27,8 +27,12 @@ import (
 // all projects), while "project" and "reference" stay in the project-specific Dir.
 // List() and Index() merge both directories so every session sees the full set.
 type Store struct {
-	Dir       string // ...reasonix/projects/<slug>/memory
-	GlobalDir string // ...reasonix/memory/global (shared across projects)
+	Dir       string // 私有记忆目录（用户×项目：userDir/private/<slug>）
+	GlobalDir string // 全局记忆目录（单机 ~/.reasonix/memory/global；Teamix 团队全局
+	// GlobalProject/.teamix/memory/<项目>，架构师经 UI 维护）
+	// ReadOnlyGlobal 全局记忆只读（Teamix：agent 只能读全局不能写——
+	// remember/delete 对全局类型落到 Dir 私有目录；单机不设保持原行为）。
+	ReadOnlyGlobal bool
 }
 
 // Type classifies a memory, mirroring the auto-memory taxonomy.
@@ -185,6 +189,10 @@ func (s Store) Save(m Memory) (string, error) {
 	if dir == "" {
 		return "", fmt.Errorf("memory store unavailable (no user config dir)")
 	}
+	// 全局记忆只读（Teamix）：写全局类型时落到私有目录
+	if s.ReadOnlyGlobal && s.GlobalDir != "" && sameDir(dir, s.GlobalDir) {
+		dir = s.Dir
+	}
 	if strings.TrimSpace(m.Name) == "" {
 		return "", fmt.Errorf("memory needs a name")
 	}
@@ -233,6 +241,10 @@ func (s Store) Archive(name string) (string, error) {
 	var lastPath string
 	for _, dir := range s.dirs() {
 		if dir == "" {
+			continue
+		}
+		// 全局记忆只读（Teamix）：归档/删除跳过全局目录（全局由架构师经 UI 维护）
+		if s.ReadOnlyGlobal && s.GlobalDir != "" && sameDir(dir, s.GlobalDir) {
 			continue
 		}
 		p, err := archiveInDir(dir, name)
