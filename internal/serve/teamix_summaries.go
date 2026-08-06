@@ -12,7 +12,6 @@ import (
 	"time"
 
 	reasonixAgent "reasonix/internal/agent"
-	"reasonix/internal/config"
 )
 
 // sessionSummary 是"会话总结"面板里的一条记录：AI 生成的、面向人阅读的
@@ -31,15 +30,11 @@ type sessionSummary struct {
 	Project      string    `json:"project,omitempty"`
 }
 
-// summaryDir 返回会话总结的存储根目录（<workspaceRoot>/.teamix/summaries/）。
-// 目录结构：summaries/<user>/<project>/<sessionID>.json（按项目隔离，
-// 用户点击对应项目后才读取；_legacy 存历史平铺数据）。
-func (ts *TeamixServer) summaryDir() string {
-	base := ts.workspaceRoot
-	if base == "" {
-		base = config.ReasonixHomeDir()
-	}
-	dir := filepath.Join(base, ".teamix", "summaries")
+// summaryDir 返回会话总结的存储根目录（用户私有：<userRoot>/.teamix/summaries/）。
+// 目录结构：summaries/<project>/<sessionID>.json（项目内平铺；_legacy 存
+// 历史数据）。总结是用户私人数据，放用户目录而非 workspace 根。
+func (ts *TeamixServer) summaryDir(userRoot string) string {
+	dir := filepath.Join(userRoot, ".teamix", "summaries")
 	_ = os.MkdirAll(dir, 0o755)
 	return dir
 }
@@ -47,12 +42,12 @@ func (ts *TeamixServer) summaryDir() string {
 // summaryFile 返回某用户某项目下某会话的总结文件。sessionID 来自 SessionPath
 // 的文件名；project 为空时归入 _legacy（历史数据迁移）。路径穿越防御：
 // 统一转绝对路径后再比较。
-func (ts *TeamixServer) summaryFile(user, project, sessionID string) string {
-	base := filepath.Clean(ts.summaryDir())
+func (ts *TeamixServer) summaryFile(userRoot, project, sessionID string) string {
+	base := filepath.Clean(ts.summaryDir(userRoot))
 	if project == "" {
 		project = "_legacy"
 	}
-	projDir := filepath.Join(base, user, project)
+	projDir := filepath.Join(base, project)
 	_ = os.MkdirAll(projDir, 0o755)
 	p := filepath.Join(projDir, sessionID+".json")
 	absBase, absErr := filepath.Abs(base)
@@ -63,30 +58,40 @@ func (ts *TeamixServer) summaryFile(user, project, sessionID string) string {
 	return p
 }
 
-// migrateInvalidSummaries 把历史误写进 _invalid.json 的总结按 SessionID 归位到
-// 各自会话文件；并把历史平铺（无项目归属）的总结迁入 _legacy 项目目录。
-func (ts *TeamixServer) migrateInvalidSummaries(user string) {
-	userRoot := filepath.Join(ts.summaryDir(), user)
-	// 1) 平铺旧数据（*.json 在 user 根目录）→ 迁入 _legacy/<sessionID>.json
-	ents, _ := os.ReadDir(userRoot)
+// migrateInvalidSummaries 迁移历史总结到用户目录：
+// 1) 旧位置 workspaceRoot/.teamix/summaries/<user>/*.json（改造前结构）→
+//    新位置 userRoot/.teamix/summaries/_legacy/<session>.json（无项目归属）
+// 2) _invalid 归位到 _legacy 各自会话文件
+func (ts *TeamixServer) migrateInvalidSummaries(userRoot, userName string) {
+	// 1) 旧 workspace 根的总结 → 用户目录 _legacy
+	oldBase := filepath.Join(ts.workspaceRoot, ".teamix", "summaries", userName)
+	if ents, err := os.ReadDir(oldBase); err == nil {
+		for _, e := range ents {
+			if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+				continue
+			}
+			sid := strings.TrimSuffix(e.Name(), ".json")
+			data, err := os.ReadFile(filepath.Join(oldBase, e.Name()))
+			if err != nil {
+				continue
+			}
+			var sums []sessionSummary
+			if json.Unmarshal(data, &sums) != nil || len(sums) == 0 {
+				continue
+			}
+			_ = ts.saveSessionSummaries(userRoot, "_legacy", sid, sums)
+		}
+	}
+	// 2) 新位置 _legacy 下的平铺旧数据（历史迁移残留）+ _invalid 归位
+	userBase := filepath.Join(ts.summaryDir(userRoot), "_legacy")
+	ents, _ := os.ReadDir(userBase)
 	for _, e := range ents {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 			continue
 		}
-		sid := strings.TrimSuffix(e.Name(), ".json")
-		data, err := os.ReadFile(filepath.Join(userRoot, e.Name()))
-		if err != nil {
-			continue
-		}
-		var sums []sessionSummary
-		if json.Unmarshal(data, &sums) != nil || len(sums) == 0 {
-			continue
-		}
-		_ = ts.saveSessionSummaries(user, "_legacy", sid, sums)
-		_ = os.Remove(filepath.Join(userRoot, e.Name()))
+		// 已有 .json 的会话文件是迁移目标，跳过；_invalid 单独处理
 	}
-	// 2) _invalid 归位到各自会话（同样进 _legacy——旧数据无项目归属）
-	invPath := filepath.Join(userRoot, "_invalid.json")
+	invPath := filepath.Join(userBase, "_invalid.json")
 	data, err := os.ReadFile(invPath)
 	if err != nil {
 		return
@@ -103,7 +108,7 @@ func (ts *TeamixServer) migrateInvalidSummaries(user string) {
 		bySession[s.SessionID] = append(bySession[s.SessionID], s)
 	}
 	for sid, sums := range bySession {
-		existing := ts.loadSessionSummaries(user, "_legacy", sid)
+		existing := ts.loadSessionSummaries(userRoot, "_legacy", sid)
 		seen := map[string]bool{}
 		for _, e := range existing {
 			seen[e.ID] = true
@@ -114,14 +119,14 @@ func (ts *TeamixServer) migrateInvalidSummaries(user string) {
 			}
 		}
 		if len(existing) > 0 {
-			_ = ts.saveSessionSummaries(user, "_legacy", sid, existing)
+			_ = ts.saveSessionSummaries(userRoot, "_legacy", sid, existing)
 		}
 	}
 	_ = os.Remove(invPath)
 }
 
-func (ts *TeamixServer) loadSessionSummaries(user, project, sessionID string) []sessionSummary {
-	data, err := os.ReadFile(ts.summaryFile(user, project, sessionID))
+func (ts *TeamixServer) loadSessionSummaries(userRoot, project, sessionID string) []sessionSummary {
+	data, err := os.ReadFile(ts.summaryFile(userRoot, project, sessionID))
 	if err != nil {
 		return []sessionSummary{}
 	}
@@ -132,12 +137,12 @@ func (ts *TeamixServer) loadSessionSummaries(user, project, sessionID string) []
 	return out
 }
 
-func (ts *TeamixServer) saveSessionSummaries(user, project, sessionID string, sums []sessionSummary) error {
+func (ts *TeamixServer) saveSessionSummaries(userRoot, project, sessionID string, sums []sessionSummary) error {
 	data, err := json.MarshalIndent(sums, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(ts.summaryFile(user, project, sessionID), data, 0o644)
+	return os.WriteFile(ts.summaryFile(userRoot, project, sessionID), data, 0o644)
 }
 
 // allSummaries 返回当前选中项目下该用户所有会话的总结，按时间倒序，
@@ -148,7 +153,7 @@ func (ts *TeamixServer) allSummaries(u *userSession) []sessionSummary {
 	if project == "" {
 		return []sessionSummary{}
 	}
-	projDir := filepath.Join(ts.summaryDir(), u.name, project)
+	projDir := filepath.Join(ts.summaryDir(u.userRoot), project)
 	entries, err := os.ReadDir(projDir)
 	if err != nil {
 		return []sessionSummary{}
@@ -165,7 +170,7 @@ func (ts *TeamixServer) allSummaries(u *userSession) []sessionSummary {
 		if sid == "_invalid" || sid == "" {
 			continue
 		}
-		sums := ts.loadSessionSummaries(u.name, project, sid)
+		sums := ts.loadSessionSummaries(u.userRoot, project, sid)
 		if len(sums) == 0 {
 			continue
 		}
@@ -197,7 +202,7 @@ func (ts *TeamixServer) allSummaries(u *userSession) []sessionSummary {
 func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, u *userSession) {
 	// 历史误写进 _invalid.json 的总结先归位（幂等，空则无操作）
 	ts.mu.Lock()
-	ts.migrateInvalidSummaries(u.name)
+	ts.migrateInvalidSummaries(u.userRoot, u.name)
 	ts.mu.Unlock()
 	sessionID := strings.TrimSuffix(filepath.Base(u.ctrl.SessionPath()), ".jsonl")
 	if r.Method == http.MethodPost {
@@ -230,7 +235,7 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 		title, desc, content := parseSummaryOutput(content)
 		// load-modify-save 加锁，避免并发 POST 互相覆盖丢数据。
 		ts.mu.Lock()
-		sums := ts.loadSessionSummaries(u.name, u.selectedProject, sessionID)
+		sums := ts.loadSessionSummaries(u.userRoot, u.selectedProject, sessionID)
 		sums = append(sums, sessionSummary{
 			ID:          fmt.Sprintf("s%d", time.Now().UnixNano()),
 			Time:        time.Now(),
@@ -240,7 +245,7 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 			SessionID:   sessionID,
 			Project:     u.selectedProject,
 		})
-		if err := ts.saveSessionSummaries(u.name, u.selectedProject, sessionID, sums); err != nil {
+		if err := ts.saveSessionSummaries(u.userRoot, u.selectedProject, sessionID, sums); err != nil {
 			ts.mu.Unlock()
 			http.Error(w, fmt.Sprintf("保存总结失败: %v", err), http.StatusInternalServerError)
 			return
@@ -259,14 +264,14 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		ts.mu.Lock()
-		projDir := filepath.Join(ts.summaryDir(), u.name, u.selectedProject)
+		projDir := filepath.Join(ts.summaryDir(u.userRoot), u.selectedProject)
 		ents, _ := os.ReadDir(projDir)
 		for _, e := range ents {
 			if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 				continue
 			}
 			sid := strings.TrimSuffix(e.Name(), ".json")
-			sums := ts.loadSessionSummaries(u.name, u.selectedProject, sid)
+			sums := ts.loadSessionSummaries(u.userRoot, u.selectedProject, sid)
 			kept := sums[:0]
 			changed := false
 			for _, s := range sums {
@@ -277,7 +282,7 @@ func (ts *TeamixServer) handleSummaries(w http.ResponseWriter, r *http.Request, 
 				kept = append(kept, s)
 			}
 			if changed {
-				_ = ts.saveSessionSummaries(u.name, u.selectedProject, sid, kept)
+				_ = ts.saveSessionSummaries(u.userRoot, u.selectedProject, sid, kept)
 			}
 		}
 		ts.mu.Unlock()
