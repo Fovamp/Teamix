@@ -307,6 +307,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		SharedHost:          ts.sharedHost,
 		ExcludedPluginNames: ts.excludedMachineMCPNames(),
 		MemoryUserDir:       filepath.Join(userRoot, ".teamix"),
+		MemoryCompilerDir:   filepath.Join(userRoot, ".teamix", "memory", "compiler"),
 		ExcludeHomeSkills:   true,
 		WrapProvider:        ts.headroomHook,
 		Router:              ts.routerCfg(name),

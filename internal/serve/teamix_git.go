@@ -194,6 +194,7 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 		SharedHost:          ts.sharedHost,
 		ExcludedPluginNames: ts.excludedMachineMCPNames(),
 		MemoryUserDir:       filepath.Join(u.userRoot, ".teamix", body.Project), // 记忆按项目隔离
+		MemoryCompilerDir:   filepath.Join(u.userRoot, ".teamix", body.Project, "memory", "compiler"),
 		ExcludeHomeSkills:   true,
 		WrapProvider:        ts.headroomHook,
 		Router:              ts.routerCfg(u.name),

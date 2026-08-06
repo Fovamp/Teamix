@@ -174,6 +174,9 @@ type Options struct {
 	// 非 nil 时向 agent 注册 rag_search 工具：本地 BM25 检索相关片段，
 	// 全文不出内网（数据域钉住自动强制内部 Qwen）。nil 不注册。
 	RagIndex *rag.Index
+	// MemoryCompilerDir 覆盖 Memory v5 编译状态目录（Teamix 按项目：
+	// userRoot/.teamix/<project>/memory/compiler）。空 = 默认机器级。
+	MemoryCompilerDir string
 }
 
 // Build loads config, resolves the model(s), and returns a Controller wrapping a
@@ -1275,7 +1278,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	execSess := agent.NewSession(sysPrompt)
 	var memCompiler *memorycompiler.Runtime
 	if cfg.MemoryCompilerEnabled() {
-		memCompiler = memorycompiler.New(config.MemoryCompilerDir(root))
+		dir := opts.MemoryCompilerDir
+		if dir == "" {
+			dir = config.MemoryCompilerDir(root)
+		}
+		memCompiler = memorycompiler.New(dir)
 	}
 	executor := agent.New(execProv, reg, execSess, agent.Options{
 		MaxSteps:                           maxSteps,
