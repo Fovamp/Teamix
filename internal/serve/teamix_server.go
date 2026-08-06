@@ -77,11 +77,29 @@ type TeamixServer struct {
 	// budgetNotified 预算超限致命告警只发一次（P2 预算降档）。
 	budgetNotified atomic.Bool
 
-	// ragIndex 本地机密文档检索索引（P2 本地 RAG）：rag_search 工具读它。
-	ragIndex *rag.Index
+	// ragIndexes 本地机密文档检索索引（P2 本地 RAG）：按用户隔离
+	// （map[user]*rag.Index）——用户 A 索引的机密文档，用户 B 搜不到。
+	// rag_search 工具只读当前用户自己的索引。项目级隔离标注后续可选。
+	ragIndexes map[string]*rag.Index
+	ragMu      sync.Mutex
 
 	// alertWebhook 企微机器人 webhook（致命告警渠道，.teamix/config.yaml alert 段）。
 	alertWebhook string
+}
+
+// ragIndexFor 返回指定用户的 RAG 索引（懒创建，按用户隔离）。
+func (ts *TeamixServer) ragIndexFor(user string) *rag.Index {
+	ts.ragMu.Lock()
+	defer ts.ragMu.Unlock()
+	if ts.ragIndexes == nil {
+		ts.ragIndexes = make(map[string]*rag.Index)
+	}
+	ix, ok := ts.ragIndexes[user]
+	if !ok {
+		ix = rag.New()
+		ts.ragIndexes[user] = ix
+	}
+	return ix
 }
 
 func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *TeamixServer {
@@ -97,7 +115,6 @@ func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *Tea
 	ts.globalCfg = ts.loadGlobalConfig()
 	ts.headroomHook = ts.buildHeadroomHook()
 	ts.internalProvider = buildInternalProvider()
-	ts.ragIndex = rag.New()
 	if ts.globalCfg != nil && ts.globalCfg.Config != nil {
 		ts.alertWebhook = ts.globalCfg.Config.Alert.WebhookURL
 	}
@@ -293,7 +310,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		ExcludeHomeSkills:   true,
 		WrapProvider:        ts.headroomHook,
 		Router:              ts.routerCfg(name),
-		RagIndex:            ts.ragIndex,
+		RagIndex:            ts.ragIndexFor(name),
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("build controller for %q: %w", name, err)

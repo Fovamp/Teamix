@@ -13,7 +13,6 @@ import (
 	"reasonix/internal/auditlog"
 	"reasonix/internal/modelrouter"
 	"reasonix/internal/provider"
-	"reasonix/internal/rag"
 	"reasonix/internal/teamixconfig"
 )
 
@@ -254,12 +253,13 @@ func (ts *TeamixServer) handleRagIndex(w http.ResponseWriter, r *http.Request, u
 		http.Error(w, "需要 content", http.StatusBadRequest)
 		return
 	}
-	if ts.ragIndex == nil {
-		ts.ragIndex = rag.New()
+	if ts.ragIndexFor(u.name) == nil {
+		// 不可能：ragIndexFor 懒创建
 	}
-	ts.ragIndex.Add(body.Content)
-	slog.Info("teamix: rag indexed", "user", u.name, "name", body.Name, "chunks", ts.ragIndex.Len())
-	writeJSON(w, map[string]any{"ok": true, "chunks": ts.ragIndex.Len()})
+	ix := ts.ragIndexFor(u.name)
+	ix.Add(body.Content)
+	slog.Info("teamix: rag indexed", "user", u.name, "name", body.Name, "chunks", ix.Len())
+	writeJSON(w, map[string]any{"ok": true, "chunks": ix.Len()})
 }
 
 // handleUserExternalToggle 切换用户的外部模型权限（仅 architect）：
