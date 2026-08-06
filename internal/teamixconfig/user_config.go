@@ -9,9 +9,10 @@ import (
 )
 
 // UserConfig 对应用户私有配置 users/<name>/.teamix/config.yaml
+// 只保留协作配置：git 凭证 + 偏好。技能/MCP/人格实体在 .reasonix/，
+// 经 reasonix.toml（[skills] paths / [[plugins]] / system_prompt_file）生效。
 type UserConfig struct {
 	Git         GitConfig   `yaml:"git"`
-	MCP         []PluginRef `yaml:"mcp,omitempty"` // 兼容遗留：新代码写 .reasonix/mcp-private.json
 	Preferences Preferences `yaml:"preferences"`
 }
 
@@ -41,7 +42,6 @@ type Preferences struct {
 func DefaultUserConfig() *UserConfig {
 	return &UserConfig{
 		Git:         GitConfig{},
-		MCP:         []PluginRef{},
 		Preferences: Preferences{Language: "zh"},
 	}
 }

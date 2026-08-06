@@ -5,7 +5,7 @@ import "testing"
 func TestMergeScalars(t *testing.T) {
 	global := &Config{Teamix: TeamixConfig{Name: "Teamix", DefaultModel: "deepseek-v3"}}
 	user := &UserConfig{Preferences: Preferences{Language: "en"}}
-	m := Merge(global, user, nil)
+	m := Merge(global, user)
 	// 模型仅公共可配：私有配置不再能覆盖（公司统一 token）
 	if m.DefaultModel != "deepseek-v3" {
 		t.Errorf("model should come from global only, got %q", m.DefaultModel)
@@ -15,7 +15,7 @@ func TestMergeScalars(t *testing.T) {
 	}
 
 	// 公共未配置 → 回落为空（由启动参数兜底）
-	m2 := Merge(nil, &UserConfig{Preferences: Preferences{Language: "en"}}, nil)
+	m2 := Merge(nil, &UserConfig{Preferences: Preferences{Language: "en"}})
 	if m2.DefaultModel != "" {
 		t.Errorf("empty global model should stay empty, got %q", m2.DefaultModel)
 	}
@@ -24,41 +24,8 @@ func TestMergeScalars(t *testing.T) {
 	}
 
 	// 全部为空 → 默认
-	m3 := Merge(nil, nil, nil)
+	m3 := Merge(nil, nil)
 	if m3.DefaultModel != "" || m3.Language != "zh" {
 		t.Errorf("defaults wrong: model=%q lang=%q", m3.DefaultModel, m3.Language)
-	}
-}
-
-func TestMergeMCPList(t *testing.T) {
-	global := []PluginRef{
-		{Name: "filesystem", Command: "npx", Args: []string{"@fs"}, Type: "stdio"},
-		{Name: "shared", Command: "npx", Args: []string{"@shared"}},
-	}
-	user := &UserConfig{
-		MCP: []PluginRef{
-			{Name: "shared", Command: "npx", Args: []string{"@shared-private"}}, // 同名覆盖
-			{Name: "private-only", Command: "python", Args: []string{"mcp.py"}},
-		},
-	}
-	m := Merge(nil, user, global)
-	if len(m.MCP) != 3 {
-		t.Fatalf("expected 3 merged MCPs, got %d: %+v", len(m.MCP), m.MCP)
-	}
-	if m.MCP[0].Name != "filesystem" {
-		t.Errorf("global-first order broken: %+v", m.MCP[0])
-	}
-	// shared 同名 → 私有覆盖
-	var shared *PluginRef
-	for i := range m.MCP {
-		if m.MCP[i].Name == "shared" {
-			shared = &m.MCP[i]
-		}
-	}
-	if shared == nil || len(shared.Args) == 0 || shared.Args[0] != "@shared-private" {
-		t.Errorf("private same-name MCP should override global, got %+v", shared)
-	}
-	if len(m.GlobalMCP) != 2 || len(m.PrivateMCP) != 2 {
-		t.Errorf("layer views wrong: global=%d private=%d", len(m.GlobalMCP), len(m.PrivateMCP))
 	}
 }
