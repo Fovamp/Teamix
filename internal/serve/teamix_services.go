@@ -251,10 +251,12 @@ func safeModuleName(s string) bool {
 	return s != "" && safeModuleNameRe.MatchString(s)
 }
 
-// lookPathMaven 定位 Maven 可执行文件：
-//  1. PATH（mvn / mvn.cmd / mvn.bat / mvn.exe）
-//  2. MAVEN_HOME / MVN_HOME 环境变量（bin/mvn.cmd 等）
-// 返回绝对路径（启动命令直接用绝对路径，不依赖 cmd 的 PATH 解析）。
+// lookPathMaven 定位 Maven 可执行文件（返回绝对路径，启动命令直接用）：
+//  1. 进程 PATH（mvn / mvn.cmd / mvn.bat / mvn.exe）
+//  2. 进程环境 MAVEN_HOME / MVN_HOME
+//  3. Windows 用户注册表（HKCU\Environment）的 MAVEN_HOME / MVN_HOME / Path
+//     ——不依赖进程环境继承（从旧终端启动 teamix.exe 也能读到）
+//  4. 常见安装位置兜底（~/Documents/apache-maven-*、C:\apache-maven-*）
 func lookPathMaven() (string, error) {
 	if p, err := exec.LookPath("mvn"); err == nil {
 		return p, nil
@@ -265,16 +267,57 @@ func lookPathMaven() (string, error) {
 		}
 	}
 	for _, env := range []string{"MAVEN_HOME", "MVN_HOME"} {
-		if home := os.Getenv(env); home != "" {
-			for _, name := range []string{"bin/mvn.cmd", "bin/mvn.bat", "bin/mvn"} {
-				p := filepath.Join(home, filepath.FromSlash(name))
-				if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-					return p, nil
+		if p := mavenInHome(os.Getenv(env)); p != "" {
+			return p, nil
+		}
+	}
+	if runtime.GOOS == "windows" {
+		for _, env := range []string{"MAVEN_HOME", "MVN_HOME"} {
+			if p := mavenInHome(readUserEnv(env)); p != "" {
+				return p, nil
+			}
+		}
+		// 注册表用户 PATH 逐段查找 mvn
+		if up := readUserEnv("Path"); up != "" {
+			for _, seg := range filepath.SplitList(up) {
+				for _, name := range []string{"mvn.cmd", "mvn.bat", "mvn.exe"} {
+					p := filepath.Join(seg, name)
+					if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+						return p, nil
+					}
 				}
 			}
 		}
 	}
+	// 常见安装位置兜底
+	for _, base := range []string{
+		filepath.Join(os.Getenv("USERPROFILE"), "Documents"),
+		os.Getenv("USERPROFILE"),
+		"C:\\",
+	} {
+		if base == "" {
+			continue
+		}
+		matches, _ := filepath.Glob(filepath.Join(base, "apache-maven-*", "bin", "mvn.cmd"))
+		if len(matches) > 0 {
+			return matches[0], nil
+		}
+	}
 	return "", fmt.Errorf("mvn 不在 PATH，也未设置 MAVEN_HOME")
+}
+
+// mavenInHome 检查 MAVEN_HOME/MVN_HOME 目录下的 mvn 可执行文件。
+func mavenInHome(home string) string {
+	if home == "" {
+		return ""
+	}
+	for _, name := range []string{"bin/mvn.cmd", "bin/mvn.bat", "bin/mvn"} {
+		p := filepath.Join(home, filepath.FromSlash(name))
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	return ""
 }
 
 // startService 在用户目录启动一个模块（映射端口 + nacos 注入）。
