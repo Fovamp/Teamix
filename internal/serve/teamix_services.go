@@ -403,10 +403,11 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 			return recordFail(fmt.Errorf("未检测到 pnpm：%v（请安装 pnpm 并加入 PATH 后重试）", err))
 		}
 		if runtime.GOOS == "windows" {
-			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\ncall pnpm install\r\nif errorlevel 1 exit /b 1\r\ncall pnpm dev --port %d\r\n", port)
+			// node_modules 已存在则跳过 install（首次才下载依赖）
+			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nif not exist node_modules call pnpm install\r\nif errorlevel 1 exit /b 1\r\ncall pnpm dev --port %d\r\n", port)
 			cmd = newCmdScript(u, projectName, module, port, script, "pnpm")
 		} else {
-			cmdLine := fmt.Sprintf("pnpm install && pnpm dev --port %d", port)
+			cmdLine := fmt.Sprintf("[ -d node_modules ] || pnpm install; pnpm dev --port %d", port)
 			cmd = exec.Command("sh", "-c", cmdLine)
 		}
 	} else {
