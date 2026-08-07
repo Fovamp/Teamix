@@ -180,6 +180,14 @@ async function syncSelectedModules(project: string): Promise<boolean> {
       return false // 不关闭弹窗，错误信息停留（svcStarting 区保留 rows 显示）
     }
     await pollSvcStatus(project)
+    // 轮询结束后：有 failed → 不关闭弹窗，让用户看错误（rows 停留显示）
+    const anyFailed = Object.entries(selectedByProject.value[project] || {})
+      .filter(([, p]) => p > 0)
+      .some(([m]) => svcStatusRows.value[m] && svcStatusRows.value[m].stage === "failed")
+    if (anyFailed) {
+      toast("部分模块启动失败，请查看下方错误详情", "error")
+      return false
+    }
     const stillStarting = Object.values(svcStatusRows.value).some((s: any) => s && s.stage === "starting")
     if (stillStarting) toast("部分模块仍在后台启动中（首次下载依赖较慢），可在运行面板查看", "info", 8000)
   } catch (e: any) {

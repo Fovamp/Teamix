@@ -9,6 +9,8 @@ const { toast } = useToast()
 const open = ref(false)
 const view = ref<"personal" | "global">("personal")
 const services = ref<any[]>([])
+// 展开详情的服务 ID（点击行切换，pre 可选中复制）
+const expandedId = ref("")
 let timer: any = null
 
 // 垂直位置：默认 25%，用户拖动把手调整（只允许上下，避免遮挡）
@@ -118,15 +120,22 @@ onUnmounted(() => {
           <div v-if="services.length === 0" class="svc-drawer__empty">
             暂无运行中的服务<br /><span style="font-size:11px;color:var(--muted-2)">在「选择项目 → 选择模块」中勾选并启动</span>
           </div>
-          <div v-for="s in services" :key="s.id" class="svc-drawer__row" :title="detailTitle(s)">
-            <code class="svc-drawer__name">{{ s.project }}/{{ s.service }}</code>
-            <span class="svc-drawer__port">:{{ s.port }}</span>
-            <span class="svc-drawer__stage" :class="'svc-drawer__stage--' + s.stage">{{ stageLabel(s.stage) }}</span>
-            <!-- 启动/停止互相切换：运行中/启动中 → 停止；已停止/失败 → 启动 -->
-            <button v-if="s.stage === 'running' || s.stage === 'starting'" class="svc-drawer__stop" @click="stop(s.id)">停止</button>
-            <button v-else class="svc-drawer__go" @click="restart(s)">启动</button>
-            <span v-if="s.error && s.stage !== 'stopped'" class="svc-drawer__errline">{{ s.error }}</span>
-          </div>
+          <template v-for="s in services" :key="s.id">
+            <div class="svc-drawer__row" @click="expandedId = expandedId === s.id ? '' : s.id">
+              <code class="svc-drawer__name">{{ s.project }}/{{ s.service }}</code>
+              <span class="svc-drawer__port">:{{ s.port }}</span>
+              <span class="svc-drawer__stage" :class="'svc-drawer__stage--' + s.stage">{{ stageLabel(s.stage) }}</span>
+              <!-- 启动/停止互相切换：运行中/启动中 → 停止；已停止/失败 → 启动 -->
+              <button v-if="s.stage === 'running' || s.stage === 'starting'" class="svc-drawer__stop" @click.stop="stop(s.id)">停止</button>
+              <button v-else class="svc-drawer__go" @click.stop="restart(s)">启动</button>
+              <span v-if="s.error && s.stage !== 'stopped'" class="svc-drawer__errline">{{ s.error }}</span>
+              <span class="svc-drawer__expand">{{ expandedId === s.id ? "收起" : "详情" }}</span>
+            </div>
+            <!-- 展开详情：输出/错误，pre 可选中复制 -->
+            <pre v-if="expandedId === s.id" class="svc-drawer__detail">{{
+              (s.error ? "错误: " + s.error + "\n\n" : "") + (s.output || "（无输出）")
+            }}</pre>
+          </template>
         </template>
         <template v-else>
           <!-- 全局视图：k8s 部署状态，待小工具接入真实数据 -->
@@ -229,6 +238,13 @@ onUnmounted(() => {
 .svc-drawer__errline {
   font-size: 10px; color: #f44336; max-width: 90px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0;
+}
+.svc-drawer__expand { font-size: 10px; color: var(--muted-2); flex-shrink: 0; cursor: pointer; }
+.svc-drawer__detail {
+  margin: 0 0 6px 0; padding: 8px 10px; font-size: 11px; line-height: 1.5;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--fg-2); font-family: var(--mono); white-space: pre-wrap; word-break: break-all;
+  max-height: 220px; overflow-y: auto; user-select: text; cursor: text;
 }
 .svc-drawer__stage--stopped { background: rgba(150,150,150,.15); color: var(--muted-2); }
 </style>
