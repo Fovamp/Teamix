@@ -364,17 +364,24 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 	if !safeModuleName(module) {
 		return recordFail(fmt.Errorf("module name %q contains unsafe characters", module))
 	}
-	// 定位 Maven（PATH 或 MAVEN_HOME），用绝对路径执行（不依赖 cmd 的 PATH 解析）
+	// 定位 Maven（PATH 或 MAVEN_HOME/注册表），用绝对路径执行（不依赖 cmd 的 PATH 解析）
 	mvnPath, err := lookPathMaven()
 	if err != nil {
 		return recordFail(fmt.Errorf("未检测到 Maven：%v（请安装 Maven 并加入 PATH，或配置 MAVEN_HOME 后重试）", err))
 	}
-	cmdLine := fmt.Sprintf("%q spring-boot:run -Dspring-boot.run.arguments=--server.port=%d", mvnPath, port)
+	// Windows 用临时 .cmd 脚本启动：cmd /c 直接拼绝对路径+引号会被多层解析搞坏
+	// （'\"C:\...\mvn.cmd\"' 报 not recognized），脚本文件绕开所有引号/编码问题。
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		// chcp 65001 + JAVA_TOOL_OPTIONS 强制 UTF-8 输出，避免 GBK 乱码
-		cmd = exec.Command("cmd", "/c", "chcp 65001>nul & set JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8 & "+cmdLine)
+		script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\n\"%s\" spring-boot:run -Dspring-boot.run.arguments=--server.port=%d\r\n",
+			mvnPath, port)
+		scriptPath := filepath.Join(u.userRoot, ".teamix", "tmp", fmt.Sprintf("mvn-%s-%s-%d.cmd", projectName, module, port))
+		if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err == nil {
+			_ = os.WriteFile(scriptPath, []byte(script), 0o644)
+		}
+		cmd = exec.Command("cmd", "/c", scriptPath)
 	} else {
+		cmdLine := fmt.Sprintf("%q spring-boot:run -Dspring-boot.run.arguments=--server.port=%d", mvnPath, port)
 		cmd = exec.Command("sh", "-c", cmdLine)
 	}
 	cmd.Dir = svcPath

@@ -81,6 +81,11 @@ function detailTitle(s: any): string {
   return parts.join("\n\n") || s.project + "/" + s.service
 }
 
+// 纯退出码（exit status N）不在列表行显示——详情里有完整原因
+function isExitCodeOnly(e: string): boolean {
+  return /^exit status \d+$/.test((e || "").trim())
+}
+
 const runningCount = ref(0)
 onMounted(() => {
   refresh()
@@ -128,7 +133,7 @@ onUnmounted(() => {
               <!-- 启动/停止互相切换：运行中/启动中 → 停止；已停止/失败 → 启动 -->
               <button v-if="s.stage === 'running' || s.stage === 'starting'" class="svc-drawer__stop" @click.stop="stop(s.id)">停止</button>
               <button v-else class="svc-drawer__go" @click.stop="restart(s)">启动</button>
-              <span v-if="s.error && s.stage !== 'stopped'" class="svc-drawer__errline">{{ s.error }}</span>
+              <span v-if="s.error && s.stage !== 'stopped' && !isExitCodeOnly(s.error)" class="svc-drawer__errline">{{ s.error }}</span>
               <span class="svc-drawer__expand">{{ expandedId === s.id ? "收起" : "详情" }}</span>
             </div>
             <!-- 展开详情：输出/错误，pre 可选中复制 -->
