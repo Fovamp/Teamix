@@ -378,7 +378,10 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 	// （'\"C:\...\mvn.cmd\"' 报 not recognized），脚本文件绕开所有引号/编码问题。
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\n\"%s\" spring-boot:run -Dspring-boot.run.arguments=--server.port=%d\r\n",
+		// -llr（legacy-local-repository）：信任 .m2 本地缓存，跳过 Maven 3.9 的
+		// _remote.repositories 校验（缓存来自"当前上下文不可用仓库"时会强制重新
+		// 验证下载 → 0 B → 插件前缀解析失败 "No plugin found for prefix 'spring-boot'"）。
+		script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\n\"%s\" -llr spring-boot:run -Dspring-boot.run.arguments=--server.port=%d\r\n",
 			mvnPath, port)
 		scriptPath := filepath.Join(u.userRoot, ".teamix", "tmp", fmt.Sprintf("mvn-%s-%s-%d.cmd", projectName, module, port))
 		// 绝对化（cmd.Dir 改变后相对路径会在模块目录下解析 → 找不到脚本）
@@ -393,7 +396,7 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 		}
 		cmd = exec.Command("cmd", "/c", scriptPath)
 	} else {
-		cmdLine := fmt.Sprintf("%q spring-boot:run -Dspring-boot.run.arguments=--server.port=%d", mvnPath, port)
+		cmdLine := fmt.Sprintf("%q -llr spring-boot:run -Dspring-boot.run.arguments=--server.port=%d", mvnPath, port)
 		cmd = exec.Command("sh", "-c", cmdLine)
 	}
 	cmd.Dir = svcPath
