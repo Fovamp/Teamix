@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from "vue"
 import { api } from "../api"
+import { useToast } from "../composables/useToast"
+const { toast } = useToast()
 
 // 运行面板抽屉：右侧悬浮（露出把手 → 点击展开），顶部切换 个人/全局。
 // 个人 = 当前用户启动的模块（轮询 status）；全局 = k8s 部署状态（待小工具接入，先占位）。
@@ -54,11 +56,27 @@ function stop(id: string) {
   api.servicesStop(id).then(() => setTimeout(refresh, 400)).catch(() => {})
 }
 
+// 重新启动（stopped/failed 状态）：同一项目/模块/端口重新拉起
+function restart(s: any) {
+  api.servicesStart(s.project, s.service, s.port)
+    .then(() => setTimeout(refresh, 400))
+    .catch((e: any) => toast(e.message || "启动失败", "error"))
+}
+
 function stageLabel(s: string): string {
   if (s === "running") return "运行中"
   if (s === "failed") return "失败"
   if (s === "starting") return "启动中"
+  if (s === "stopped") return "已停止"
   return s || "未知"
+}
+
+// 悬浮详情：错误 + 最近输出（截断展示）
+function detailTitle(s: any): string {
+  const parts: string[] = []
+  if (s.error) parts.push("错误: " + s.error)
+  if (s.output) parts.push("输出:\n" + s.output.slice(-3000))
+  return parts.join("\n\n") || s.project + "/" + s.service
 }
 
 const runningCount = ref(0)
@@ -100,12 +118,14 @@ onUnmounted(() => {
           <div v-if="services.length === 0" class="svc-drawer__empty">
             暂无运行中的服务<br /><span style="font-size:11px;color:var(--muted-2)">在「选择项目 → 选择模块」中勾选并启动</span>
           </div>
-          <div v-for="s in services" :key="s.id" class="svc-drawer__row">
+          <div v-for="s in services" :key="s.id" class="svc-drawer__row" :title="detailTitle(s)">
             <code class="svc-drawer__name">{{ s.project }}/{{ s.service }}</code>
             <span class="svc-drawer__port">:{{ s.port }}</span>
             <span class="svc-drawer__stage" :class="'svc-drawer__stage--' + s.stage">{{ stageLabel(s.stage) }}</span>
-            <button class="svc-drawer__stop" @click="stop(s.id)">停止</button>
-            <div v-if="s.error" class="svc-drawer__err" :title="s.error">{{ s.error }}</div>
+            <!-- 启动/停止互相切换：运行中/启动中 → 停止；已停止/失败 → 启动 -->
+            <button v-if="s.stage === 'running' || s.stage === 'starting'" class="svc-drawer__stop" @click="stop(s.id)">停止</button>
+            <button v-else class="svc-drawer__go" @click="restart(s)">启动</button>
+            <span v-if="s.error && s.stage !== 'stopped'" class="svc-drawer__errline">{{ s.error }}</span>
           </div>
         </template>
         <template v-else>
@@ -200,4 +220,15 @@ onUnmounted(() => {
   background: var(--danger-soft); color: var(--danger); cursor: pointer;
 }
 .svc-drawer__stop:hover { background: var(--danger); color: #fff; }
+.svc-drawer__go {
+  padding: 2px 8px; font-size: 11px; flex-shrink: 0;
+  border: 1px solid var(--success); border-radius: 5px;
+  background: rgba(76,175,80,.12); color: #4caf50; cursor: pointer;
+}
+.svc-drawer__go:hover { background: var(--success); color: #000; }
+.svc-drawer__errline {
+  font-size: 10px; color: #f44336; max-width: 90px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0;
+}
+.svc-drawer__stage--stopped { background: rgba(150,150,150,.15); color: var(--muted-2); }
 </style>

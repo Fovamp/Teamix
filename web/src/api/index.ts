@@ -119,6 +119,8 @@ export const api = {
   servicesStatus: (): Promise<Array<{ id: string; project: string; service: string; port: number; pid: number; stage: string; error?: string; startedAt: string }>> =>
     get("/teamix/services/status"),
   servicesStop: (id: string): Promise<any> => post("/teamix/services/stop", { id }),
+  servicesStart: (project: string, service: string, port: number): Promise<any> =>
+    post("/teamix/projects/" + encodeURIComponent(project) + "/services/start", { service, port }),
   gitCredentials: (): Promise<{ sshKeyPath: string; httpsUsername: string; configured: boolean }> => get("/teamix/git/credentials"),
   gitCredentialsSave: (body: { sshKeyPath?: string; httpsUsername?: string; httpsPassword?: string }): Promise<any> =>
     post("/teamix/git/credentials", body),

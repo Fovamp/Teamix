@@ -1,6 +1,7 @@
 ﻿package serve
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -17,6 +18,38 @@ import (
 	"time"
 )
 
+// limitedBuffer 滚动保留尾部内容的 writer（供服务输出捕获，防止无限增长）。
+type limitedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+	max int
+}
+
+func newLimitedBuffer(max int) *limitedBuffer {
+	return &limitedBuffer{max: max}
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.buf.Len()+len(p) > b.max {
+		excess := b.buf.Len() + len(p) - b.max
+		if excess >= b.buf.Len() {
+			b.buf.Reset()
+		} else {
+			_ = b.buf.Next(excess)
+		}
+	}
+	_, _ = b.buf.Write(p)
+	return len(p), nil
+}
+
+func (b *limitedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // runningService tracks a service process started by a user.
 type runningService struct {
 	ID        string    `json:"id"`
@@ -24,10 +57,11 @@ type runningService struct {
 	Service   string    `json:"service"` // 模块名
 	Port      int       `json:"port"`    // 映射端口（用户输入）
 	PID       int       `json:"pid"`
-	Stage     string    `json:"stage"` // starting | running | failed
+	Stage     string    `json:"stage"` // starting | running | failed | stopped
 	Error     string    `json:"error,omitempty"`
 	StartedAt time.Time `json:"startedAt"`
 	cmd       *exec.Cmd
+	out       *limitedBuffer // 进程输出（滚动保留，status 返回供查看）
 
 	mu sync.Mutex // 保护 Stage/Error（进程退出 goroutine vs status 读）
 }
@@ -234,12 +268,13 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 		return nil, fmt.Errorf("project not cloned yet, select project first")
 	}
 
-	// 启动命令：mvn spring-boot:run -pl <模块>，映射端口用命令行参数覆盖（优先级最高）。
-	// 模块名来自扫描器/配置（白名单内），再校验字符集防 shell 注入（&;|`$ 等）。
+	// 启动命令：在【模块目录】直接运行 mvn spring-boot:run（模块目录有自己的
+	// pom.xml；不能带 -pl——在模块目录内 -pl 找不到 reactor 模块会 exit status 1）。
+	// 映射端口用命令行参数覆盖（优先级最高）。
 	if !safeModuleName(module) {
 		return nil, fmt.Errorf("module name %q contains unsafe characters", module)
 	}
-	cmdLine := fmt.Sprintf("mvn spring-boot:run -pl %s -Dspring-boot.run.arguments=--server.port=%d", module, port)
+	cmdLine := fmt.Sprintf("mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=%d", port)
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		cmd = exec.Command("cmd", "/c", cmdLine)
@@ -250,8 +285,10 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 	// per-process 环境：继承 serve 环境 + nacos 注入（group=用户名）
 	env := append(os.Environ(), ts.nacosEnv(u.name)...)
 	cmd.Env = env
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// 捕获输出（滚动保留尾部，供前端悬浮查看启动/失败详情），不再打到 serve 控制台
+	out := newLimitedBuffer(32 * 1024)
+	cmd.Stdout = out
+	cmd.Stderr = out
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start failed: %w", err)
@@ -267,32 +304,35 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 		Stage:     "starting",
 		StartedAt: time.Now(),
 		cmd:       cmd,
+		out:       out,
+	}
+	// 清理同 项目/模块 的旧记录（stopped/failed 残留，避免重复）
+	for _, old := range svcMgr.list(u.token) {
+		if old.Project == projectName && old.Service == module && old.ID != svcID {
+			svcMgr.remove(u.token, old.ID)
+		}
 	}
 	svcMgr.add(u.token, rs)
 	slog.Info("teamix: service started", "user", u.name, "project", projectName,
 		"module", module, "pid", cmd.Process.Pid, "port", port)
 
-	// 进程退出：标记 failed 并保留 60s 再移除——前端/抽屉能短暂看到退出原因
-	// （之前立即 remove，启动失败的模块 UI 上直接消失，无法排查）
+	// 进程退出：标记 failed/stopped 并保留（不自动移除——抽屉需显示失败原因、
+	// 且"停止后保留可再启动"；重新启动时 startService 会清理同模块旧记录）
 	done := make(chan struct{})
 	go func() {
 		err := cmd.Wait()
 		close(done)
 		rs.mu.Lock()
-		if err != nil {
+		if rs.Stage != "stopped" { // 手动停止（killProcess 已置 stopped）不覆盖
 			rs.Stage = "failed"
-			rs.Error = err.Error()
-		} else {
-			rs.Stage = "failed"
-			rs.Error = "进程已退出"
+			if err != nil {
+				rs.Error = err.Error()
+			} else {
+				rs.Error = "进程已退出"
+			}
 		}
 		rs.mu.Unlock()
 		slog.Info("teamix: service exited", "id", svcID, "err", err)
-		// 保留 60s 供 UI 展示失败原因后移除
-		go func() {
-			time.Sleep(60 * time.Second)
-			svcMgr.remove(u.token, svcID)
-		}()
 	}()
 	// 存活探测：启动 15s 后进程仍存活（未退出）→ 标记 running（编译/下载完成、服务已起）。
 	// mvn 首次下载依赖可能超过 15s，此期间保持 starting，前端轮询持续展示。
@@ -455,7 +495,11 @@ func (ts *TeamixServer) handleServiceStop(w http.ResponseWriter, r *http.Request
 	}
 
 	svcMgr.killProcess(svc)
-	svcMgr.remove(u.token, body.ID)
+	// 手动停止：保留记录（Stage=stopped），抽屉显示"已停止"，可再启动
+	svc.mu.Lock()
+	svc.Stage = "stopped"
+	svc.Error = "已手动停止"
+	svc.mu.Unlock()
 
 	writeJSON(w, map[string]bool{"ok": true})
 }
@@ -473,6 +517,7 @@ func (ts *TeamixServer) handleServicesStatus(w http.ResponseWriter, r *http.Requ
 		PID       int    `json:"pid"`
 		Stage     string `json:"stage"`
 		Error     string `json:"error,omitempty"`
+		Output    string `json:"output,omitempty"`
 		StartedAt string `json:"startedAt"`
 	}
 	out := make([]svcStatus, len(list))
@@ -482,6 +527,9 @@ func (ts *TeamixServer) handleServicesStatus(w http.ResponseWriter, r *http.Requ
 			ID: s.ID, Project: s.Project, Service: s.Service,
 			Port: s.Port, PID: s.PID, Stage: s.Stage, Error: s.Error,
 			StartedAt: s.StartedAt.Format(time.RFC3339),
+		}
+		if s.out != nil {
+			out[i].Output = s.out.String()
 		}
 		s.mu.Unlock()
 	}
