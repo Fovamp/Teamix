@@ -136,14 +136,15 @@ async function checkRunningClone() {
 
 // 同步勾选模块：先校验端口（冲突 → 打开模块弹窗标红，不启动），
 // 通过后 sync 启动/关闭，轮询 status 显示每模块阶段。
+// 注意：sync 是全量同步（不在勾选集合的运行服务会被关闭）——必须传全部项目的
+// 勾选 items，否则切到项目 B 时项目 A 的服务会被静默 kill。
 // 返回 true = 已发起启动；false = 冲突/失败（调用方不关闭弹窗）。
 async function syncSelectedModules(project: string): Promise<boolean> {
-  const saved = selectedByProject.value[project] || {}
-  const items = Object.entries(saved)
-    .filter(([, port]) => port > 0)
-    .map(([module, port]) => ({ project, module, port }))
-  if (items.length === 0) return true
-  if (!(await checkPortConflicts(items))) {
+  const allItems = Object.entries(selectedByProject.value).flatMap(([proj, mods]) =>
+    Object.entries(mods).filter(([, p]) => p > 0).map(([module, port]) => ({ project: proj, module, port }))
+  )
+  if (allItems.length === 0) return true
+  if (!(await checkPortConflicts(allItems))) {
     // 冲突 → 回到模块选择弹窗让用户改端口（走 openModuleModal 完整初始化）
     await openModuleModal(project)
     toast("所选模块端口冲突，请在模块选择中修改后重试", "error")
@@ -152,7 +153,7 @@ async function syncSelectedModules(project: string): Promise<boolean> {
   svcStarting.value = true
   svcStatusRows.value = {}
   try {
-    const sr = await api.servicesSync(items)
+    const sr = await api.servicesSync(allItems)
     // sync 可能整体拒绝（TOCTOU：validate 与 sync 之间端口被占）→ 回填冲突
     if (sr && sr.ok === false && sr.conflicts) {
       const conflicts: Record<string, string> = {}
