@@ -272,17 +272,32 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 	slog.Info("teamix: service started", "user", u.name, "project", projectName,
 		"module", module, "pid", cmd.Process.Pid, "port", port)
 
-	// 进程退出：标记 failed（若仍在册）并移除
+	// 进程退出：移除记录并标记失败（running 态由存活探测 goroutine 置）
+	done := make(chan struct{})
 	go func() {
 		err := cmd.Wait()
+		close(done)
 		rs.mu.Lock()
-		if err != nil && rs.Stage != "running" {
+		if err != nil {
 			rs.Stage = "failed"
 			rs.Error = err.Error()
 		}
 		rs.mu.Unlock()
 		slog.Info("teamix: service exited", "id", svcID, "err", err)
 		svcMgr.remove(u.token, svcID)
+	}()
+	// 存活探测：启动 15s 后进程仍存活（未退出）→ 标记 running（编译/下载完成、服务已起）。
+	// mvn 首次下载依赖可能超过 15s，此期间保持 starting，前端轮询持续展示。
+	go func() {
+		select {
+		case <-time.After(15 * time.Second):
+			rs.mu.Lock()
+			if rs.Stage == "starting" {
+				rs.Stage = "running"
+			}
+			rs.mu.Unlock()
+		case <-done:
+		}
 	}()
 	return rs, nil
 }

@@ -283,6 +283,7 @@ function close() {
     toast("项目拉取进行中，请等待完成", "info")
     return
   }
+  stopSvcPolling() // 关闭弹窗停止启动状态轮询（模块仍在后台运行）
   emit("close")
 }
 
