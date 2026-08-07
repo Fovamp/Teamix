@@ -306,6 +306,33 @@ func lookPathMaven() (string, error) {
 	return "", fmt.Errorf("mvn 不在 PATH，也未设置 MAVEN_HOME")
 }
 
+// lookPathPnpm 定位 pnpm（PATH 中 pnpm / pnpm.cmd / pnpm.exe）。
+func lookPathPnpm() (string, error) {
+	if p, err := exec.LookPath("pnpm"); err == nil {
+		return p, nil
+	}
+	for _, name := range []string{"pnpm.cmd", "pnpm.bat", "pnpm.exe"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("pnpm 不在 PATH")
+}
+
+// newCmdScript 生成并返回一个执行脚本的 cmd（Windows 专用）：
+// 脚本写入 users/<user>/.teamix/tmp/，绝对路径，绕开 cmd /c 的引号解析问题。
+func newCmdScript(u *userSession, projectName, module string, port int, script, kind string) *exec.Cmd {
+	scriptPath := filepath.Join(u.userRoot, ".teamix", "tmp",
+		fmt.Sprintf("%s-%s-%s-%d.cmd", kind, projectName, module, port))
+	if abs, err := filepath.Abs(scriptPath); err == nil {
+		scriptPath = abs
+	}
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err == nil {
+		_ = os.WriteFile(scriptPath, []byte(script), 0o644)
+	}
+	return exec.Command("cmd", "/c", scriptPath)
+}
+
 // mavenInHome 检查 MAVEN_HOME/MVN_HOME 目录下的 mvn 可执行文件。
 func mavenInHome(home string) string {
 	if home == "" {
@@ -363,41 +390,40 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 		return recordFail(fmt.Errorf("project not cloned yet, select project first"))
 	}
 
-	// 启动命令：在【模块目录】直接运行 mvn spring-boot:run（模块目录有自己的
-	// pom.xml；不能带 -pl——在模块目录内 -pl 找不到 reactor 模块会 exit status 1）。
-	// 映射端口用命令行参数覆盖（优先级最高）。
+	// 启动命令按模块类型分支：frontend → pnpm install + pnpm dev（vite，端口映射）；
+	// backend（Java/Maven）→ mvn -llr spring-boot:run。
+	// 在【模块目录】执行；映射端口用命令行参数覆盖（优先级最高）。
 	if !safeModuleName(module) {
 		return recordFail(fmt.Errorf("module name %q contains unsafe characters", module))
 	}
-	// 定位 Maven（PATH 或 MAVEN_HOME/注册表），用绝对路径执行（不依赖 cmd 的 PATH 解析）
-	mvnPath, err := lookPathMaven()
-	if err != nil {
-		return recordFail(fmt.Errorf("未检测到 Maven：%v（请安装 Maven 并加入 PATH，或配置 MAVEN_HOME 后重试）", err))
-	}
-	// Windows 用临时 .cmd 脚本启动：cmd /c 直接拼绝对路径+引号会被多层解析搞坏
-	// （'\"C:\...\mvn.cmd\"' 报 not recognized），脚本文件绕开所有引号/编码问题。
 	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		// -llr（legacy-local-repository）：信任 .m2 本地缓存，跳过 Maven 3.9 的
-		// _remote.repositories 校验（缓存来自"当前上下文不可用仓库"时会强制重新
-		// 验证下载 → 0 B → 插件前缀解析失败 "No plugin found for prefix 'spring-boot'"）。
-		script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\n\"%s\" -llr spring-boot:run -Dspring-boot.run.arguments=--server.port=%d\r\n",
-			mvnPath, port)
-		scriptPath := filepath.Join(u.userRoot, ".teamix", "tmp", fmt.Sprintf("mvn-%s-%s-%d.cmd", projectName, module, port))
-		// 绝对化（cmd.Dir 改变后相对路径会在模块目录下解析 → 找不到脚本）
-		if abs, err := filepath.Abs(scriptPath); err == nil {
-			scriptPath = abs
+	if svc.Type == "frontend" {
+		// 前端模块：pnpm 下载依赖 + vite 启动（dev script 透传 --port 覆盖映射端口）
+		if _, err := lookPathPnpm(); err != nil {
+			return recordFail(fmt.Errorf("未检测到 pnpm：%v（请安装 pnpm 并加入 PATH 后重试）", err))
 		}
-		if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
-			return recordFail(fmt.Errorf("创建启动脚本目录失败: %w", err))
+		if runtime.GOOS == "windows" {
+			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\ncall pnpm install\r\nif errorlevel 1 exit /b 1\r\ncall pnpm dev --port %d\r\n", port)
+			cmd = newCmdScript(u, projectName, module, port, script, "pnpm")
+		} else {
+			cmdLine := fmt.Sprintf("pnpm install && pnpm dev --port %d", port)
+			cmd = exec.Command("sh", "-c", cmdLine)
 		}
-		if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
-			return recordFail(fmt.Errorf("写入启动脚本失败: %w", err))
-		}
-		cmd = exec.Command("cmd", "/c", scriptPath)
 	} else {
-		cmdLine := fmt.Sprintf("%q -llr spring-boot:run -Dspring-boot.run.arguments=--server.port=%d", mvnPath, port)
-		cmd = exec.Command("sh", "-c", cmdLine)
+		// 后端模块：Maven（-llr 信任 .m2 缓存，跳过 Maven 3.9 仓库来源校验）
+		mvnPath, err := lookPathMaven()
+		if err != nil {
+			return recordFail(fmt.Errorf("未检测到 Maven：%v（请安装 Maven 并加入 PATH，或配置 MAVEN_HOME 后重试）", err))
+		}
+		if runtime.GOOS == "windows" {
+			// 临时 .cmd 脚本绕开 cmd 引号解析问题
+			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\n\"%s\" -llr spring-boot:run -Dspring-boot.run.arguments=--server.port=%d\r\n",
+				mvnPath, port)
+			cmd = newCmdScript(u, projectName, module, port, script, "mvn")
+		} else {
+			cmdLine := fmt.Sprintf("%q -llr spring-boot:run -Dspring-boot.run.arguments=--server.port=%d", mvnPath, port)
+			cmd = exec.Command("sh", "-c", cmdLine)
+		}
 	}
 	cmd.Dir = svcPath
 	// per-process 环境：继承 serve 环境 + nacos 注入（group=用户名）
