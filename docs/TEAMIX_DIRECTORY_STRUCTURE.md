@@ -10,9 +10,10 @@ GlobalProject/                                ← 团队工作区根
 │   └── soul.yaml                             ← 团队人格库【实体】（架构师维护）
 │
 ├── .teamix/                                  ← 团队级协作配置 + 团队数据
-│   ├── config.yaml                           ← models/sensitive/audit/quota/alert
+│   ├── config.yaml                           ← models/audit/quota/alert
 │   ├── projects.yaml                         ← 项目清单
 │   ├── users.yaml                            ← 用户白名单 + 角色 + allow_external
+│   ├── sensitive.yaml                        ← 机密黑名单（前端「安全」页可视化，独立文件）
 │   ├── memory/<项目名>/                      ← 团队全局记忆（架构师维护，全员 agent 只读）
 │   ├── workflows/                            ← 团队工作流模板
 │   ├── notifications/                        ← 通知配置
@@ -31,11 +32,13 @@ GlobalProject/                                ← 团队工作区根
         ├── .teamix/                          ← 用户级协作配置 + 运行数据
         │   ├── config.yaml                   ← git 凭证 + 偏好（仅此两项）
         │   ├── workflows/                    ← 用户工作流模板
+        │   ├── codebase-index/<项目名>/      ← 代码图谱索引（codebase-memory-mcp，先建索引后可用）
         │   ├── memory/<项目名>/              ← 项目记忆
         │   │   ├── private/                  ← 私有记忆（agent 手动 remember）
         │   │   └── compiler/                 ← Memory v5 编译状态（AI 自动整理记忆，默认启用）
         │   ├── sessions/<项目名>/            ← 该项目会话
         │   ├── summaries/<项目名>/           ← 该项目总结
+        │   ├── archive/sessions/<项目名>/    ← 已归档会话（红叉=归档，可恢复；归档内删除才是真删）
         │   └── tmp/                          ← 未选项目的临时数据（隔离不互通）
         │       ├── sessions/                 ← 临时会话
         │       └── memory/
