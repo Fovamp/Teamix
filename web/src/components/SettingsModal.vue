@@ -403,10 +403,22 @@ async function renderMemory() {
 
 // 安全 tab：机密清单（dirs/files）+ 内置工具敏感级（tools）可视化编辑，仅 architect 可写。
 // 内置工具清单：声明敏感级的工具（未声明走默认兜底，如 doc_kb_search=internal）。
-const SENSITIVE_TOOLS = ["doc_kb_search", "web_fetch", "read_file", "write_file", "edit_file", "bash", "grep", "ls", "glob", "codeindex"]
+// 列表样式仿 Skills 卡片：工具名 + 描述 + 敏感级徽章 + 右侧下拉。
+const SENSITIVE_TOOLS: { name: string; desc: string }[] = [
+  { name: "doc_kb_search", desc: "团队文档知识库检索" },
+  { name: "web_fetch", desc: "抓取 URL 网页内容" },
+  { name: "read_file", desc: "读取文件" },
+  { name: "write_file", desc: "写入文件" },
+  { name: "edit_file", desc: "编辑文件" },
+  { name: "bash", desc: "执行 shell 命令" },
+  { name: "grep", desc: "搜索文件内容" },
+  { name: "ls", desc: "列出目录" },
+  { name: "glob", desc: "文件模式匹配" },
+  { name: "codeindex", desc: "代码符号索引" },
+]
 async function renderSensitive() {
   const q = tokenQuery()
-  contentHtml.value = '<div class="section"><h3>🛡 安全</h3><p class="desc">机密清单：AI 工具试图访问以下目录/文件时将直接拦截（不读取内容）。内置工具敏感级：声明工具结果数据的出网档位（未声明走默认，doc_kb_search 默认 internal）。修改后即时生效。</p></div><div id="sensitive-render">加载中...</div>'
+  contentHtml.value = '<div class="section"><h3>🛡 安全</h3><p class="desc">机密清单：AI 工具试图访问以下目录/文件时将直接拦截（不读取内容）。内置工具敏感级：声明工具结果数据的出网档位（未声明走默认，doc_kb_search 默认 internal）。修改后即时生效（新会话/切模型生效于运行中会话）。</p></div><div id="sensitive-render">加载中...</div>'
   try {
     let role = ""
     try {
@@ -422,19 +434,29 @@ async function renderSensitive() {
     const taStyle = 'width:100%;min-height:96px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono);box-sizing:border-box;resize:vertical;line-height:1.6'
     const labStyle = 'display:block;font-size:12px;color:var(--fg);font-weight:500;margin:0 0 4px'
     const hintStyle = 'font-size:11px;color:var(--muted-2);font-weight:400;margin-left:6px'
-    const selStyle = 'padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:12px'
-    let h = '<div class="section"><h3>🛡 安全</h3><p class="desc">机密清单：AI 工具试图访问以下目录/文件时将直接拦截（不读取内容）。内置工具敏感级：声明工具结果数据的出网档位（未声明走默认，doc_kb_search 默认 internal）。修改后即时生效。</p></div>'
+    const selStyle = 'padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:12px'
+    let h = '<div class="section"><h3>🛡 安全</h3><p class="desc">机密清单：AI 工具试图访问以下目录/文件时将直接拦截（不读取内容）。内置工具敏感级：声明工具结果数据的出网档位（未声明走默认，doc_kb_search 默认 internal）。修改后即时生效（新会话/切模型生效于运行中会话）。</p></div>'
     h += '<div style="margin-bottom:14px"><label style="' + labStyle + '">机密目录<span style="' + hintStyle + '">每行一个，前缀匹配，如 tenders/ data/ secrets/</span></label><textarea id="sens-dirs" style="' + taStyle + '" placeholder="tenders/">' + escH(dirs.join("\n")) + '</textarea></div>'
     h += '<div style="margin-bottom:14px"><label style="' + labStyle + '">机密文件<span style="' + hintStyle + '">每行一个，glob 匹配，如 .env *.pem</span></label><textarea id="sens-files" style="' + taStyle + '" placeholder=".env">' + escH(files.join("\n")) + '</textarea></div>'
-    // 内置工具敏感级（架构师可编辑）：可配置清单 ∪ 后端已有声明（防止保存时丢清单外声明）
-    const toolNames = SENSITIVE_TOOLS.concat(Object.keys(tools).filter((k) => !SENSITIVE_TOOLS.includes(k)))
+    // 内置工具敏感级（仿 skill 卡片列表）：可配置清单 ∪ 后端已有声明（防保存丢声明）
+    const known = SENSITIVE_TOOLS.map((x) => x.name)
+    const extra = Object.keys(tools).filter((k) => !known.includes(k)).map((k) => ({ name: k, desc: "" }))
+    const toolNames = SENSITIVE_TOOLS.concat(extra)
     h += '<div style="margin-bottom:14px"><label style="' + labStyle + '">内置工具敏感级<span style="' + hintStyle + '">public=可原文出网 · internal=不出网（默认）· redact=假名化出网 · 留空=默认</span></label>'
-    toolNames.forEach((tn) => {
-      const cur = tools[tn] || ""
+    if (toolNames.length === 0) {
+      h += '<div style="color:var(--muted-2);font-size:12px;padding:8px 0">暂无工具</div>'
+    }
+    toolNames.forEach((t) => {
+      const cur = tools[t.name] || ""
       const opt = (v: string, lbl: string) => '<option value="' + v + '"' + (cur === v ? " selected" : "") + '>' + lbl + '</option>'
-      h += '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px"><code style="width:150px;flex-shrink:0">' + escH(tn) + '</code>'
-      h += '<select data-tool-sens="' + escAttr(tn) + '" style="' + selStyle + '">' + opt("", "默认") + opt("public", "public") + opt("internal", "internal") + opt("redact", "redact") + '</select>'
-      h += '<span style="color:var(--muted-2);font-size:11px">' + (tn === "doc_kb_search" ? "团队文档默认 internal" : "未声明默认") + '</span></div>'
+      const isDefault = cur === ""
+      h += '<div class="card" style="flex-direction:row;align-items:center;padding:8px 12px;margin-bottom:6px">'
+      h += '<div class="card-info" style="flex:1;min-width:0"><div class="card-title"><code>' + escH(t.name) + '</code>'
+      if (!isDefault) h += sensBadge(cur)
+      h += '</div>'
+      h += '<span class="subject">' + (t.desc || "\u5df2\u58f0\u660e\u5de5\u5177") + (isDefault ? ' <span style="color:var(--muted-2)">· 默认</span>' : '') + '</span></div>'
+      h += '<select data-tool-sens="' + escAttr(t.name) + '" style="' + selStyle + '"' + (isArch ? "" : " disabled") + '>' + opt("", "默认") + opt("public", "public") + opt("internal", "internal") + opt("redact", "redact") + '</select>'
+      h += '</div>'
     })
     h += '</div>'
     if (isArch) {
