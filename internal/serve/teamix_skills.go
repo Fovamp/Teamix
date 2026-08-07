@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"reasonix/internal/config"
 	"reasonix/internal/skill"
 )
 
@@ -134,6 +135,51 @@ func (ts *TeamixServer) handleSkillContent(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	http.Error(w, `{"error":"skill not found"}`, http.StatusNotFound)
+}
+
+// POST /teamix/mcp/toggle  {name, enabled, scope}
+// 启用/禁用 MCP server：false → 断开当前会话 + 配置记 Enabled=false（下次会话不加载）；
+// true → 重新挂载 + 配置 Enabled=true。
+func (ts *TeamixServer) handleMCPToggle(w http.ResponseWriter, r *http.Request, u *userSession) {
+	var body struct {
+		Name    string `json:"name"`
+		Enabled bool   `json:"enabled"`
+		Scope   string `json:"scope"` // "global" | "private" (default)
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	// 定位配置（global 优先，否则 private）
+	if _, isGlobal := ts.loadGlobalMCPServers()[body.Name]; isGlobal {
+		if !ts.isArchitect(u) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if err := ts.setGlobalMCPEnabled(body.Name, body.Enabled); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		if err := ts.setUserMCPEnabled(u, body.Name, body.Enabled); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if body.Enabled {
+		// 重新挂载（从配置读 command/args）
+		specs := loadUserMCPServers(u.userRoot)
+		spec, ok := specs[body.Name]
+		if !ok {
+			spec, ok = ts.loadGlobalMCPServers()[body.Name]
+		}
+		if ok {
+			_, _ = u.ctrl.AddMCPServer(config.PluginEntry{Name: body.Name, Type: spec.Type, Command: spec.Command, Args: spec.Args})
+		}
+	} else {
+		u.ctrl.DisconnectMCPServer(body.Name)
+	}
+	writeJSON(w, map[string]any{"ok": true, "name": body.Name, "enabled": body.Enabled})
 }
 
 // POST /teamix/skills/delete  {name, scope}

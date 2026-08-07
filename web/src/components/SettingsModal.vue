@@ -208,7 +208,9 @@ async function renderMCP() {
       h += '<div class="card-main"><div class="card-title"><span class="name"><code>' + escH(s.name) + '</code></span>' + srcBadge + sensBadge(s.sensitivity) + '</div>'
       h += '<span class="subject">' + (s.transport || "stdio") + ' \u00b7 ' + s.tools + ' \u4e2a\u5de5\u5177' + (isFailed ? ' <span style="color:#f44336">\u79bb\u7ebf</span>' : '') + '</span></div>'
       h += '</div>'
-      h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2)">' + (isFailed && s.error ? '<span style="color:#f44336;font-size:11px">' + escH(s.error) + '</span>' : (toolHtml || '<span style="color:var(--muted-2)">\u65e0\u5de5\u5177</span>')) + '<div style="margin-top:8px;text-align:right"><button class="btn danger sm" data-mcp-remove="' + escAttr(s.name) + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u79fb\u9664</button></div></div>'
+      h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2)">' + (isFailed && s.error ? '<span style="color:#f44336;font-size:11px">' + escH(s.error) + '</span>' : (toolHtml || '<span style="color:var(--muted-2)">\u65e0\u5de5\u5177</span>')) + '<div style="margin-top:8px;display:flex;justify-content:flex-end;gap:8px;align-items:center">'
+        + '<label style="font-size:11px;color:var(--muted-2);display:flex;align-items:center;gap:4px;cursor:pointer">\u542f\u7528<input type="checkbox" data-mcp-toggle="' + escAttr(s.name) + '" data-mcp-enabled="' + (s.enabled === false ? "false" : "true") + '" ' + (s.enabled === false ? "" : "checked") + ' style="accent-color:var(--accent)"></label>'
+        + '<button class="btn danger sm" data-mcp-remove="' + escAttr(s.name) + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u79fb\u9664</button></div></div>'
       h += '</div>'
     })
     h += '<div class="section"><div class="section-title">\u6dfb\u52a0 MCP \u670d\u52a1\u5668</div>'
@@ -623,6 +625,15 @@ function removeMCPServer(name: string) {
     body: JSON.stringify({ name })
   }).then(() => { refreshTab("mcp") })
 }
+// 启用/禁用 MCP server（当前会话断开/重挂 + 持久化配置）
+function toggleMCPServer(name: string, enabled: boolean) {
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  fetch("/teamix/mcp/toggle?token=" + encodeURIComponent(t), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, enabled })
+  }).then(() => { setTimeout(() => refreshTab("mcp"), 300) })
+}
 // 删除类按钮事件委托（避免内联 onclick 拼接名字导致的注入）
 // 刷新指定 tab：若已在当前 tab（Vue watch 不触发），显式重新加载渲染。
 async function refreshTab(t: string) {
@@ -642,6 +653,13 @@ function postJSON(path: string, body: any) {
 }
 document.addEventListener("click", (ev) => {
   const target = ev.target as HTMLElement
+  const mcpToggle = target.closest("[data-mcp-toggle]") as HTMLInputElement | null
+  if (mcpToggle) {
+    ev.preventDefault()
+    const name = mcpToggle.getAttribute("data-mcp-toggle")
+    if (name) toggleMCPServer(name, mcpToggle.checked)
+    return
+  }
   const mcpBtn = target.closest("[data-mcp-remove]") as HTMLElement | null
   if (mcpBtn) {
     ev.preventDefault()

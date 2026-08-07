@@ -419,7 +419,12 @@ type mcpServerSpec struct {
 	Args        []string `json:"args" yaml:"args"`
 	Type        string   `json:"type" yaml:"type"`
 	Sensitivity string   `json:"sensitivity,omitempty" yaml:"sensitivity,omitempty"`
+	// Enabled 启用/禁用开关：nil 或 true = 启用（默认）；false = 禁用
+	// （当前会话断开，下次会话 build 时不在 [[plugins]] 中加载）。
+	Enabled *bool `json:"enabled,omitempty" yaml:"enabled,omitempty"`
 }
+
+func mcpEnabled(s mcpServerSpec) bool { return s.Enabled == nil || *s.Enabled }
 
 // loadGlobalMCPServers 读取公共 .reasonix/mcp.json 的 MCP 服务器列表。
 func (ts *TeamixServer) loadGlobalMCPServers() map[string]mcpServerSpec {
@@ -490,9 +495,15 @@ func (ts *TeamixServer) mcpPluginsTOML(userRoot string) string {
 		if _, override := private[name]; override {
 			continue // 被私有同名覆盖
 		}
+		if !mcpEnabled(srv) {
+			continue // 已禁用：下次会话不加载
+		}
 		writeMCPServerTOML(&sb, name, srv)
 	}
 	for name, srv := range private {
+		if !mcpEnabled(srv) {
+			continue // 已禁用：下次会话不加载
+		}
 		writeMCPServerTOML(&sb, name, srv)
 	}
 	return sb.String()
@@ -609,6 +620,7 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("GET /teamix/skills", ts.withUser(ts.handleSkillsList))
 	mux.HandleFunc("GET /teamix/skills/content", ts.withUser(ts.handleSkillContent))
 	mux.HandleFunc("POST /teamix/mcp/add", ts.withUser(ts.handleMCPAdd))
+	mux.HandleFunc("POST /teamix/mcp/toggle", ts.withUser(ts.handleMCPToggle))
 	mux.HandleFunc("POST /teamix/mcp/remove", ts.withUser(ts.handleMCPRemove))
 	mux.HandleFunc("POST /teamix/skills/toggle", ts.withUser(ts.handleSkillToggle))
 	mux.HandleFunc("GET /teamix/notifications", ts.withUser(ts.handleNotifications))

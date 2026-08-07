@@ -540,14 +540,28 @@ func (ts *TeamixServer) handleMCPServers(w http.ResponseWriter, r *http.Request,
 		Error       string     `json:"error"`
 		Source      string     `json:"source"`      // "global" | "user"
 		Sensitivity string     `json:"sensitivity"` // 数据源敏感级声明（空 = 未声明 → internal 兜底）
+		Enabled     bool       `json:"enabled"`     // 启用/禁用开关
 	}
 	// 真实来源：name 在公共 mcp.json 中 → global，否则 user（私有）。
 	global := ts.loadGlobalMCPServers()
+	private := loadUserMCPServers(u.userRoot)
 	sensByServer := ts.mcpSensitivityMap(u.userRoot)
+	// 配置里存在该 server 吗（已移除的跳过——移除后 host 仍保留断开记录，
+	// 但配置已删，下次会话不加载；列表不再展示"僵尸"条目）
+	inConfig := func(name string) bool {
+		if _, ok := global[name]; ok {
+			return true
+		}
+		_, ok := private[name]
+		return ok
+	}
 	var out []serverView
 	host := u.ctrl.Host()
 	if host != nil {
 		for _, s := range host.Servers() {
+			if !inConfig(s.Name) {
+				continue // 已移除：不显示（等会话重建清理）
+			}
 			var tools []toolInfo
 			for _, t := range s.ToolList {
 				tools = append(tools, toolInfo{Name: t.Name, Description: t.Description})
@@ -558,10 +572,13 @@ func (ts *TeamixServer) handleMCPServers(w http.ResponseWriter, r *http.Request,
 			}
 			out = append(out, serverView{
 				Name: s.Name, Transport: s.Transport, Tools: s.Tools, ToolList: tools, Status: "connected", Source: src,
-				Sensitivity: string(sensByServer[s.Name]),
+				Sensitivity: string(sensByServer[s.Name]), Enabled: true,
 			})
 		}
 		for _, f := range host.Failures() {
+			if !inConfig(f.Name) {
+				continue // 已移除：不显示
+			}
 			src := "user"
 			if _, isGlobal := global[f.Name]; isGlobal {
 				src = "global"
@@ -691,6 +708,32 @@ func (ts *TeamixServer) saveUserMCP(u *userSession, name, command string, args [
 	return writeMCPFile(userMCPPath(u.userRoot), specs)
 }
 
+// setUserMCPEnabled 更新私有 MCP 的启用开关（保留其他字段）。
+func (ts *TeamixServer) setUserMCPEnabled(u *userSession, name string, enabled bool) error {
+	specs := loadUserMCPServers(u.userRoot)
+	spec, ok := specs[name]
+	if !ok {
+		return fmt.Errorf("MCP %q 不存在", name)
+	}
+	e := enabled
+	spec.Enabled = &e
+	specs[name] = spec
+	return writeMCPFile(userMCPPath(u.userRoot), specs)
+}
+
+// setGlobalMCPEnabled 更新全局 MCP 的启用开关（保留其他字段）。
+func (ts *TeamixServer) setGlobalMCPEnabled(name string, enabled bool) error {
+	specs := ts.loadGlobalMCPServers()
+	spec, ok := specs[name]
+	if !ok {
+		return fmt.Errorf("MCP %q 不存在", name)
+	}
+	e := enabled
+	spec.Enabled = &e
+	specs[name] = spec
+	return ts.writeGlobalMCPServers(specs)
+}
+
 // removeUserMCP removes a private MCP entry from users/<name>/.reasonix/mcp-private.json.
 func (ts *TeamixServer) removeUserMCP(u *userSession, name string) (bool, error) {
 	specs := loadUserMCPServers(u.userRoot)
@@ -758,23 +801,15 @@ func (ts *TeamixServer) globalMCPPath() string {
 	return filepath.Join(ts.workspaceRoot, ".reasonix", "mcp.json")
 }
 
-// saveGlobalMCP adds an MCP server entry to the global mcp.json file.
-func (ts *TeamixServer) saveGlobalMCP(name, command string, args []string, transport, sensitivity string) error {
+// writeGlobalMCPServers 把整份全局 MCP 配置写回 .reasonix/mcp.json。
+func (ts *TeamixServer) writeGlobalMCPServers(specs map[string]mcpServerSpec) error {
 	path := ts.globalMCPPath()
-	os.MkdirAll(filepath.Dir(path), 0o755)
-
-	// Read existing
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	doc := struct {
 		MCPServers map[string]mcpServerSpec `json:"mcpServers"`
-	}{MCPServers: make(map[string]mcpServerSpec)}
-
-	if f, err := os.Open(path); err == nil {
-		defer f.Close()
-		json.NewDecoder(f).Decode(&doc)
-	}
-
-	doc.MCPServers[name] = mcpServerSpec{Command: command, Args: args, Type: transport, Sensitivity: sensitivity}
-
+	}{MCPServers: specs}
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create global mcp.json: %w", err)
@@ -783,6 +818,13 @@ func (ts *TeamixServer) saveGlobalMCP(name, command string, args []string, trans
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
 	return enc.Encode(doc)
+}
+
+// saveGlobalMCP adds an MCP server entry to the global mcp.json file.
+func (ts *TeamixServer) saveGlobalMCP(name, command string, args []string, transport, sensitivity string) error {
+	specs := ts.loadGlobalMCPServers()
+	specs[name] = mcpServerSpec{Command: command, Args: args, Type: transport, Sensitivity: sensitivity}
+	return ts.writeGlobalMCPServers(specs)
 }
 
 // removeGlobalMCP removes an MCP server entry from the global mcp.json file.
