@@ -25,6 +25,8 @@ onMounted(async () => {
 
 // Content state
 const contentHtml = ref("\u52a0\u8f7d\u4e2d...")
+// 编辑 Skill 时的当前名（保存走 addSkill 同名覆盖；空 = 新增模式）
+let editingSkillName = ""
 const loading = ref(false)
 
 watch(() => props.visible, (v) => {
@@ -251,7 +253,10 @@ async function renderSkills() {
       h += '<span class="chev" style="color:var(--muted-2);transition:transform .15s;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>'
       h += '<div class="card-main"><div class="card-title"><span class="name">' + escH(s.name) + '</span>' + scopeBadge + sensBadge(s.sensitivity) + '</div>'
       h += '<span class="subject">' + (s.scope || "project") + '</span></div>'
-      h += '<button class="btn danger sm" data-skill-del="' + escAttr(s.name) + '" data-skill-scope="' + (isGlobalScope ? "global" : "private") + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>'
+      h += '<button class="btn sm" data-skill-edit="' + escAttr(s.name) + '" style="padding:3px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:11px;cursor:pointer">' + (s.scope === "builtin" ? "\u590d\u5236\u7f16\u8f91" : "\u7f16\u8f91") + '</button>'
+      if (s.scope !== "builtin") {
+        h += '<button class="btn danger sm" data-skill-del="' + escAttr(s.name) + '" data-skill-scope="' + (isGlobalScope ? "global" : "private") + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>'
+      }
       h += '</div>'
       h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2)">' + (hasDesc ? escH(s.description) : '<span style="color:var(--muted-2)">\u6682\u65e0\u63cf\u8ff0</span>') + '</div>'
       h += '</div>'
@@ -598,7 +603,8 @@ w.addMCPServer = async function() {
   const scope = scopeSel ? scopeSel.value : "private"
   const sensSel = document.getElementById("mcp-sens") as HTMLSelectElement
   const sensitivity = sensSel ? sensSel.value : "internal"
-  if (!name || !cmd) return
+  if (!name) { alert("请填写 MCP 名称"); return }
+  if (!cmd) { alert("请填写启动命令（如 npx、python、可执行文件路径）"); return }
   const t = localStorage.getItem("teamix_token")
   if (!t) return
   await fetch("/teamix/mcp/add?token=" + encodeURIComponent(t), {
@@ -648,6 +654,13 @@ document.addEventListener("click", (ev) => {
     ev.preventDefault()
     const env = keyBtn.getAttribute("data-key-del")
     if (env) deleteKey(env)
+    return
+  }
+  const skillEditBtn = target.closest("[data-skill-edit]") as HTMLElement | null
+  if (skillEditBtn) {
+    ev.preventDefault()
+    const name = skillEditBtn.getAttribute("data-skill-edit")
+    if (name) editSkill(name)
     return
   }
   const skillBtn = target.closest("[data-skill-del]") as HTMLElement | null
@@ -960,15 +973,49 @@ w.addSkill = async function() {
   const sensSel = document.getElementById("skill-sens") as HTMLSelectElement
   const sensitivity = sensSel ? sensSel.value : "internal"
   const body = (document.getElementById("skill-body") as HTMLTextAreaElement)?.value
-  if (!name) return
+  if (!name) { toast("\u8bf7\u8f93\u5165 Skill \u540d\u79f0"); return }
   const t = localStorage.getItem("teamix_token")
   if (!t) return
   await fetch("/teamix/skills/save?token=" + encodeURIComponent(t), {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, description: desc, sensitivity, body: body || "", scope })
   })
+  editingSkillName = ""
   tab.value = "skills"
   await refreshTab("skills")
+}
+// 编辑 Skill：拉取现有内容填入表单（内置 skill 走"复制到私有"）
+w.editSkill = async function(name: string) {
+  const t = localStorage.getItem("teamix_token")
+  if (!t) return
+  let body = ""
+  let scope = "private"
+  try {
+    const resp = await fetch("/teamix/skills/content?name=" + encodeURIComponent(name) + "&token=" + encodeURIComponent(t))
+    if (resp.ok) {
+      const data = await resp.json()
+      body = data.body || ""
+      scope = data.scope === "global" ? "global" : "private"
+    } else {
+      // builtin（404）→ 复制到私有：内容留空由用户填写
+      toast("\u5185\u7f6e Skill \u4e0d\u53ef\u76f4\u63a5\u7f16\u8f91\uff0c\u8bf7\u586b\u5199\u5185\u5bb9\u4fdd\u5b58\u4e3a\u79c1\u6709\u526f\u672c")
+      scope = "private"
+    }
+  } catch (e) { toast("\u52a0\u8f7d\u5931\u8d25"); return }
+  editingSkillName = name
+  const nameEl = document.getElementById("skill-name") as HTMLInputElement
+  const scopeSel = document.getElementById("skill-scope") as HTMLSelectElement
+  if (nameEl) { nameEl.value = name; nameEl.disabled = true; nameEl.style.opacity = ".5" }
+  if (scopeSel) { scopeSel.value = scope; scopeSel.disabled = true; scopeSel.style.opacity = ".5" }
+  const descEl = document.getElementById("skill-desc") as HTMLInputElement
+  if (descEl) descEl.value = ""
+  const sensEl = document.getElementById("skill-sens") as HTMLSelectElement
+  if (sensEl) sensEl.value = "internal"
+  const bodyEl = document.getElementById("skill-body") as HTMLTextAreaElement
+  if (bodyEl) bodyEl.value = body
+  // 滚动到表单并提示
+  const form = document.getElementById("skills-render")
+  if (form) form.scrollIntoView({ behavior: "smooth", block: "end" })
 }
 w.saveSoul = async function() {
   const scopeEl = document.getElementById("soul-scope") as HTMLSelectElement

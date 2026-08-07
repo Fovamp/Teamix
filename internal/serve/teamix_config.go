@@ -623,6 +623,10 @@ func (ts *TeamixServer) handleMCPAdd(w http.ResponseWriter, r *http.Request, u *
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	if body.Command == "" {
+		http.Error(w, `{"error":"MCP 需要启动命令（command）"}`, http.StatusBadRequest)
+		return
+	}
 	if !safeTokenName(body.Name) {
 		http.Error(w, `{"error":"invalid MCP name (letters, digits, _ - . only)"}`, http.StatusBadRequest)
 		return

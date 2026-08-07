@@ -104,6 +104,38 @@ func (ts *TeamixServer) handleSkillSave(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, map[string]any{"ok": true, "name": body.Name, "scope": scope, "path": folder})
 }
 
+// GET /teamix/skills/content?name=xxx 返回 skill 的 SKILL.md 全文（含 frontmatter），
+// 供前端「编辑」回填。内置 skill（编译 embed）无文件 → 404 + 提示，前端走"复制到私有"。
+func (ts *TeamixServer) handleSkillContent(w http.ResponseWriter, r *http.Request, u *userSession) {
+	name := r.URL.Query().Get("name")
+	if name == "" || !skill.IsValidName(name) {
+		http.Error(w, `{"error":"bad skill name"}`, http.StatusBadRequest)
+		return
+	}
+	for _, s := range u.ctrl.AllSkills() {
+		if s.Name != name {
+			continue
+		}
+		if s.Path == "" || s.Path == "(builtin)" {
+			http.Error(w, `{"error":"builtin skill 编译在二进制内，不可直接编辑——请复制到私有再编辑"}`, http.StatusNotFound)
+			return
+		}
+		data, err := os.ReadFile(s.Path)
+		if err != nil {
+			http.Error(w, "read failed", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{
+			"name":  s.Name,
+			"scope": string(s.Scope),
+			"path":  s.Path,
+			"body":  string(data),
+		})
+		return
+	}
+	http.Error(w, `{"error":"skill not found"}`, http.StatusNotFound)
+}
+
 // POST /teamix/skills/delete  {name, scope}
 func (ts *TeamixServer) handleSkillDelete(w http.ResponseWriter, r *http.Request, u *userSession) {
 	var body struct {

@@ -607,6 +607,7 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("POST /teamix/keypool/strategy", ts.withUser(ts.handleKeyPoolStrategy))
 	mux.HandleFunc("GET /teamix/mcp/servers", ts.withUser(ts.handleMCPServers))
 	mux.HandleFunc("GET /teamix/skills", ts.withUser(ts.handleSkillsList))
+	mux.HandleFunc("GET /teamix/skills/content", ts.withUser(ts.handleSkillContent))
 	mux.HandleFunc("POST /teamix/mcp/add", ts.withUser(ts.handleMCPAdd))
 	mux.HandleFunc("POST /teamix/mcp/remove", ts.withUser(ts.handleMCPRemove))
 	mux.HandleFunc("POST /teamix/skills/toggle", ts.withUser(ts.handleSkillToggle))
