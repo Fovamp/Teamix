@@ -251,6 +251,19 @@ func safeModuleName(s string) bool {
 	return s != "" && safeModuleNameRe.MatchString(s)
 }
 
+// lookPathMaven 在 PATH 中查找 Maven（Windows 上 mvn.cmd / mvn.bat / mvn.exe）。
+func lookPathMaven() (string, error) {
+	if p, err := exec.LookPath("mvn"); err == nil {
+		return p, nil
+	}
+	for _, name := range []string{"mvn.cmd", "mvn.bat", "mvn.exe"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("mvn 不在 PATH")
+}
+
 // startService 在用户目录启动一个模块（映射端口 + nacos 注入）。
 // 返回 runningService（启动即登记，Stage=starting；进程退出转 failed 由 goroutine 处理）。
 func (ts *TeamixServer) startService(u *userSession, projectName, module string, port int) (*runningService, error) {
@@ -274,10 +287,16 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 	if !safeModuleName(module) {
 		return nil, fmt.Errorf("module name %q contains unsafe characters", module)
 	}
+	// 先检测 Maven 可用性（mvn 不在 PATH 时 cmd 输出 "不是内部或外部命令" 的
+	// GBK 中文 → 乱码且难排查；这里直接给出可读错误）
+	if _, err := lookPathMaven(); err != nil {
+		return nil, fmt.Errorf("未检测到 Maven：%v（请安装 Maven 并加入 PATH，或配置 MVN_HOME 后重试）", err)
+	}
 	cmdLine := fmt.Sprintf("mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=%d", port)
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd", "/c", cmdLine)
+		// chcp 65001 + JAVA_TOOL_OPTIONS 强制 UTF-8 输出，避免 GBK 乱码
+		cmd = exec.Command("cmd", "/c", "chcp 65001>nul & set JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8 & "+cmdLine)
 	} else {
 		cmd = exec.Command("sh", "-c", cmdLine)
 	}

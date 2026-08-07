@@ -172,8 +172,8 @@ onUnmounted(() => {
 .svc-drawer__dot--live { background: var(--success); box-shadow: 0 0 6px var(--success); }
 .svc-drawer__tab-icon { font-size: 10px; color: var(--muted-2); }
 .svc-drawer__panel {
-  width: 300px;
-  max-height: 70vh;
+  width: 400px;
+  max-height: 82vh;
   display: flex;
   flex-direction: column;
   background: var(--panel);
