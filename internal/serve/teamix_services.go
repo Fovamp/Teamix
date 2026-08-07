@@ -403,11 +403,13 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 			return recordFail(fmt.Errorf("未检测到 pnpm：%v（请安装 pnpm 并加入 PATH 后重试）", err))
 		}
 		if runtime.GOOS == "windows" {
-			// node_modules 已存在则跳过 install（首次才下载依赖）
-			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nif not exist node_modules call pnpm install\r\nif errorlevel 1 exit /b 1\r\ncall pnpm dev --port %d\r\n", port)
+			// --ignore-scripts：pnpm 10+ 默认阻止依赖 build scripts（ERR_PNPM_IGNORED_BUILDS
+			// 会让 install 失败）；esbuild 等二进制走 optionalDependencies 自动安装，
+			// 跳过 postinstall 不影响 vite dev
+			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nif not exist node_modules call pnpm install --ignore-scripts\r\nif errorlevel 1 exit /b 1\r\ncall pnpm dev --port %d\r\n", port)
 			cmd = newCmdScript(u, projectName, module, port, script, "pnpm")
 		} else {
-			cmdLine := fmt.Sprintf("[ -d node_modules ] || pnpm install; pnpm dev --port %d", port)
+			cmdLine := fmt.Sprintf("[ -d node_modules ] || pnpm install --ignore-scripts; pnpm dev --port %d", port)
 			cmd = exec.Command("sh", "-c", cmdLine)
 		}
 	} else {
@@ -417,12 +419,14 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 			return recordFail(fmt.Errorf("未检测到 Maven：%v（请安装 Maven 并加入 PATH，或配置 MAVEN_HOME 后重试）", err))
 		}
 		if runtime.GOOS == "windows" {
-			// 临时 .cmd 脚本绕开 cmd 引号解析问题
-			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\n\"%s\" -llr spring-boot:run -Dspring-boot.run.arguments=--server.port=%d\r\n",
+			// 临时 .cmd 脚本绕开 cmd 引号解析问题。
+			// 注意：不能用 -llr（Maven 3.9.1+ 已移除该选项，会直接报错）。
+			// 0 B 验证下载问题靠镜像可达性解决（huaweicloud 正常时在线下载即可）。
+			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\n\"%s\" spring-boot:run -Dspring-boot.run.arguments=--server.port=%d\r\n",
 				mvnPath, port)
 			cmd = newCmdScript(u, projectName, module, port, script, "mvn")
 		} else {
-			cmdLine := fmt.Sprintf("%q -llr spring-boot:run -Dspring-boot.run.arguments=--server.port=%d", mvnPath, port)
+			cmdLine := fmt.Sprintf("%q spring-boot:run -Dspring-boot.run.arguments=--server.port=%d", mvnPath, port)
 			cmd = exec.Command("sh", "-c", cmdLine)
 		}
 	}
