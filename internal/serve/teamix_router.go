@@ -75,25 +75,11 @@ func (ts *TeamixServer) refreshKeyPoolProvider() {
 // loadTeamixEnv 按 Reasonix 安全模式读取项目 .env：只将 Teamix 需要的变量
 // （QWEN_* / RAGFLOW_*）注入进程环境，不污染其他变量。
 //
-// 多路径回退：workspaceRoot/.env → cwd/.env → 可执行文件目录/.env。
-// 这样无论 serve 从哪个目录/--project 启动，都能读到团队的 .env（部署在
-// 服务器时常见启动目录 ≠ 仓库根）。已存在的环境变量不被覆盖（最高优先级）。
+// 只从工作区 .env 读取：工作区 = serve 启动时 --project 指定的路径
+// （未指定则为启动目录）。这是团队配置的唯一来源，不从 cwd/exe 目录
+// 回退——部署环境必须把 .env 放在工作区根，避免读到无关机器的配置。
 func loadTeamixEnv(workspaceRoot string) {
-	candidates := []string{filepath.Join(workspaceRoot, ".env")}
-	if cwd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, filepath.Join(cwd, ".env"))
-	}
-	if exe, err := os.Executable(); err == nil {
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), ".env"))
-	}
-	seen := map[string]bool{}
-	for _, p := range candidates {
-		if seen[p] {
-			continue
-		}
-		seen[p] = true
-		applyTeamixEnvFile(p)
-	}
+	applyTeamixEnvFile(filepath.Join(workspaceRoot, ".env"))
 }
 
 // applyTeamixEnvFile 解析单个 .env 并注入 Teamix 需要的变量（QWEN_*/RAGFLOW_*）。
