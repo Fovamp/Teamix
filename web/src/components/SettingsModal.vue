@@ -255,16 +255,17 @@ async function renderSkills() {
       h += '<span class="chev" style="color:var(--muted-2);transition:transform .15s;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>'
       h += '<div class="card-main"><div class="card-title"><span class="name">' + escH(s.name) + '</span>' + scopeBadge + sensBadge(s.sensitivity) + '</div>'
       h += '<span class="subject">' + (s.scope || "project") + '</span></div>'
-      h += '<button class="btn sm" data-skill-edit="' + escAttr(s.name) + '" style="padding:3px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:11px;cursor:pointer">' + (s.scope === "builtin" ? "\u590d\u5236\u7f16\u8f91" : "\u7f16\u8f91") + '</button>'
-      if (s.scope !== "builtin") {
-        h += '<button class="btn danger sm" data-skill-del="' + escAttr(s.name) + '" data-skill-scope="' + (isGlobalScope ? "global" : "private") + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>'
-      }
       h += '</div>'
-      h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2)">' + (hasDesc ? escH(s.description) : '<span style="color:var(--muted-2)">\u6682\u65e0\u63cf\u8ff0</span>') + '</div>'
+      h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2)">' + (hasDesc ? escH(s.description) : '<span style="color:var(--muted-2)">\u6682\u65e0\u63cf\u8ff0</span>')
+        + '<div style="margin-top:8px;display:flex;justify-content:flex-end;gap:8px;align-items:center">'
+        + '<button class="btn sm" data-skill-edit="' + escAttr(s.name) + '" style="padding:3px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:11px;cursor:pointer">' + (s.scope === "builtin" ? "\u590d\u5236\u7f16\u8f91" : "\u7f16\u8f91") + '</button>'
+        + (s.scope !== "builtin" ? '<button class="btn danger sm" data-skill-del="' + escAttr(s.name) + '" data-skill-scope="' + (isGlobalScope ? "global" : "private") + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>' : '')
+        + '</div></div>'
       h += '</div>'
     })
-    // 添加 Skill
-    h += '<div class="section"><div class="section-title">\u6dfb\u52a0 Skill</div>'
+    // 添加/编辑 Skill（编辑模式时标题/按钮切换）
+    const editing = editingSkillName !== ""
+    h += '<div class="section"><div class="section-title">' + (editing ? '\u7f16\u8f91 Skill\uff1a' + escH(editingSkillName) : '\u6dfb\u52a0 Skill') + '</div>'
     h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u540d\u79f0</label><input id="skill-name" type="text" placeholder="my-skill" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
     h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u63cf\u8ff0</label><input id="skill-desc" type="text" placeholder="\u4e00\u884c\u63cf\u8ff0" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
     if (isArch) {
@@ -272,7 +273,7 @@ async function renderSkills() {
     }
     h += sensSelect("skill-sens")
     h += '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">\u5185\u5bb9</label><textarea id="skill-body" style="min-height:100px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)" placeholder="\u64cd\u4f5c\u6307\u5357 markdown..."></textarea></div>'
-    h += '<div style="text-align:right"><button class="btn primary" onclick="addSkill()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">\u4fdd\u5b58 Skill</button></div></div>'
+    h += '<div style="text-align:right"><button class="btn primary" onclick="addSkill()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">' + (editing ? '\u4fdd\u5b58\u7f16\u8f91' : '\u4fdd\u5b58 Skill') + '</button></div></div>'
   } catch (e) {
     h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
   }
@@ -609,10 +610,17 @@ w.addMCPServer = async function() {
   if (!cmd) { alert("请填写启动命令（如 npx、python、可执行文件路径）"); return }
   const t = localStorage.getItem("teamix_token")
   if (!t) return
-  await fetch("/teamix/mcp/add?token=" + encodeURIComponent(t), {
+  const resp = await fetch("/teamix/mcp/add?token=" + encodeURIComponent(t), {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, command: cmd, transport, args, scope, sensitivity })
   })
+  if (!resp.ok) {
+    let msg = "添加失败"
+    try { const d = await resp.json(); if (d.error) msg = d.error } catch { /* ignore */ }
+    alert(msg)
+    return
+  }
+  toast("\u5df2\u6dfb\u52a0 MCP\uff0c\u6b63\u5728\u6d4b\u8bd5\u8fde\u63a5...")
   tab.value = "mcp"
   await refreshTab("mcp")
 }
@@ -1002,22 +1010,25 @@ w.addSkill = async function() {
   tab.value = "skills"
   await refreshTab("skills")
 }
-// 编辑 Skill：拉取现有内容填入表单（内置 skill 走"复制到私有"）
+// 编辑 Skill：拉取现有内容填入表单（内置 skill 自动带出内容 → 保存为私有副本）
 w.editSkill = async function(name: string) {
   const t = localStorage.getItem("teamix_token")
   if (!t) return
-  let body = ""
-  let scope = "private"
+  let body = "", desc = "", sens = "internal", scope = "private"
   try {
     const resp = await fetch("/teamix/skills/content?name=" + encodeURIComponent(name) + "&token=" + encodeURIComponent(t))
+    const data = await resp.json()
     if (resp.ok) {
-      const data = await resp.json()
       body = data.body || ""
-      scope = data.scope === "global" ? "global" : "private"
+      desc = data.description || ""
+      sens = data.sensitivity || "internal"
+      scope = data.scope === "global" ? "global" : (data.scope === "builtin" ? "private" : "private")
+      if (data.scope === "builtin") {
+        toast("\u5df2\u590d\u5236\u5185\u7f6e Skill \u5185\u5bb9\u5230\u7f16\u8f91\u6846\uff0c\u4fdd\u5b58\u540e\u6210\u4e3a\u79c1\u6709\u526f\u672c\uff08\u540c\u540d\u8986\u76d6\u5185\u7f6e\uff09")
+      }
     } else {
-      // builtin（404）→ 复制到私有：内容留空由用户填写
-      toast("\u5185\u7f6e Skill \u4e0d\u53ef\u76f4\u63a5\u7f16\u8f91\uff0c\u8bf7\u586b\u5199\u5185\u5bb9\u4fdd\u5b58\u4e3a\u79c1\u6709\u526f\u672c")
-      scope = "private"
+      toast(data.error || "\u52a0\u8f7d\u5931\u8d25")
+      return
     }
   } catch (e) { toast("\u52a0\u8f7d\u5931\u8d25"); return }
   editingSkillName = name
@@ -1026,9 +1037,9 @@ w.editSkill = async function(name: string) {
   if (nameEl) { nameEl.value = name; nameEl.disabled = true; nameEl.style.opacity = ".5" }
   if (scopeSel) { scopeSel.value = scope; scopeSel.disabled = true; scopeSel.style.opacity = ".5" }
   const descEl = document.getElementById("skill-desc") as HTMLInputElement
-  if (descEl) descEl.value = ""
+  if (descEl) descEl.value = desc
   const sensEl = document.getElementById("skill-sens") as HTMLSelectElement
-  if (sensEl) sensEl.value = "internal"
+  if (sensEl) sensEl.value = sens
   const bodyEl = document.getElementById("skill-body") as HTMLTextAreaElement
   if (bodyEl) bodyEl.value = body
   // 滚动到表单并提示

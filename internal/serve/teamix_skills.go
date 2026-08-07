@@ -105,8 +105,9 @@ func (ts *TeamixServer) handleSkillSave(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, map[string]any{"ok": true, "name": body.Name, "scope": scope, "path": folder})
 }
 
-// GET /teamix/skills/content?name=xxx 返回 skill 的 SKILL.md 全文（含 frontmatter），
-// 供前端「编辑」回填。内置 skill（编译 embed）无文件 → 404 + 提示，前端走"复制到私有"。
+// GET /teamix/skills/content?name=xxx 返回 skill 的正文（编辑回填用）。
+// 内置 skill（编译 embed）也返回正文——前端"复制编辑"自动带出内容，
+// 保存到私有目录即成为可编辑的副本（同名覆盖内置）。
 func (ts *TeamixServer) handleSkillContent(w http.ResponseWriter, r *http.Request, u *userSession) {
 	name := r.URL.Query().Get("name")
 	if name == "" || !skill.IsValidName(name) {
@@ -117,20 +118,19 @@ func (ts *TeamixServer) handleSkillContent(w http.ResponseWriter, r *http.Reques
 		if s.Name != name {
 			continue
 		}
+		scope := "user"
 		if s.Path == "" || s.Path == "(builtin)" {
-			http.Error(w, `{"error":"builtin skill 编译在二进制内，不可直接编辑——请复制到私有再编辑"}`, http.StatusNotFound)
-			return
-		}
-		data, err := os.ReadFile(s.Path)
-		if err != nil {
-			http.Error(w, "read failed", http.StatusInternalServerError)
-			return
+			scope = "builtin"
+		} else if s.Scope == skill.ScopeGlobal {
+			scope = "global"
 		}
 		writeJSON(w, map[string]any{
-			"name":  s.Name,
-			"scope": string(s.Scope),
-			"path":  s.Path,
-			"body":  string(data),
+			"name":        s.Name,
+			"scope":       scope,
+			"path":        s.Path,
+			"body":        s.Body, // 正文（不含 frontmatter；保存时前端补 name/desc/sensitivity）
+			"description": s.Description,
+			"sensitivity": s.Sensitivity,
 		})
 		return
 	}
