@@ -50,8 +50,9 @@ const moduleProject = ref("")
 const moduleServices = ref<any[]>([])
 const moduleLoading = ref(false)
 const moduleSel = ref<string[]>([])
-// 映射端口：module -> 端口（勾选时显示输入框）；冲突表 module -> reason
+// 映射端口：module -> 端口（勾选时显示输入框）；建议端口只读预览：module -> 建议值
 const modulePorts = ref<Record<string, string>>({})
+const moduleSuggest = ref<Record<string, string>>({})
 const moduleConflicts = ref<Record<string, string>>({})
 // 启动状态（项目就绪后自动启动所选模块，轮询 status 显示阶段）
 const svcStarting = ref(false)
@@ -302,8 +303,8 @@ async function saveCredentials() {
 }
 
 function close() {
-  if (working.value || cloneActive.value) {
-    toast("项目拉取进行中，请等待完成", "info")
+  if (working.value || cloneActive.value || svcStarting.value) {
+    toast("项目拉取/模块启动进行中，请等待完成", "info")
     return
   }
   stopSvcPolling() // 关闭弹窗停止启动状态轮询（模块仍在后台运行）
@@ -338,13 +339,17 @@ function toggleModule(name: string) {
     const ports = { ...modulePorts.value }
     delete ports[name]
     modulePorts.value = ports
+    const sugg = { ...moduleSuggest.value }
+    delete sugg[name]
+    moduleSuggest.value = sugg
   } else {
     moduleSel.value.push(name)
-    // 默认映射端口建议：自身端口前加 1（如 8081 → 18081），可改
+    // 建议映射端口只读预览：自身端口 1000-9999 时前缀 1（8081 → 18081）；
+    // 5 位端口（≥10000）前缀 1 会超 65535，不生成建议，仅提示用户自行填写
     const svc = moduleServices.value.find((s: any) => s.name === name)
     const selfPort = svc && svc.port ? svc.port : 0
-    const suggest = selfPort > 0 && selfPort < 60000 ? "1" + selfPort : ""
-    modulePorts.value = { ...modulePorts.value, [name]: suggest }
+    const suggest = selfPort >= 1000 && selfPort <= 9999 ? "1" + selfPort : ""
+    moduleSuggest.value = { ...moduleSuggest.value, [name]: suggest }
   }
   // 端口改动后清除该模块冲突标记
   const c = { ...moduleConflicts.value }
@@ -541,12 +546,13 @@ function stageLabel(s: string): string {
             <span class="proj-card__svc-name">{{ s.name }}</span>
             <span class="proj-card__svc-type">{{ s.type }}</span>
             <span v-if="s.port" class="proj-card__svc-port">自身 :{{ s.port }}</span>
-            <!-- 勾选后才显示映射端口输入框 -->
+            <!-- 勾选后才显示映射端口输入框（建议端口只读预览，输入框由用户填写） -->
             <template v-if="moduleSel.includes(s.name)">
               <span class="proj-card__svc-arrow">→</span>
+              <span class="proj-card__svc-suggest" v-if="moduleSuggest[s.name]">建议 {{ moduleSuggest[s.name] }}</span>
               <input v-model="modulePorts[s.name]" @click.stop @input="clearConflict(s.name)"
                 class="proj-card__svc-input" type="text" inputmode="numeric"
-                :placeholder="s.port ? ('如 1' + s.port) : '必填端口'"
+                placeholder="映射端口" @keyup.enter="confirmModule"
                 :class="{ 'proj-card__svc-input--err': moduleConflicts[s.name] }" />
             </template>
           </div>
@@ -581,10 +587,17 @@ function stageLabel(s: string): string {
 .proj-card__svc-input {
   width: 92px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px;
   background: var(--bg); color: var(--fg); font-size: 12px; outline: none;
+  flex-shrink: 0;
 }
 .proj-card__svc-input:focus { border-color: var(--accent); }
 .proj-card__svc-input--err { border-color: #f44336 !important; background: rgba(244,67,54,.06); }
-.proj-card__svc-arrow { color: var(--muted-2); font-size: 12px; margin: 0 2px; }
+.proj-card__svc-arrow { color: var(--muted-2); font-size: 12px; margin: 0 2px; flex-shrink: 0; }
+/* 建议端口只读预览：黑色不可编辑 */
+.proj-card__svc-suggest {
+  font-size: 11px; color: var(--fg); font-weight: 600;
+  background: var(--bg); border: 1px dashed var(--border); border-radius: 4px;
+  padding: 2px 6px; flex-shrink: 0; user-select: none;
+}
 .svc-starting {
   margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--bg-2);
@@ -626,12 +639,12 @@ function stageLabel(s: string): string {
 .proj-card__chips { grid-column: 1 / -1; display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
 .proj-card__chip { font-size: 10px; padding: 1px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .proj-card__chip--more { background: var(--bg-2); color: var(--muted-2); }
-.proj-card__svc { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; border: 1px solid transparent; margin-bottom: 4px; }
+.proj-card__svc { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; border: 1px solid transparent; margin-bottom: 4px; flex-wrap: nowrap; }
 .proj-card__svc:hover { background: var(--card-hover); }
 .proj-card__svc--sel { border-color: var(--accent); background: var(--accent-soft); }
 .proj-card__svc-check { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border); background: var(--bg); display: inline-flex; align-items: center; justify-content: center; font-size: 10px; color: #000; flex-shrink: 0; }
 .proj-card__svc--sel .proj-card__svc-check { background: var(--accent); border-color: var(--accent); }
-.proj-card__svc-name { font-weight: 600; }
-.proj-card__svc-type { font-size: 10px; padding: 0 6px; border-radius: 99px; background: var(--bg-2); color: var(--muted-2); }
-.proj-card__svc-port { font-size: 11px; color: var(--muted-2); font-family: var(--mono); }
+.proj-card__svc-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-card__svc-type { font-size: 10px; padding: 0 6px; border-radius: 99px; background: var(--bg-2); color: var(--muted-2); flex-shrink: 0; }
+.proj-card__svc-port { font-size: 11px; color: var(--muted-2); font-family: var(--mono); flex-shrink: 0; }
 </style>

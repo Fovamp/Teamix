@@ -14,6 +14,7 @@ import SettingsModal from "./components/SettingsModal.vue"
 import ProjectModal from "./components/ProjectModal.vue"
 import SummaryModal from "./components/SummaryModal.vue"
 import ArchiveModal from "./components/ArchiveModal.vue"
+import ServicesDrawer from "./components/ServicesDrawer.vue"
 import ToastContainer from "./components/ToastContainer.vue"
 
 const showLogin = ref(!api.isLoggedIn())
@@ -107,6 +108,7 @@ onUnmounted(() => {
     <SummaryModal :visible="showSummaries" :seed="summarySeed" @close="showSummaries = false" />
     <ArchiveModal :visible="showArchive" @close="showArchive = false" />
     <ToastContainer />
+    <ServicesDrawer />
   </div>
 </template>
 
