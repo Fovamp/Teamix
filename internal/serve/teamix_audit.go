@@ -186,8 +186,8 @@ func auditDirOf(ts *TeamixServer) string {
 		// 用的是 globalCfg.Audit.Dir，回退默认值。
 	}
 	dir := ".teamix/logs/ai-audit"
-	if ts.globalCfg != nil && ts.globalCfg.Config != nil && ts.globalCfg.Config.Audit.Dir != "" {
-		dir = ts.globalCfg.Config.Audit.Dir
+	if ts.GlobalCfg() != nil && ts.GlobalCfg().Config != nil && ts.GlobalCfg().Config.Audit.Dir != "" {
+		dir = ts.GlobalCfg().Config.Audit.Dir
 	}
 	return filepath.Join(ts.workspaceRoot, dir)
 }
@@ -214,4 +214,129 @@ func readJSONL(path string) ([]auditlog.Record, error) {
 		out = append(out, rec)
 	}
 	return out, sc.Err()
+}
+
+// auditUserDay 单用户单日 token 用量（周报统计）。
+type auditUserDay struct {
+	Date     string `json:"date"`
+	Tokens   int    `json:"tokens"` // in + out
+	In       int    `json:"in"`
+	Out      int    `json:"out"`
+	Calls    int    `json:"calls"`
+	Outbound int    `json:"outbound"` // 出了网的外部调用
+}
+
+// auditUserStat 单用户近 N 天汇总（周报一行）。
+type auditUserStat struct {
+	User     string         `json:"user"`
+	Tokens   int            `json:"tokens"`
+	In       int            `json:"in"`
+	Out      int            `json:"out"`
+	Calls    int            `json:"calls"`
+	Outbound int            `json:"outbound"`
+	Critical int            `json:"critical"` // [critical] 告警数
+	Daily    []auditUserDay `json:"daily"`    // 按 days 序列对齐
+}
+
+// handleAuditStats 近 N 天（默认 7）per-user token 用量统计（仅架构师）：
+// 每天每个用户的 token 用量（in/out）、调用数、出网数、致命告警数。
+// 返回 days 日期序列 + users（按总 token 降序，daily 对齐 days）+ totals（按天合计，供柱状图）。
+func (ts *TeamixServer) handleAuditStats(w http.ResponseWriter, r *http.Request, u *userSession) {
+	if !ts.isArchitect(u) {
+		http.Error(w, "仅架构师可查看 AI 审计统计", http.StatusForbidden)
+		return
+	}
+	days := 7
+	if v := r.URL.Query().Get("days"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 90 {
+			days = n
+		}
+	}
+	records, err := ts.readAuditLogs("", "")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	dayList, users, totals := aggregateAuditStats(records, days)
+	if users == nil {
+		users = []auditUserStat{}
+	}
+	writeJSON(w, map[string]any{"days": dayList, "users": users, "totals": totals})
+}
+
+// aggregateAuditStats 纯聚合：把审计记录按 用户×天 归并为近 days 天统计。
+// 返回日期序列（含今天，旧→新）、按总 token 降序的用户列表、按天合计（柱状图）。
+func aggregateAuditStats(records []auditlog.Record, days int) ([]string, []auditUserStat, []auditUserDay) {
+	cutoff := time.Now().AddDate(0, 0, -days)
+	// 日期序列：含今天在内的最近 days 天（旧→新）
+	dayList := make([]string, 0, days)
+	dayIdx := make(map[string]int, days)
+	for i := days - 1; i >= 0; i-- {
+		d := time.Now().AddDate(0, 0, -i).Format("2006-01-02")
+		dayIdx[d] = len(dayList)
+		dayList = append(dayList, d)
+	}
+	type acc struct{ tokens, in, out, calls, outbound int }
+	userDaily := map[string][]acc{}
+	userCritical := map[string]int{}
+	for _, rec := range records {
+		if rec.Time.Before(cutoff) {
+			continue
+		}
+		idx, ok := dayIdx[rec.Time.Format("2006-01-02")]
+		if !ok {
+			continue
+		}
+		user := rec.User
+		if user == "" {
+			user = "_system"
+		}
+		d := userDaily[user]
+		if d == nil {
+			d = make([]acc, len(dayList))
+		}
+		tk := rec.Cost.InTokens + rec.Cost.OutTokens
+		d[idx].tokens += tk
+		d[idx].in += rec.Cost.InTokens
+		d[idx].out += rec.Cost.OutTokens
+		d[idx].calls++
+		if rec.Outbound.Sent {
+			d[idx].outbound++
+		}
+		for _, a := range rec.Alerts {
+			if strings.HasPrefix(a, "[critical]") {
+				userCritical[user]++
+				break
+			}
+		}
+		userDaily[user] = d
+	}
+	users := make([]auditUserStat, 0, len(userDaily))
+	for user, d := range userDaily {
+		st := auditUserStat{User: user, Daily: make([]auditUserDay, len(dayList))}
+		for i := range dayList {
+			st.Daily[i] = auditUserDay{Date: dayList[i], Tokens: d[i].tokens, In: d[i].in, Out: d[i].out, Calls: d[i].calls, Outbound: d[i].outbound}
+			st.Tokens += d[i].tokens
+			st.In += d[i].in
+			st.Out += d[i].out
+			st.Calls += d[i].calls
+			st.Outbound += d[i].outbound
+		}
+		st.Critical = userCritical[user]
+		users = append(users, st)
+	}
+	sort.Slice(users, func(i, j int) bool { return users[i].Tokens > users[j].Tokens })
+	// 按天合计（柱状图数据源）
+	totals := make([]auditUserDay, len(dayList))
+	for _, st := range users {
+		for i := range dayList {
+			totals[i].Date = dayList[i]
+			totals[i].Tokens += st.Daily[i].Tokens
+			totals[i].In += st.Daily[i].In
+			totals[i].Out += st.Daily[i].Out
+			totals[i].Calls += st.Daily[i].Calls
+			totals[i].Outbound += st.Daily[i].Outbound
+		}
+	}
+	return dayList, users, totals
 }

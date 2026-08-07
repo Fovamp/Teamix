@@ -13,7 +13,7 @@ func hasGitDir(dir string) bool {
 }
 
 func (ts *TeamixServer) handleProjects(w http.ResponseWriter, r *http.Request, u *userSession) {
-	if ts.globalCfg == nil || ts.globalCfg.Projects == nil {
+	if ts.GlobalCfg() == nil || ts.GlobalCfg().Projects == nil {
 		writeJSON(w, []any{})
 		return
 	}
@@ -24,8 +24,8 @@ func (ts *TeamixServer) handleProjects(w http.ResponseWriter, r *http.Request, u
 		ServiceCount int    `json:"serviceCount"`
 		Cloned       bool   `json:"cloned"` // 该用户本地是否已 clone（前端据此决定是否显示拉取提示）
 	}
-	out := make([]projJSON, 0, len(ts.globalCfg.Projects.Projects))
-	for _, p := range ts.globalCfg.Projects.Projects {
+	out := make([]projJSON, 0, len(ts.GlobalCfg().Projects.Projects))
+	for _, p := range ts.GlobalCfg().Projects.Projects {
 		out = append(out, projJSON{
 			Name:         p.Name,
 			Git:          p.Git,
@@ -39,11 +39,11 @@ func (ts *TeamixServer) handleProjects(w http.ResponseWriter, r *http.Request, u
 
 func (ts *TeamixServer) handleProjectServices(w http.ResponseWriter, r *http.Request, u *userSession) {
 	projectName := r.PathValue("name")
-	if ts.globalCfg == nil || ts.globalCfg.Projects == nil {
+	if ts.GlobalCfg() == nil || ts.GlobalCfg().Projects == nil {
 		http.Error(w, `{"error":"no projects configured"}`, http.StatusNotFound)
 		return
 	}
-	p := ts.globalCfg.Projects.FindProject(projectName)
+	p := ts.GlobalCfg().Projects.FindProject(projectName)
 	if p == nil {
 		http.Error(w, `{"error":"project not found"}`, http.StatusNotFound)
 		return
@@ -78,7 +78,7 @@ func (ts *TeamixServer) handleProjectServices(w http.ResponseWriter, r *http.Req
 }
 
 func (ts *TeamixServer) handleProjectLegacy(w http.ResponseWriter, r *http.Request) {
-	if ts.globalCfg == nil || ts.globalCfg.Projects == nil {
+	if ts.GlobalCfg() == nil || ts.GlobalCfg().Projects == nil {
 		writeJSON(w, map[string]any{
 			"workspaceRoot": ts.workspaceRoot,
 			"projectName":   "unknown",
@@ -90,13 +90,13 @@ func (ts *TeamixServer) handleProjectLegacy(w http.ResponseWriter, r *http.Reque
 		Name        string `json:"name"`
 		Description string `json:"description"`
 	}
-	projects := make([]projBrief, 0, len(ts.globalCfg.Projects.Projects))
-	for _, p := range ts.globalCfg.Projects.Projects {
+	projects := make([]projBrief, 0, len(ts.GlobalCfg().Projects.Projects))
+	for _, p := range ts.GlobalCfg().Projects.Projects {
 		projects = append(projects, projBrief{Name: p.Name, Description: p.Description})
 	}
 	writeJSON(w, map[string]any{
 		"workspaceRoot": ts.workspaceRoot,
-		"projectName":   ts.globalCfg.Config.Teamix.Name,
+		"projectName":   ts.GlobalCfg().Config.Teamix.Name,
 		"projects":      projects,
 	})
 }

@@ -60,6 +60,13 @@ type TeamixServer struct {
 	// headroomHook 非 nil 时注入每个 boot.Build 的 WrapProvider（上下文压缩层）。
 	headroomHook func(provider.Provider) (provider.Provider, error)
 
+	// hotReloadOnce 保证配置热加载 watcher 只启动一次（SetWorkspaceRoot 可能被多次调用）。
+	hotReloadOnce sync.Once
+
+	// cfgMu 保护 globalCfg/sensitiveRules/alertWebhook 的并发读写
+	// （热加载 goroutine 写 vs 每个请求路径读）。
+	cfgMu sync.RWMutex
+
 	// 双模型路由（内外部模型协作）：
 	// internalProvider 本地 Qwen（env 配置，nil=不可用）；sensitiveRules 机密
 	// 黑名单（.teamix/config.yaml）；auditWriter AI 调用审计日志（per-user）。
@@ -91,19 +98,15 @@ func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *Tea
 		sharedHost: plugin.NewHost(),
 		cloneProg:  make(map[string]string),
 	}
-	ts.globalCfg = ts.loadGlobalConfig()
+	ts.setGlobalCfg(ts.loadGlobalConfig())
 	ts.headroomHook = ts.buildHeadroomHook()
-	if ts.globalCfg != nil && ts.globalCfg.Config != nil {
-		ts.alertWebhook = ts.globalCfg.Config.Alert.WebhookURL
-	}
-	if ts.globalCfg != nil && ts.globalCfg.Config != nil {
-		ts.sensitiveRules = sensitiveRulesFromCfg(ts.globalCfg.Config)
-		auditCfg := ts.globalCfg.Config.Audit
+	if g := ts.GlobalCfg(); g != nil && g.Config != nil {
+		auditCfg := g.Config.Audit
 		if auditCfg.Dir == "" {
 			auditCfg.Dir = ".teamix/logs/ai-audit"
 		}
 		ts.auditWriter = auditlog.New(auditCfg.Dir, auditCfg.RetentionDays)
-		q := ts.globalCfg.Config.Quota
+		q := g.Config.Quota
 		if q.PerUserPerDay > 0 || q.GlobalPerMonth > 0 {
 			ts.quota = NewQuotaTracker(q.PerUserPerDay, q.GlobalPerMonth)
 		}
@@ -127,10 +130,10 @@ func (ts *TeamixServer) UsersRoot() string {
 // buildHeadroomHook 根据 .teamix/config.yaml 的 headroom 段构建 provider 包装器。
 // 未启用时返回 nil（boot 不包装）。hook 内任何失败都由 wrapper fail-open。
 func (ts *TeamixServer) buildHeadroomHook() func(provider.Provider) (provider.Provider, error) {
-	if ts.globalCfg == nil || ts.globalCfg.Config == nil || !ts.globalCfg.Config.Headroom.Enabled {
+	if ts.GlobalCfg() == nil || ts.GlobalCfg().Config == nil || !ts.GlobalCfg().Config.Headroom.Enabled {
 		return nil
 	}
-	h := ts.globalCfg.Config.Headroom
+	h := ts.GlobalCfg().Config.Headroom
 	if h.URL == "" {
 		h.URL = "http://127.0.0.1:8788"
 	}
@@ -258,7 +261,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 	if name == "" {
 		return nil, false, errors.New("name is required")
 	}
-	if ts.globalCfg != nil && !ts.globalCfg.UserExists(name) {
+	if ts.GlobalCfg() != nil && !ts.GlobalCfg().UserExists(name) {
 		return nil, false, fmt.Errorf("用户 %q 不在白名单中，请联系架构师在 .teamix/users.yaml 中添加后重试", name)
 	}
 	ts.mu.Lock()
@@ -276,8 +279,8 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 	bc := NewBroadcaster()
 	// 模型仅公共可配（公司统一 token）：公共 teamix.default_model 非空则覆盖启动参数，否则回落启动参数。
 	model := ts.modelRef
-	if ts.globalCfg != nil && ts.globalCfg.Config != nil && ts.globalCfg.Config.Teamix.DefaultModel != "" {
-		model = ts.globalCfg.Config.Teamix.DefaultModel
+	if ts.GlobalCfg() != nil && ts.GlobalCfg().Config != nil && ts.GlobalCfg().Config.Teamix.DefaultModel != "" {
+		model = ts.GlobalCfg().Config.Teamix.DefaultModel
 	}
 	ctrl, err := boot.Build(context.Background(), boot.Options{
 		Model:               model,
@@ -387,7 +390,7 @@ func (ts *TeamixServer) SetWorkspaceRoot(wr string) {
 	if err != nil {
 		slog.Warn("teamix: failed to load global config", "err", err)
 	}
-	ts.globalCfg = cfg
+	ts.setGlobalCfg(cfg)
 
 	// 工作区路径已知后才注入项目 .env + 初始化模型池和密钥池
 	loadTeamixEnv(wr)
@@ -396,6 +399,8 @@ func (ts *TeamixServer) SetWorkspaceRoot(wr string) {
 	ts.keyPool.Load(wr)
 	ts.keyPool.Acquire()
 	ts.externalProvider = ts.buildKeyPoolProvider()
+	// 团队配置热加载（sensitive/users/config 变更即时生效）
+	ts.hotReloadOnce.Do(func() { go ts.watchConfigHotReload() })
 }
 
 func (ts *TeamixServer) loadGlobalConfig() *teamixconfig.GlobalConfig {
@@ -537,7 +542,7 @@ func tomlStr(s string) string {
 }
 
 func (ts *TeamixServer) ReloadModules() {
-	ts.globalCfg = ts.loadGlobalConfig()
+	ts.setGlobalCfg(ts.loadGlobalConfig())
 }
 
 func (ts *TeamixServer) buildHandler() http.Handler {
@@ -553,9 +558,12 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("GET /teamix/offline", ts.withUser(ts.handleOfflineGet))
 	mux.HandleFunc("POST /teamix/offline", ts.withUser(ts.handleOfflineSet))
 	mux.HandleFunc("GET /teamix/audit/ai-logs", ts.withUser(ts.handleAuditLogs))
+	mux.HandleFunc("GET /teamix/audit/stats", ts.withUser(ts.handleAuditStats))
 	mux.HandleFunc("GET /teamix/audit/report", ts.withUser(ts.handleAuditReport))
 	mux.HandleFunc("GET /teamix/sensitive", ts.withUser(ts.handleSensitiveGet))
 	mux.HandleFunc("POST /teamix/sensitive", ts.withUser(ts.handleSensitiveSet))
+	mux.HandleFunc("GET /teamix/kb/overview", ts.withUser(ts.handleKBOverview))
+	mux.HandleFunc("POST /teamix/rag/index", ts.withUser(ts.handleRAGIndex))
 	mux.HandleFunc("GET /teamix/archive", ts.withUser(ts.handleArchive))
 	mux.HandleFunc("POST /teamix/archive", ts.withUser(ts.handleArchive))
 	mux.HandleFunc("GET /teamix/archive/read", ts.withUser(ts.handleArchiveRead))

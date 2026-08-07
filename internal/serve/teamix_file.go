@@ -161,11 +161,11 @@ func (ts *TeamixServer) handleModules(w http.ResponseWriter, r *http.Request) {
 		Path        string `json:"path"`
 		Description string `json:"description,omitempty"`
 	}
-	if ts.globalCfg == nil {
+	if ts.GlobalCfg() == nil {
 		writeJSON(w, []modJSON{})
 		return
 	}
-	cfg := ts.globalCfg.Config
+	cfg := ts.GlobalCfg().Config
 	if cfg == nil {
 		writeJSON(w, []modJSON{})
 		return

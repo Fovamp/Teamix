@@ -19,15 +19,15 @@ import (
 // 项目管理（仅架构师）：projects.yaml 的增删改，添加时校验 git 链接可访问。
 
 func (ts *TeamixServer) usersConfig() *teamixconfig.UsersConfig {
-	if ts.globalCfg != nil && ts.globalCfg.Users != nil {
-		return ts.globalCfg.Users
+	if ts.GlobalCfg() != nil && ts.GlobalCfg().Users != nil {
+		return ts.GlobalCfg().Users
 	}
 	return teamixconfig.DefaultUsersConfig()
 }
 
 func (ts *TeamixServer) projectsConfig() *teamixconfig.ProjectsConfig {
-	if ts.globalCfg != nil && ts.globalCfg.Projects != nil {
-		return ts.globalCfg.Projects
+	if ts.GlobalCfg() != nil && ts.GlobalCfg().Projects != nil {
+		return ts.GlobalCfg().Projects
 	}
 	return teamixconfig.DefaultProjectsConfig()
 }
@@ -35,7 +35,7 @@ func (ts *TeamixServer) projectsConfig() *teamixconfig.ProjectsConfig {
 // reloadConfigs 重新加载全局配置（users/projects 变更后调用）。
 func (ts *TeamixServer) reloadConfigs() {
 	if cfg, err := teamixconfig.LoadAll(ts.workspaceRoot); err == nil {
-		ts.globalCfg = cfg
+		ts.setGlobalCfg(cfg)
 	}
 }
 

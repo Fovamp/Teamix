@@ -23,8 +23,8 @@ import (
 // GET /teamix/sensitive 返回当前生效的机密清单（dirs/files，所有人可读）。
 func (ts *TeamixServer) handleSensitiveGet(w http.ResponseWriter, _ *http.Request, _ *userSession) {
 	dirs, files := []string{}, []string{}
-	if ts.globalCfg != nil && ts.globalCfg.Config != nil {
-		dirs, files = ts.globalCfg.Config.Sensitive.Dirs, ts.globalCfg.Config.Sensitive.Files
+	if ts.GlobalCfg() != nil && ts.GlobalCfg().Config != nil {
+		dirs, files = ts.GlobalCfg().Config.Sensitive.Dirs, ts.GlobalCfg().Config.Sensitive.Files
 	}
 	if dirs == nil {
 		dirs = []string{}
@@ -61,10 +61,8 @@ func (ts *TeamixServer) handleSensitiveSet(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// 即时更新内存快照（新会话构建时 currentSensitiveRules 重读 Load 也会带上）
-	if ts.globalCfg != nil && ts.globalCfg.Config != nil {
-		ts.globalCfg.Config.Sensitive = sc
-	}
+	// 重新加载配置替换快照（热加载与请求路径共用 cfgMu，避免原地改对象的并发 race）
+	ts.setGlobalCfg(ts.loadGlobalConfig())
 	slog.Info("teamix: sensitive list updated", "by", u.name, "dirs", len(sc.Dirs), "files", len(sc.Files))
 	writeJSON(w, map[string]any{"ok": true, "dirs": sc.Dirs, "files": sc.Files})
 }

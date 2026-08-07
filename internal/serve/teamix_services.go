@@ -116,7 +116,7 @@ func (ts *TeamixServer) handleServiceStart(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Validate project
-	proj := ts.globalCfg.Projects.FindProject(projectName)
+	proj := ts.GlobalCfg().Projects.FindProject(projectName)
 	if proj == nil {
 		http.Error(w, `{"error":"project not found"}`, http.StatusNotFound)
 		return

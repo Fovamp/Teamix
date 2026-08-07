@@ -13,7 +13,7 @@ import (
 
 func (ts *TeamixServer) handleUserRole(w http.ResponseWriter, r *http.Request, u *userSession) {
 	role := "developer"
-	if ts.globalCfg != nil && ts.globalCfg.IsArchitect(u.name) {
+	if ts.GlobalCfg() != nil && ts.GlobalCfg().IsArchitect(u.name) {
 		role = "architect"
 	}
 	writeJSON(w, map[string]any{"role": role, "user": u.name})
@@ -146,15 +146,15 @@ func teamixCurrentModelRef(c control.SessionAPI) string {
 }
 
 func (ts *TeamixServer) isArchitect(u *userSession) bool {
-	if ts.globalCfg != nil {
-		return ts.globalCfg.IsArchitect(u.name)
+	if ts.GlobalCfg() != nil {
+		return ts.GlobalCfg().IsArchitect(u.name)
 	}
 	return false
 }
 
 func (ts *TeamixServer) getArchitects() []string {
-	if ts.globalCfg != nil {
-		return ts.globalCfg.ArchitectNames()
+	if ts.GlobalCfg() != nil {
+		return ts.GlobalCfg().ArchitectNames()
 	}
 	return nil
 }

@@ -108,7 +108,7 @@ func (ts *TeamixServer) handleProjectSelect(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Validate project exists in global config
-	proj := ts.globalCfg.Projects.FindProject(body.Project)
+	proj := ts.GlobalCfg().Projects.FindProject(body.Project)
 	if proj == nil {
 		http.Error(w, `{"error":"project not found"}`, http.StatusNotFound)
 		return

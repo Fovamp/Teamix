@@ -7,11 +7,11 @@ const emit = defineEmits<{ (e: "close"): void }>()
 const { toast } = useToast()
 const isArch = ref(false)
 const tab = ref("keys")
-const allTabs = ["users", "projects", "keys", "mcp", "soul", "skills", "memory", "sensitive", "audit"]
+const allTabs = ["users", "projects", "keys", "mcp", "soul", "skills", "memory", "sensitive", "kb", "audit"]
 // 普通用户可见：MCP/Skills/记忆/人格（人格=全局只读可选 + 私有可编辑）；用户/项目/密钥池/安全为架构师专属
 const visibleTabs = ref<string[]>(allTabs)
-const tabLbl: Record<string, string> = { users: "\u7528\u6237", projects: "\u9879\u76ee", keys: "\u5bc6\u94a5\u6c60", mcp: "MCP", soul: "AI \u4eba\u683c", skills: "Skills", memory: "\u8bb0\u5fc6", sensitive: "\u5b89\u5168", audit: "AI \u5ba1\u8ba1" }
-const tabIcon: Record<string, string> = { users: "\ud83d\udc65", projects: "\ud83d\udce6", keys: "\ud83d\udd11", mcp: "\ud83d\udd27", soul: "\ud83e\udde0", skills: "\ud83d\udcdc", memory: "\ud83e\udde0", sensitive: "\ud83d\udee1\ufe0f", audit: "\ud83d\udee1\ufe0f" }
+const tabLbl: Record<string, string> = { users: "\u7528\u6237", projects: "\u9879\u76ee", keys: "\u5bc6\u94a5\u6c60", mcp: "MCP", soul: "AI \u4eba\u683c", skills: "Skills", memory: "\u8bb0\u5fc6", sensitive: "\u5b89\u5168", kb: "\u77e5\u8bc6\u5e93", audit: "AI \u5ba1\u8ba1" }
+const tabIcon: Record<string, string> = { users: "\ud83d\udc65", projects: "\ud83d\udce6", keys: "\ud83d\udd11", mcp: "\ud83d\udd27", soul: "\ud83e\udde0", skills: "\ud83d\udcdc", memory: "\ud83e\udde0", sensitive: "\ud83d\udee1\ufe0f", kb: "\ud83d\udcda", audit: "\ud83d\udee1\ufe0f" }
 
 onMounted(async () => {
   try {
@@ -57,6 +57,7 @@ async function switchTab(t: string, restoreScroll = true) {
     else if (t === "skills") { await renderSkills() }
     else if (t === "memory") { await renderMemory() }
     else if (t === "sensitive") { await renderSensitive() }
+    else if (t === "kb") { await renderKB() }
     else if (t === "audit") { await renderAudit() }
     else { await renderSoul() }
   } catch (e: any) {
@@ -508,10 +509,107 @@ async function renderSoul() {
   contentHtml.value = h
 }
 
+// 知识库面板（仅架构师）：RAGFlow 文档知识库状态 + 上传文档 + 代码知识库索引状态。
+async function renderKB() {
+  const q = tokenQuery()
+  let h = '<div class="section"><h3>📚 知识库</h3><p class="desc">文档知识库（RAGFlow）：团队文档语义检索，Agent 可用 doc_kb_search 工具查询。代码知识库（codebase-memory-mcp）：项目代码图谱索引。</p></div><div id="kb-render">'
+  try {
+    const resp = await fetch("/teamix/kb/overview" + q)
+    if (!resp.ok) { h += '<div style="color:#f44336;padding:12px;font-size:13px">无权访问或加载失败</div>'; contentHtml.value = h; return }
+    const data = await resp.json()
+    const rag = data.ragflow || {}
+    const mcp = data.mcp || {}
+    const projects: any[] = data.projects || []
+    // RAGFlow 状态
+    h += '<div class="section"><div class="section-title">📄 文档知识库（RAGFlow）</div>'
+    if (!rag.configured) {
+      h += '<div style="color:var(--warning);font-size:12px;padding:6px 0">RAGFLOW_API_KEY 未配置——在项目 .env 中添加后重启服务。</div>'
+    } else if (!rag.reachable) {
+      h += '<div style="color:#f44336;font-size:12px;padding:6px 0">RAGFlow 连接失败：' + escH(rag.error || "") + '</div>'
+    } else {
+      h += '<div style="display:flex;gap:6px;align-items:center;font-size:12px;padding:4px 0"><span style="font-size:10px;padding:1px 8px;border-radius:99px;background:rgba(76,175,80,.15);color:#4caf50">已连接</span><span style="color:var(--muted-2)">' + (rag.datasets || []).length + ' 个数据集</span></div>'
+      const ds: any[] = rag.datasets || []
+      if (ds.length === 0) {
+        h += '<div style="color:var(--muted-2);font-size:12px;padding:6px 0">暂无数据集——在下方上传第一份文档自动创建「teamix-docs」。</div>'
+      }
+      ds.forEach((d: any) => {
+        h += '<div style="display:flex;gap:10px;align-items:center;padding:6px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:4px;background:var(--bg-2);font-size:12px">'
+        h += '<b>' + escH(d.name) + '</b>'
+        h += '<span style="color:var(--muted-2);font-size:11px">' + d.docs + ' 文档 · ' + d.chunks + ' 片段 · ' + d.tokens + ' tokens</span>'
+        h += '</div>'
+      })
+      // 上传文档表单
+      h += '<div class="section-title" style="margin-top:12px">上传文档</div>'
+      h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">数据集</label><input id="kb-dataset" type="text" value="teamix-docs" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+      h += '<div class="input-row" style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">文件名</label><input id="kb-filename" type="text" placeholder="notes.md" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+      h += '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--muted-2);display:block;margin-bottom:2px">内容（Markdown）</label><textarea id="kb-content" style="min-height:90px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono)" placeholder="粘贴要入库的文档内容..."></textarea></div>'
+      h += '<div style="text-align:right"><button class="btn primary" onclick="indexRAGDoc()" style="padding:6px 16px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">上传入库</button></div>'
+      h += '<div style="color:var(--muted-2);font-size:11px;margin-top:8px">提示：检索需要 RAGFlow 服务端已配置 embedding 模型；未配置时 Agent 的 doc_kb_search 会返回 RAGFlow 原始错误。</div>'
+    }
+    h += '</div>'
+    // 代码知识库状态
+    h += '<div class="section"><div class="section-title">💻 代码知识库（codebase-memory-mcp）</div>'
+    h += '<div style="font-size:12px;padding:4px 0">' + (mcp.configured
+      ? '<span style="font-size:10px;padding:1px 8px;border-radius:99px;background:rgba(76,175,80,.15);color:#4caf50">MCP 已配置</span> <span style="color:var(--muted-2)">' + escH(mcp.name || "") + '</span>'
+      : '<span style="font-size:10px;padding:1px 8px;border-radius:99px;background:rgba(244,67,54,.16);color:#f44336">MCP 未配置</span> <span style="color:var(--muted-2)">在 MCP 页添加 codebase-memory-mcp 服务器</span>') + '</div>'
+    if (projects.length > 0) {
+      h += '<div style="margin-top:6px">'
+      projects.forEach((p: any) => {
+        h += '<div style="display:flex;gap:10px;align-items:center;padding:5px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:4px;background:var(--bg-2);font-size:12px">'
+        h += '<b>' + escH(p.name) + '</b>'
+        h += p.indexed
+          ? '<span style="font-size:10px;padding:1px 8px;border-radius:99px;background:rgba(76,175,80,.15);color:#4caf50">已索引</span>'
+          : '<span style="font-size:10px;padding:1px 8px;border-radius:99px;background:rgba(150,150,150,.15);color:var(--muted-2)">未索引</span>'
+        if (p.indexAt) h += '<span style="color:var(--muted-2);font-size:11px;word-break:break-all">' + escH(p.indexAt) + '</span>'
+        h += '</div>'
+      })
+      h += '</div>'
+    }
+    h += '<div style="color:var(--muted-2);font-size:11px;margin-top:6px">' + escH((data.help && data.help.index) || "") + '</div>'
+    h += '</div>'
+  } catch (e: any) {
+    h += '<div style="color:#f44336;padding:12px">加载失败: ' + e.message + '</div>'
+  }
+  h += '</div>'
+  contentHtml.value = h
+  // 上传文档
+  ;(window as any).indexRAGDoc = async function () {
+    const t = localStorage.getItem("teamix_token")
+    if (!t) return
+    const dataset = ((document.getElementById("kb-dataset") as HTMLInputElement)?.value || "teamix-docs").trim()
+    const filename = ((document.getElementById("kb-filename") as HTMLInputElement)?.value || "").trim()
+    const content = ((document.getElementById("kb-content") as HTMLTextAreaElement)?.value || "").trim()
+    if (!content) { toast("请填写文档内容"); return }
+    try {
+      const resp = await fetch("/teamix/rag/index?token=" + encodeURIComponent(t), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataset, filename, content })
+      })
+      const data = await resp.json().catch(() => ({}))
+      if (!resp.ok) { toast(data.error || "上传失败"); return }
+      toast("已入库「" + (data.filename || filename) + "」→ " + (data.dataset || dataset), "success")
+      await renderKB()
+    } catch (e: any) { toast("上传失败: " + (e.message || e)) }
+  }
+}
+
 // AI 审计面板（仅架构师）：AI 调用操作流向 + 泄露三信号（出网/事故/告警）。
 async function renderAudit() {
   const q = tokenQuery()
   let h = '<div class="section"><h3>🛡 AI 审计</h3><p class="desc">AI 调用操作流向：每次模型请求走了哪个模型、是否出网、如何脱敏（仅架构师）。红色 = 泄露事故（非 public 却出网 / 闭环检测命中）。</p></div>'
+  // 近 7 天 token 用量：柱状图 + 周报列表
+  h += '<div class="section" style="margin-bottom:10px" id="audit-stats">'
+  try {
+    const resp = await fetch("/teamix/audit/stats" + q)
+    if (resp.ok) {
+      h += await auditStatsHTML(await resp.json())
+    } else {
+      h += '<div style="color:var(--muted-2);padding:8px;font-size:12px">统计不可用（仅架构师可见）</div>'
+    }
+  } catch (e) {
+    h += '<div style="color:var(--muted-2);padding:8px;font-size:12px">统计加载失败</div>'
+  }
+  h += '</div>'
   const inpStyle = 'padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);outline:none'
   h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
   h += '<input id="audit-user" placeholder="用户（空=全部）" style="' + inpStyle + ';width:120px">'
@@ -533,6 +631,65 @@ async function renderAudit() {
   }
 }
 
+
+// fmtTokens 数字友好显示：1.2K / 3.4M
+function fmtTokens(n: number): string {
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M"
+  if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, "") + "K"
+  return String(n || 0)
+}
+
+// auditStatsHTML 近 N 天 token 用量统计：按天柱状图（悬浮显示数值）+ 按用户周报列表（点击展开按天明细）。
+async function auditStatsHTML(data: any): Promise<string> {
+  const totals: any[] = data.totals || []
+  const users: any[] = data.users || []
+  const days: number = (data.days || []).length
+  const maxTk = Math.max(1, ...totals.map((t: any) => t.tokens || 0))
+  let h = '<div class="section-title">最近 ' + days + ' 天 Token 用量</div>'
+  // 按天柱状图（纯 CSS，悬浮柱子显示当天数值）
+  if (totals.length > 0) {
+    h += '<div style="display:flex;align-items:flex-end;gap:8px;height:120px;padding:8px 2px 0">'
+    totals.forEach((t: any) => {
+      const pct = Math.max(3, Math.round(((t.tokens || 0) / maxTk) * 100))
+      const short = (t.date || "").slice(5)
+      h += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0">'
+      h += '<div style="flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center">'
+      h += '<div onmouseover="this.querySelector(\'.bar-tip\').style.display=\'block\'" onmouseout="this.querySelector(\'.bar-tip\').style.display=\'none\'" style="position:relative;width:min(30px,70%);height:' + pct + '%;min-height:4px;border-radius:5px 5px 2px 2px;background:linear-gradient(180deg,var(--accent),color-mix(in srgb,var(--accent) 40%,var(--bg-2)));cursor:pointer;transition:filter .15s">'
+      h += '<div class="bar-tip" style="display:none;position:absolute;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);background:var(--panel-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:10px;color:var(--fg);white-space:nowrap;z-index:5;box-shadow:var(--shadow-md)">' + fmtTokens(t.tokens) + ' tok · ' + t.calls + ' 次调用</div>'
+      h += '</div></div>'
+      h += '<div style="font-size:10px;color:var(--muted-2)">' + escH(short) + '</div>'
+      h += '</div>'
+    })
+    h += '</div>'
+  } else {
+    h += '<div style="color:var(--muted-2);padding:10px;font-size:12px">近 ' + days + ' 天暂无 AI 调用记录</div>'
+  }
+  // 按用户周报列表（点击行展开按天明细）
+  h += '<div class="section-title" style="margin-top:14px">Token 周报 · 按用户</div>'
+  if (users.length === 0) {
+    h += '<div style="color:var(--muted-2);padding:8px;font-size:12px">暂无统计</div>'
+  }
+  users.forEach((u: any) => {
+    const crit = (u.critical || 0) > 0
+    h += '<div style="border:1px solid var(--border);border-radius:8px;margin-bottom:6px;overflow:hidden">'
+    h += '<div data-audit-row style="display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;background:var(--bg-2);font-size:12px;flex-wrap:wrap">'
+    h += '<b style="font-size:12px">' + escH(u.user) + '</b>'
+    h += '<span style="color:var(--fg)">' + fmtTokens(u.tokens) + ' tok</span>'
+    h += '<span style="color:var(--muted-2);font-size:11px">内 ' + fmtTokens(u.in) + ' / 外 ' + fmtTokens(u.out) + '</span>'
+    h += '<span style="color:var(--muted-2);font-size:11px">' + u.calls + ' 次调用</span>'
+    if (u.outbound > 0) h += '<span style="font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(76,175,80,.15);color:#4caf50">出网 ' + u.outbound + '</span>'
+    if (crit) h += '<span style="font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(244,67,54,.16);color:#f44336">致命 ' + u.critical + '</span>'
+    h += '<span style="margin-left:auto;color:var(--muted-2);font-size:10px">点击展开 ▾</span>'
+    h += '</div>'
+    h += '<div data-audit-detail style="display:none;padding:6px 12px;border-top:1px solid var(--border);background:var(--bg);font-size:11px">'
+    ;(u.daily || []).forEach((d: any) => {
+      if (!d || (d.tokens === 0 && d.calls === 0)) return
+      h += '<div style="display:flex;gap:10px;padding:3px 0;color:var(--fg-2);align-items:center;flex-wrap:wrap"><span style="width:84px;color:var(--muted-2)">' + escH(d.date) + '</span><span>' + fmtTokens(d.tokens) + ' tok</span><span style="color:var(--muted-2)">内 ' + fmtTokens(d.in) + ' / 外 ' + fmtTokens(d.out) + '</span><span style="color:var(--muted-2)">' + d.calls + ' 次</span>' + (d.outbound > 0 ? '<span style="color:#4caf50">出网 ' + d.outbound + '</span>' : '') + '</div>'
+    })
+    h += '</div></div>'
+  })
+  return h
+}
 
 async function auditRows(q: string, user: string, date: string, outbound: boolean, alert: boolean): Promise<string> {
   const params = new URLSearchParams()
@@ -765,6 +922,13 @@ document.addEventListener("click", (ev) => {
     ev.preventDefault()
     const name = mcpBtn.getAttribute("data-mcp-remove")
     if (name) removeMCPServer(name)
+    return
+  }
+  // 审计周报行：点击展开/收起按天明细
+  const auditRow = target.closest("[data-audit-row]") as HTMLElement | null
+  if (auditRow) {
+    const box = auditRow.parentElement?.querySelector("[data-audit-detail]") as HTMLElement | null
+    if (box) box.style.display = box.style.display === "none" ? "block" : "none"
     return
   }
   const keyBtn = target.closest("[data-key-del]") as HTMLElement | null

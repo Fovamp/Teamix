@@ -185,7 +185,7 @@ func sensitiveRulesFromCfg(cfg *teamixconfig.Config) *modelrouter.SensitiveRules
 func (ts *TeamixServer) currentSensitiveRules() *modelrouter.SensitiveRules {
 	cfg, err := teamixconfig.Load(ts.workspaceRoot)
 	if err != nil || cfg == nil {
-		return ts.sensitiveRules
+		return ts.SensitiveRules()
 	}
 	return sensitiveRulesFromCfg(cfg)
 }
@@ -281,11 +281,11 @@ func (q *QuotaTracker) Record(user string) {
 // routerCfg 构造一次 boot.Build 的路由集成配置：内部池 + 敏感规则 + 审计 + 配额。
 // 每次 Build 调用独立构造，使 Audit 回调能带上当前用户（per-user 日志）。
 func (ts *TeamixServer) routerCfg(user string) *modelrouter.BootConfig {
-	architect := ts.globalCfg != nil && ts.globalCfg.IsArchitect(user)
+	architect := ts.GlobalCfg() != nil && ts.GlobalCfg().IsArchitect(user)
 	// 权限细粒度：管理员可禁用指定用户的外部模型（users.yaml allow_external: false）
 	userExternalAllowed := true
-	if ts.globalCfg != nil {
-		if u := ts.globalCfg.Users.FindUser(user); u != nil {
+	if ts.GlobalCfg() != nil {
+		if u := ts.GlobalCfg().Users.FindUser(user); u != nil {
 			userExternalAllowed = u.CanUseExternal()
 		}
 	}
@@ -384,7 +384,7 @@ func (ts *TeamixServer) handleUserExternalToggle(w http.ResponseWriter, r *http.
 		http.Error(w, "bad body", http.StatusBadRequest)
 		return
 	}
-	uc := ts.globalCfg.Users
+	uc := ts.GlobalCfg().Users
 	target := uc.FindUser(body.Name)
 	if target == nil {
 		http.Error(w, "用户不存在", http.StatusNotFound)
@@ -404,7 +404,8 @@ func (ts *TeamixServer) handleUserExternalToggle(w http.ResponseWriter, r *http.
 // 告警正文已脱敏（只含原因与用户，不含敏感数据——防"在报告路上泄露"）。
 func (ts *TeamixServer) notifyCritical(title, body string) {
 	slog.Error("teamix: "+title, "detail", body)
-	if ts.alertWebhook == "" {
+	webhook := ts.AlertWebhook()
+	if webhook == "" {
 		return
 	}
 	payload, _ := json.Marshal(map[string]any{
@@ -412,7 +413,7 @@ func (ts *TeamixServer) notifyCritical(title, body string) {
 		"text":    map[string]string{"content": "【Teamix 安全告警】" + title + "\n" + body},
 	})
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest(http.MethodPost, ts.alertWebhook, strings.NewReader(string(payload)))
+	req, err := http.NewRequest(http.MethodPost, webhook, strings.NewReader(string(payload)))
 	if err != nil {
 		return
 	}
