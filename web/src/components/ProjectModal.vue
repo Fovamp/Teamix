@@ -56,6 +56,11 @@ const moduleSuggest = ref<Record<string, string>>({})
 const moduleConflicts = ref<Record<string, string>>({})
 // 启动状态（项目就绪后自动启动所选模块，轮询 status 显示阶段）
 const svcStarting = ref(false)
+// 启动状态区展开详情的模块名（点击"详情"切换，pre 可复制）
+const expandedSvc = ref("")
+function toggleSvcDetail(m: string) {
+  expandedSvc.value = expandedSvc.value === m ? "" : m
+}
 const svcStatusRows = ref<Record<string, any>>({})
 let svcPollTimer: any = null
 
@@ -496,12 +501,17 @@ function stageLabel(s: string): string {
         <!-- 模块启动状态（选择项目后自动启动；有记录就一直显示，失败信息停留可看） -->
         <div v-if="svcStarting || Object.keys(svcStatusRows).length > 0" class="svc-starting">
           <div style="font-size:12px;font-weight:600;margin-bottom:6px">正在启动所选模块（下载依赖/编译/启动中...）</div>
-          <div v-for="(s, m) in svcStatusRows" :key="m" class="svc-starting__row">
-            <code>{{ m }}</code>
-            <span v-if="s.port" class="svc-starting__port">:{{ s.port }}</span>
-            <span class="svc-starting__stage" :class="'svc-starting__stage--' + s.stage">{{ stageLabel(s.stage) }}</span>
-            <span v-if="s.error" style="color:#f44336;font-size:11px">{{ s.error }}</span>
-          </div>
+          <template v-for="(s, m) in svcStatusRows" :key="m">
+            <div class="svc-starting__row">
+              <code>{{ m }}</code>
+              <span v-if="s.port" class="svc-starting__port">:{{ s.port }}</span>
+              <span class="svc-starting__stage" :class="'svc-starting__stage--' + s.stage">{{ stageLabel(s.stage) }}</span>
+              <span v-if="s.error" class="svc-starting__detail" @click="toggleSvcDetail(m)">{{ expandedSvc === m ? "收起" : "详情" }}</span>
+            </div>
+            <pre v-if="expandedSvc === m" class="svc-starting__log">{{
+              (s.error ? "错误: " + s.error + "\n\n" : "") + (s.output || "（无输出）")
+            }}</pre>
+          </template>
           <div v-if="Object.keys(svcStatusRows).length === 0" style="color:var(--muted-2);font-size:12px">等待启动...</div>
         </div>
 
@@ -617,6 +627,13 @@ function stageLabel(s: string): string {
 .svc-starting__row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
 .svc-starting__port { color: var(--muted-2); }
 .svc-starting__stage { font-size: 11px; padding: 1px 8px; border-radius: 99px; }
+.svc-starting__detail { font-size: 11px; color: var(--accent); cursor: pointer; margin-left: auto; flex-shrink: 0; }
+.svc-starting__log {
+  margin: 4px 0 8px; padding: 8px 10px; font-size: 11px; line-height: 1.5;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--fg-2); font-family: var(--mono); white-space: pre-wrap; word-break: break-all;
+  max-height: 200px; overflow-y: auto; user-select: text; cursor: text;
+}
 .svc-starting__stage--running { background: rgba(76,175,80,.15); color: #4caf50; }
 .svc-starting__stage--failed { background: rgba(244,67,54,.16); color: #f44336; }
 .svc-starting__stage--starting { background: rgba(33,150,243,.15); color: #2196f3; }

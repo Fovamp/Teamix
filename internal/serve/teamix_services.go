@@ -354,6 +354,11 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 	}
 	projPath := filepath.Join(u.userRoot, projectName)
 	svcPath := filepath.Join(projPath, filepath.FromSlash(svc.Dir))
+	// 绝对化：userRoot 可能是相对路径，cmd.Dir 改变后相对 scriptPath 会在模块目录下
+	// 解析 → "The system cannot find the path specified."
+	if abs, err := filepath.Abs(svcPath); err == nil {
+		svcPath = abs
+	}
 	if _, err := os.Stat(svcPath); os.IsNotExist(err) {
 		return recordFail(fmt.Errorf("project not cloned yet, select project first"))
 	}
@@ -376,8 +381,15 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 		script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\n\"%s\" spring-boot:run -Dspring-boot.run.arguments=--server.port=%d\r\n",
 			mvnPath, port)
 		scriptPath := filepath.Join(u.userRoot, ".teamix", "tmp", fmt.Sprintf("mvn-%s-%s-%d.cmd", projectName, module, port))
-		if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err == nil {
-			_ = os.WriteFile(scriptPath, []byte(script), 0o644)
+		// 绝对化（cmd.Dir 改变后相对路径会在模块目录下解析 → 找不到脚本）
+		if abs, err := filepath.Abs(scriptPath); err == nil {
+			scriptPath = abs
+		}
+		if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
+			return recordFail(fmt.Errorf("创建启动脚本目录失败: %w", err))
+		}
+		if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
+			return recordFail(fmt.Errorf("写入启动脚本失败: %w", err))
 		}
 		cmd = exec.Command("cmd", "/c", scriptPath)
 	} else {
