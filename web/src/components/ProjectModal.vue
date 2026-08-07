@@ -152,7 +152,27 @@ async function syncSelectedModules(project: string): Promise<boolean> {
   svcStarting.value = true
   svcStatusRows.value = {}
   try {
-    await api.servicesSync(items)
+    const sr = await api.servicesSync(items)
+    // sync 可能整体拒绝（TOCTOU：validate 与 sync 之间端口被占）→ 回填冲突
+    if (sr && sr.ok === false && sr.conflicts) {
+      const conflicts: Record<string, string> = {}
+      for (const [k, reason] of Object.entries(sr.conflicts)) {
+        const module = k.includes("/") ? k.split("/").pop()! : k
+        conflicts[module] = reason
+      }
+      moduleConflicts.value = conflicts
+      await openModuleModal(project)
+      toast("启动时端口冲突，请修改后重试", "error")
+      return false
+    }
+    // startService 失败项（如 mvn 不存在）未登记进 status → 直接显示 failed，避免空等
+    const failedRows: Record<string, any> = {}
+    for (const res of (sr && sr.results) || []) {
+      if (res.action === "failed") {
+        failedRows[res.module] = { service: res.module, port: res.port, stage: "failed", error: res.error || "启动失败" }
+      }
+    }
+    if (Object.keys(failedRows).length) svcStatusRows.value = { ...svcStatusRows.value, ...failedRows }
     await pollSvcStatus(project)
     const stillStarting = Object.values(svcStatusRows.value).some((s: any) => s && s.stage === "starting")
     if (stillStarting) toast("部分模块仍在后台启动中（首次下载依赖较慢），可在运行面板查看", "info", 8000)
