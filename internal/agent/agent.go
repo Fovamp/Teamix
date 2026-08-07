@@ -1259,6 +1259,12 @@ func (a *Agent) toolResultSensitivity(name string, args json.RawMessage) provide
 		}
 		return provider.SensitivityInternal
 	}
+	// doc_kb_search 是团队文档知识库入口：检索片段按"内部数据"对待——
+	// 默认 internal（不出网），符合"数据入口未声明 → internal 兜底"原则。
+	// 团队文档若要允许出网，需后续提供显式声明入口（RAGFLOW_SENSITIVITY）。
+	if name == "doc_kb_search" {
+		return provider.SensitivityInternal
+	}
 	if !fileAccessTools[name] {
 		return ""
 	}

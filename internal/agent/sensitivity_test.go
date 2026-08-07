@@ -89,6 +89,22 @@ func TestToolResultSensitivityConfidentialMCP(t *testing.T) {
 	}
 }
 
+// doc_kb_search（团队文档知识库入口）→ internal（默认不出网，符合兜底原则）
+func TestToolResultSensitivityDocKBSearch(t *testing.T) {
+	a := &Agent{}
+	if s := a.toolResultSensitivity("doc_kb_search", json.RawMessage(`{"question":"x"}`)); s != provider.SensitivityInternal {
+		t.Fatalf("doc_kb_search = %q, want internal (team docs must not egress by default)", s)
+	}
+}
+
+// 其他普通 builtin（web_fetch 等）→ 空标记（走正常路由）
+func TestToolResultSensitivityOtherBuiltin(t *testing.T) {
+	a := &Agent{}
+	if s := a.toolResultSensitivity("web_fetch", json.RawMessage(`{}`)); s != "" {
+		t.Fatalf("web_fetch = %q, want unmarked", s)
+	}
+}
+
 // 非文件类、非 MCP 工具（bash）→ 不设标记
 func TestToolResultSensitivityOtherTool(t *testing.T) {
 	a := &Agent{sensitiveRules: &modelrouter.SensitiveRules{Dirs: []string{"tenders/"}}}
