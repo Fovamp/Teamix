@@ -145,8 +145,8 @@ async function syncSelectedModules(project: string): Promise<boolean> {
   )
   if (allItems.length === 0) return true
   if (!(await checkPortConflicts(allItems))) {
-    // 冲突 → 回到模块选择弹窗让用户改端口（走 openModuleModal 完整初始化）
-    await openModuleModal(project)
+    // 冲突 → 回到模块选择弹窗让用户改端口（保留已写入的标红）
+    await openModuleModal(project, true)
     toast("所选模块端口冲突，请在模块选择中修改后重试", "error")
     return false
   }
@@ -162,7 +162,7 @@ async function syncSelectedModules(project: string): Promise<boolean> {
         conflicts[module] = reason
       }
       moduleConflicts.value = conflicts
-      await openModuleModal(project)
+      await openModuleModal(project, true)
       toast("启动时端口冲突，请修改后重试", "error")
       return false
     }
@@ -311,7 +311,7 @@ function close() {
 }
 
 // 模块选择（独立二级模态窗，多选假选择，为资源池预留）
-async function openModuleModal(project: string) {
+async function openModuleModal(project: string, keepConflicts = false) {
   moduleProject.value = project
   // 回显已存映射端口（旧 string[] 格式兼容为 0）
   const saved = selectedByProject.value[project] || {}
@@ -319,7 +319,8 @@ async function openModuleModal(project: string) {
   const ports: Record<string, string> = {}
   for (const [m, p] of Object.entries(saved)) ports[m] = p ? String(p) : ""
   modulePorts.value = ports
-  moduleConflicts.value = {}
+  // 冲突回弹窗（sync 失败路径）时保留已写入的标红；正常打开/切换项目则清空
+  if (!keepConflicts) moduleConflicts.value = {}
   showModule.value = true
   moduleLoading.value = true
   moduleServices.value = []
