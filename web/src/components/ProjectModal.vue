@@ -167,14 +167,18 @@ async function syncSelectedModules(project: string): Promise<boolean> {
       toast("启动时端口冲突，请修改后重试", "error")
       return false
     }
-    // startService 失败项（如 mvn 不存在）未登记进 status → 直接显示 failed，避免空等
+    // startService 失败项（如 Maven 缺失）→ 直显 failed + 不关闭弹窗（让用户看到原因后手动关）
     const failedRows: Record<string, any> = {}
     for (const res of (sr && sr.results) || []) {
       if (res.action === "failed") {
         failedRows[res.module] = { service: res.module, port: res.port, stage: "failed", error: res.error || "启动失败" }
       }
     }
-    if (Object.keys(failedRows).length) svcStatusRows.value = { ...svcStatusRows.value, ...failedRows }
+    if (Object.keys(failedRows).length) {
+      svcStatusRows.value = { ...svcStatusRows.value, ...failedRows }
+      toast("部分模块启动失败，请查看下方错误详情", "error")
+      return false // 不关闭弹窗，错误信息停留（svcStarting 区保留 rows 显示）
+    }
     await pollSvcStatus(project)
     const stillStarting = Object.values(svcStatusRows.value).some((s: any) => s && s.stage === "starting")
     if (stillStarting) toast("部分模块仍在后台启动中（首次下载依赖较慢），可在运行面板查看", "info", 8000)
@@ -481,8 +485,8 @@ function stageLabel(s: string): string {
           </div>
         </template>
 
-        <!-- 模块启动状态（选择项目后自动启动，每模块阶段轮询显示） -->
-        <div v-if="svcStarting" class="svc-starting">
+        <!-- 模块启动状态（选择项目后自动启动；有记录就一直显示，失败信息停留可看） -->
+        <div v-if="svcStarting || Object.keys(svcStatusRows).length > 0" class="svc-starting">
           <div style="font-size:12px;font-weight:600;margin-bottom:6px">正在启动所选模块（下载依赖/编译/启动中...）</div>
           <div v-for="(s, m) in svcStatusRows" :key="m" class="svc-starting__row">
             <code>{{ m }}</code>

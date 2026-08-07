@@ -97,7 +97,7 @@ func applyTeamixEnvFile(path string) {
 	}
 	for k, v := range envMap {
 		upper := strings.ToUpper(k)
-		if strings.HasPrefix(upper, "QWEN_") || strings.HasPrefix(upper, "RAGFLOW_") {
+		if strings.HasPrefix(upper, "QWEN_") || strings.HasPrefix(upper, "RAGFLOW_") || strings.HasPrefix(upper, "MAVEN_") {
 			if os.Getenv(k) == "" {
 				os.Setenv(k, v)
 				slog.Info("teamix: loaded from .env", "key", k, "path", path)
