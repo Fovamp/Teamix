@@ -194,7 +194,9 @@ function pollSvcStatus(project: string) {
       tries++
       try {
         const list = await api.servicesStatus()
-        const rows: Record<string, any> = {}
+        // 保留已有 failed 直显行（服务端 failed 后即 remove，status 不再返回；
+        // 若被覆盖则失败项 2s 后消失、前端又空等）
+        const rows: Record<string, any> = { ...svcStatusRows.value }
         for (const s of list) {
           if (s.project === project) rows[s.service] = s
         }
