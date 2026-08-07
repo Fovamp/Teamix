@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { ref, watch, onMounted } from "vue"
+import { ref, watch, onMounted, nextTick } from "vue"
 import { api } from "../api"
 import { useToast } from "../composables/useToast"
 const props = defineProps<{ visible: boolean }>()
@@ -27,16 +27,27 @@ onMounted(async () => {
 const contentHtml = ref("\u52a0\u8f7d\u4e2d...")
 // 编辑 Skill 时的当前名（保存走 addSkill 同名覆盖；空 = 新增模式）
 let editingSkillName = ""
+// 展开状态的卡片名：重渲染（toggle/轮询/刷新）后恢复展开，避免点击开关列表缩回
+const openCards = new Set<string>()
+// 乐观插入的 MCP：点击"添加"立即显示"正在测试连接"，后台连接完成/失败后由轮询替换为真实状态
+let optimisticMCP: any[] = []
+// 正在轮询等待状态确定的 MCP 名字（多实例互斥，允许并发添加各自轮询）
+const pollingMCP = new Set<string>()
 const loading = ref(false)
 
 watch(() => props.visible, (v) => {
-  if (v) { switchTab(tab.value) }
+  if (v) { switchTab(tab.value, false) }
 })
 
-watch(tab, (t) => { switchTab(t) })
+watch(tab, (t) => { switchTab(t, false) })
 
-async function switchTab(t: string) {
+// 同 tab 重渲染（refreshTab）时恢复滚动位置：switchTab 先清空内容为"加载中..."
+// 会导致 .settings-content 滚动条归零，恢复后不跳回顶部。
+async function switchTab(t: string, restoreScroll = true) {
   loading.value = true
+  let prevScroll = 0
+  const sc = document.querySelector(".settings-content") as HTMLElement | null
+  if (restoreScroll && sc) prevScroll = sc.scrollTop
   contentHtml.value = "\u52a0\u8f7d\u4e2d..."
   try {
     if (t === "users") { await renderUsers() }
@@ -52,6 +63,11 @@ async function switchTab(t: string) {
     contentHtml.value = `<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25: ${e.message}</div>`
   }
   loading.value = false
+  await nextTick()
+  if (restoreScroll && prevScroll > 0) {
+    const sc2 = document.querySelector(".settings-content") as HTMLElement | null
+    if (sc2) sc2.scrollTop = prevScroll
+  }
 }
 
 async function renderUsers() {
@@ -183,6 +199,14 @@ async function renderMCP() {
       const resp = await fetch("/teamix/mcp/servers" + q)
       servers = await resp.json()
     } catch (e) { }
+    // 乐观条目补位：仅当真实列表没有该名字（后端尚未列出）时才显示"正在测试连接"；
+    // 真实状态已确定（connected/failed/disabled）时以真实为准，乐观条目自然淘汰。
+    const optimistic = optimisticMCP.filter((o: any) => {
+      const real = servers.find((s: any) => s.name === o.name)
+      return !real || real.status === "initializing"
+    })
+    servers = optimistic.map((o: any) => ({ ...o, status: "initializing" }))
+      .concat(servers.filter((s: any) => !optimistic.some((o: any) => o.name === s.name)))
     let role = ""
     try {
       const rr = await fetch("/teamix/user/role" + q)
@@ -199,17 +223,28 @@ async function renderMCP() {
             (t.description ? '<br><span style="color:var(--muted-2);font-size:11px">' + escH(t.description) + '</span>' : '') + '</div>').join('')
         : ''
       const isFailed = s.status === "failed"
+      const isInit = s.status === "initializing"
+      const isDisabled = s.status === "disabled"
       const srcBadge = s.source === "global"
         ? '<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(76,175,80,.15);color:#4caf50">\u5168\u5c40</span>'
         : '<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(150,150,150,.15);color:var(--muted-2)">\u79c1\u6709</span>'
-      h += '<div class="card" style="flex-direction:column;align-items:stretch" data-open="false">'
-      h += '<div class="card-head" onclick="const c=this.closest(\'.card\');const b=c.querySelector(\'.card-body\');const o=c.dataset.open===\'true\';c.dataset.open=o?\'false\':\'true\';b.style.display=o?\'none\':\'\'">'
+      const isOpen = openCards.has("mcp:" + s.name)
+      h += '<div class="card" style="flex-direction:column;align-items:stretch" data-open="' + (isOpen ? "true" : "false") + '">'
+      h += '<div class="card-head" data-card-toggle style="cursor:pointer">'
       h += '<span class="chev" style="color:var(--muted-2);transition:transform .15s;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>'
-      h += '<div class="card-main"><div class="card-title"><span class="name"><code>' + escH(s.name) + '</code></span>' + srcBadge + sensBadge(s.sensitivity) + '</div>'
-      h += '<span class="subject">' + (s.transport || "stdio") + ' \u00b7 ' + s.tools + ' \u4e2a\u5de5\u5177' + (isFailed ? ' <span style="color:#f44336">\u79bb\u7ebf</span>' : '') + '</span></div>'
+      h += '<div class="card-main"><div class="card-title"><span class="name"><code data-card-name="mcp:' + escAttr(s.name) + '">' + escH(s.name) + '</code></span>' + srcBadge + sensBadge(s.sensitivity) + '</div>'
+      h += '<span class="subject">' + (s.transport || "stdio") + ' \u00b7 '
+        + (isInit ? '<span style="color:var(--accent)">\u23f3 \u6b63\u5728\u6d4b\u8bd5\u8fde\u63a5...</span>'
+          : isDisabled ? '<span style="color:var(--muted-2)">\u5df2\u7981\u7528</span>'
+          : (s.tools + ' \u4e2a\u5de5\u5177'))
+        + (isFailed ? ' <span style="color:#f44336">\u79bb\u7ebf</span>' : '') + '</span></div>'
       h += '</div>'
-      h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2)">' + (isFailed && s.error ? '<span style="color:#f44336;font-size:11px">' + escH(s.error) + '</span>' : (toolHtml || '<span style="color:var(--muted-2)">\u65e0\u5de5\u5177</span>')) + '<div style="margin-top:8px;display:flex;justify-content:flex-end;gap:8px;align-items:center">'
-        + '<label style="font-size:11px;color:var(--muted-2);display:flex;align-items:center;gap:4px;cursor:pointer">\u542f\u7528<input type="checkbox" data-mcp-toggle="' + escAttr(s.name) + '" data-mcp-enabled="' + (s.enabled === false ? "false" : "true") + '" ' + (s.enabled === false ? "" : "checked") + ' style="accent-color:var(--accent)"></label>'
+      const bodyContent = isInit
+        ? '<span style="color:var(--accent);font-size:11px">\u23f3 \u6b63\u5728\u6d4b\u8bd5\u8fde\u63a5\uff0c\u8bf7\u7a0d\u5019...\uff08\u82e5\u957f\u65f6\u95f4\u65e0\u7ed3\u679c\uff0c\u53ef\u70b9\u51fb\u201c\u79fb\u9664\u201d\u540e\u68c0\u67e5\u547d\u4ee4\u4e0e\u53c2\u6570\uff09</span>'
+        : isDisabled ? '<span style="color:var(--muted-2);font-size:11px">\u5df2\u7981\u7528\uff08\u540e\u7eed\u4f1a\u8bdd\u4e0d\u518d\u52a0\u8f7d\uff0c\u5f00\u542f\u540e\u91cd\u65b0\u8fde\u63a5\uff09</span>'
+        : (isFailed && s.error ? '<span style="color:#f44336;font-size:11px">' + escH(s.error) + '</span>' : (toolHtml || '<span style="color:var(--muted-2)">\u65e0\u5de5\u5177</span>'))
+      h += '<div class="card-body" style="display:' + (isOpen ? "block" : "none") + ';padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2)">' + bodyContent + '<div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center">'
+        + '<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted-2)">\u542f\u7528<label class="tm-switch"><input type="checkbox" data-mcp-toggle="' + escAttr(s.name) + '" data-mcp-enabled="' + (s.enabled === false ? "false" : "true") + '" ' + (s.enabled === false ? "" : "checked") + '/><span class="tm-switch__track"></span></label></div>'
         + '<button class="btn danger sm" data-mcp-remove="' + escAttr(s.name) + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u79fb\u9664</button></div></div>'
       h += '</div>'
     })
@@ -250,17 +285,22 @@ async function renderSkills() {
       const scopeBadge = isGlobalScope
         ? '<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(76,175,80,.15);color:#4caf50">\u5168\u5c40</span>'
         : '<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(150,150,150,.15);color:var(--muted-2)">' + (s.scope === "builtin" ? "\u5185\u7f6e" : "\u79c1\u6709") + '</span>'
-      h += '<div class="card" style="flex-direction:column;align-items:stretch" data-open="false">'
-      h += '<div class="card-head" onclick="const c=this.closest(\'.card\');const b=c.querySelector(\'.card-body\');const o=c.dataset.open===\'true\';c.dataset.open=o?\'false\':\'true\';b.style.display=o?\'none\':\'\'">'
+      const isOpen = openCards.has("skills:" + s.name)
+      h += '<div class="card" style="flex-direction:column;align-items:stretch" data-open="' + (isOpen ? "true" : "false") + '">'
+      h += '<div class="card-head" data-card-toggle style="cursor:pointer">'
       h += '<span class="chev" style="color:var(--muted-2);transition:transform .15s;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>'
-      h += '<div class="card-main"><div class="card-title"><span class="name">' + escH(s.name) + '</span>' + scopeBadge + sensBadge(s.sensitivity) + '</div>'
+      h += '<div class="card-main"><div class="card-title"><span class="name"><span data-card-name="skills:' + escAttr(s.name) + '">' + escH(s.name) + '</span></span>' + scopeBadge + sensBadge(s.sensitivity) + '</div>'
       h += '<span class="subject">' + (s.scope || "project") + '</span></div>'
       h += '</div>'
-      h += '<div class="card-body" style="display:none;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2)">' + (hasDesc ? escH(s.description) : '<span style="color:var(--muted-2)">\u6682\u65e0\u63cf\u8ff0</span>')
-        + '<div style="margin-top:8px;display:flex;justify-content:flex-end;gap:8px;align-items:center">'
-        + '<button class="btn sm" data-skill-edit="' + escAttr(s.name) + '" style="padding:3px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:11px;cursor:pointer">' + (s.scope === "builtin" ? "\u590d\u5236\u7f16\u8f91" : "\u7f16\u8f91") + '</button>'
+      // 普通用户仅可切换自己的私有 Skill（custom scope）；全局/内置开关禁用
+      const canToggle = isArch || s.scope === "custom"
+      h += '<div class="card-body" style="display:' + (isOpen ? "block" : "none") + ';padding:8px 12px;border-top:1px solid var(--border);background:var(--bg-2);font-size:12px;color:var(--fg-2)">' + (hasDesc ? escH(s.description) : '<span style="color:var(--muted-2)">\u6682\u65e0\u63cf\u8ff0</span>')
+        + '<div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center">'
+        + '<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted-2)">\u542f\u7528<label class="tm-switch" title="' + (canToggle ? "" : "\u5168\u5c40/\u5185\u7f6e Skill \u7531\u67b6\u6784\u5e08\u7ba1\u7406") + '"><input type="checkbox" data-skill-toggle="' + escAttr(s.name) + '" ' + (canToggle ? "" : "disabled") + ' ' + (s.enabled === false ? "" : "checked") + '/><span class="tm-switch__track"></span></label></div>'
+        + '<div style="display:flex;gap:8px">'
+        + '<button class="btn sm" data-skill-edit="' + escAttr(s.name) + '" style="padding:3px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--fg);font-size:11px;cursor:pointer">' + (editingSkillName === s.name ? "\u53d6\u6d88\u7f16\u8f91" : (s.scope === "builtin" ? "\u590d\u5236\u7f16\u8f91" : "\u7f16\u8f91")) + '</button>'
         + (s.scope !== "builtin" ? '<button class="btn danger sm" data-skill-del="' + escAttr(s.name) + '" data-skill-scope="' + (isGlobalScope ? "global" : "private") + '" style="padding:3px 10px;border:1px solid var(--danger);border-radius:4px;background:var(--danger-soft);color:var(--danger);font-size:11px;cursor:pointer">\u5220\u9664</button>' : '')
-        + '</div></div>'
+        + '</div></div></div>'
       h += '</div>'
     })
     // 添加/编辑 Skill（编辑模式时标题/按钮切换）
@@ -606,26 +646,69 @@ w.addMCPServer = async function() {
   const scope = scopeSel ? scopeSel.value : "private"
   const sensSel = document.getElementById("mcp-sens") as HTMLSelectElement
   const sensitivity = sensSel ? sensSel.value : "internal"
-  if (!name) { alert("请填写 MCP 名称"); return }
-  if (!cmd) { alert("请填写启动命令（如 npx、python、可执行文件路径）"); return }
+  if (!name) { toast("请填写 MCP 名称"); return }
+  if (!cmd) { toast("请填写启动命令（如 npx、python、可执行文件路径）"); return }
   const t = localStorage.getItem("teamix_token")
   if (!t) return
-  const resp = await fetch("/teamix/mcp/add?token=" + encodeURIComponent(t), {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, command: cmd, transport, args, scope, sensitivity })
-  })
-  if (!resp.ok) {
-    let msg = "添加失败"
-    try { const d = await resp.json(); if (d.error) msg = d.error } catch { /* ignore */ }
-    alert(msg)
-    return
-  }
-  toast("\u5df2\u6dfb\u52a0 MCP\uff0c\u6b63\u5728\u6d4b\u8bd5\u8fde\u63a5...")
+  // 乐观插入：点击添加立即在列表显示"正在测试连接"（后端异步连接，不再阻塞）
+  optimisticMCP = optimisticMCP.filter((o: any) => o.name !== name)
+  optimisticMCP.push({ name, transport, sensitivity, enabled: true, tools: 0, source: scope === "global" ? "global" : "user" })
   tab.value = "mcp"
-  await refreshTab("mcp")
+  await renderMCP()
+  try {
+    const resp = await fetch("/teamix/mcp/add?token=" + encodeURIComponent(t), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, command: cmd, transport, args, scope, sensitivity })
+    })
+    if (!resp.ok) {
+      let msg = "添加失败"
+      try { const d = await resp.json(); if (d.error) msg = d.error } catch { /* ignore */ }
+      throw new Error(msg)
+    }
+    toast("已添加 MCP「" + name + "」，正在测试连接...", "info")
+    await refreshTab("mcp")
+    pollMCPUntilSettled(name)
+  } catch (e: any) {
+    // 后端拒绝：撤掉乐观条目并提示
+    optimisticMCP = optimisticMCP.filter((o: any) => o.name !== name)
+    await refreshTab("mcp")
+    toast((e && e.message) || "添加失败")
+  }
+}
+// 轮询 MCP 列表直到该 server 状态确定（connected / failed），期间 UI 显示"正在测试连接"。
+async function pollMCPUntilSettled(name: string, tries = 20) {
+  if (pollingMCP.has(name)) return
+  pollingMCP.add(name)
+  try {
+    for (let i = 0; i < tries; i++) {
+      await new Promise(r => setTimeout(r, 1500))
+      try {
+        const resp = await fetch("/teamix/mcp/servers" + tokenQuery())
+        const servers = await resp.json()
+        const s = servers.find((x: any) => x.name === name)
+        // 状态确定：撤掉乐观条目，让真实状态（connected/failed）接管渲染
+        const settle = () => {
+          optimisticMCP = optimisticMCP.filter((o: any) => o.name !== name)
+          refreshTab("mcp")
+        }
+        if (!s) continue
+        if (s.status === "connected") { settle(); toast("MCP「" + name + "」连接成功", "success"); return }
+        if (s.status === "failed") { settle(); toast("MCP「" + name + "」连接失败：" + (s.error || "无法连接"), "error", 6000); return }
+        if (s.status === "disabled") { settle(); return } // 连接期间被禁用：静默收敛
+        await refreshTab("mcp")
+      } catch { /* 网络抖动，继续轮询 */ }
+    }
+    // 超时未确定（如 npx 首次下载超 30s）：清理乐观条目，避免长期残留
+    optimisticMCP = optimisticMCP.filter((o: any) => o.name !== name)
+    await refreshTab("mcp")
+  } finally {
+    pollingMCP.delete(name)
+  }
 }
 function removeMCPServer(name: string) {
   if (!name) return
+  // 移除乐观插入的 testing 条目，避免残留
+  optimisticMCP = optimisticMCP.filter((o: any) => o.name !== name)
   const t = localStorage.getItem("teamix_token")
   if (!t) return
   fetch("/teamix/mcp/remove?token=" + encodeURIComponent(t), {
@@ -661,11 +744,20 @@ function postJSON(path: string, body: any) {
 }
 document.addEventListener("click", (ev) => {
   const target = ev.target as HTMLElement
-  const mcpToggle = target.closest("[data-mcp-toggle]") as HTMLInputElement | null
-  if (mcpToggle) {
-    ev.preventDefault()
-    const name = mcpToggle.getAttribute("data-mcp-toggle")
-    if (name) toggleMCPServer(name, mcpToggle.checked)
+  // 卡片展开/收起（data-card-toggle 在 head 上；switch/按钮在 body 内不会被命中）。
+  // 注意：开关的 checked 切换是 checkbox 的默认动作，不能在 click 里 preventDefault
+  // （会阻止 toggle、读到旧值），开关改由 change 事件委托处理。
+  const cardHead = target.closest("[data-card-toggle]") as HTMLElement | null
+  if (cardHead) {
+    const card = cardHead.closest(".card") as HTMLElement | null
+    const body = card?.querySelector(".card-body") as HTMLElement | null
+    const nameEl = card?.querySelector("[data-card-name]") as HTMLElement | null
+    const open = card?.dataset.open === "true"
+    const next = !open
+    if (card) card.dataset.open = next ? "true" : "false"
+    if (body) body.style.display = next ? "block" : "none"
+    const name = nameEl?.getAttribute("data-card-name") || ""
+    if (name) { if (next) openCards.add(name); else openCards.delete(name) }
     return
   }
   const mcpBtn = target.closest("[data-mcp-remove]") as HTMLElement | null
@@ -686,7 +778,9 @@ document.addEventListener("click", (ev) => {
   if (skillEditBtn) {
     ev.preventDefault()
     const name = skillEditBtn.getAttribute("data-skill-edit")
-    if (name) editSkill(name)
+    if (name) {
+      if (editingSkillName === name) { cancelSkillEdit() } else { w.editSkill(name) }
+    }
     return
   }
   const skillBtn = target.closest("[data-skill-del]") as HTMLElement | null
@@ -830,8 +924,22 @@ document.addEventListener("click", (ev) => {
     if (name) saveProjectEdit(name)
   }
 })
-// 角色切换下拉 change 事件委托
+// 角色切换下拉 change 事件委托 + MCP/Skill 开关（change 时 checked 已是新值，
+// 无需 preventDefault；click 委托不再处理开关）
 document.addEventListener("change", (ev) => {
+  const target = ev.target as HTMLElement
+  const skillToggle = target.closest("[data-skill-toggle]") as HTMLInputElement | null
+  if (skillToggle) {
+    const name = skillToggle.getAttribute("data-skill-toggle")
+    if (name) w.toggleSkill(name, skillToggle.checked)
+    return
+  }
+  const mcpToggle = target.closest("[data-mcp-toggle]") as HTMLInputElement | null
+  if (mcpToggle) {
+    const name = mcpToggle.getAttribute("data-mcp-toggle")
+    if (name) toggleMCPServer(name, mcpToggle.checked)
+    return
+  }
   const sel = (ev.target as HTMLElement).closest("[data-user-role]") as HTMLSelectElement | null
   if (sel) {
     const name = sel.getAttribute("data-user-role")
@@ -841,10 +949,29 @@ document.addEventListener("change", (ev) => {
 w.toggleSkill = async function(name: string, checked: boolean) {
   const t = localStorage.getItem("teamix_token")
   if (!t) return
-  await fetch("/teamix/skills/toggle?token=" + encodeURIComponent(t), {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, enabled: checked })
-  })
+  try {
+    const resp = await fetch("/teamix/skills/toggle?token=" + encodeURIComponent(t), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, enabled: checked })
+    })
+    if (!resp.ok) {
+      let msg = "操作失败"
+      try { const d = await resp.json(); if (d.error) msg = d.error } catch { /* ignore */ }
+      toast(msg)
+      await refreshTab("skills") // 失败：还原开关状态
+      return
+    }
+    toast(checked ? "已启用 Skill「" + name + "」" : "已禁用 Skill「" + name + "」", "success")
+    await refreshTab("skills")
+  } catch (e) {
+    toast("操作失败")
+    await refreshTab("skills")
+  }
+}
+// 取消编辑：退出编辑态（表单回新增模式），编辑按钮文案恢复
+function cancelSkillEdit() {
+  editingSkillName = ""
+  refreshTab("skills")
 }
 w.addMemory = async function() {
   const name = (document.getElementById("mem-name") as HTMLInputElement)?.value.trim()
@@ -1032,6 +1159,8 @@ w.editSkill = async function(name: string) {
     }
   } catch (e) { toast("\u52a0\u8f7d\u5931\u8d25"); return }
   editingSkillName = name
+  // 重渲染：卡片编辑按钮文案变"取消编辑"、表单标题变"编辑 Skill：xxx"
+  await refreshTab("skills")
   const nameEl = document.getElementById("skill-name") as HTMLInputElement
   const scopeSel = document.getElementById("skill-scope") as HTMLSelectElement
   if (nameEl) { nameEl.value = name; nameEl.disabled = true; nameEl.style.opacity = ".5" }

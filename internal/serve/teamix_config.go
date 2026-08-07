@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"reasonix/internal/config"
 	"reasonix/internal/keypool"
+	"reasonix/internal/plugin"
+	"reasonix/internal/skill"
 	"reasonix/internal/teamixconfig"
 	"sort"
 	"strings"
@@ -555,9 +557,43 @@ func (ts *TeamixServer) handleMCPServers(w http.ResponseWriter, r *http.Request,
 		_, ok := private[name]
 		return ok
 	}
+	// enabled 从配置读取（nil/true = 启用，false = 禁用）
+	enabledOf := func(name string) bool {
+		if s, ok := global[name]; ok {
+			return mcpEnabled(s)
+		}
+		if s, ok := private[name]; ok {
+			return mcpEnabled(s)
+		}
+		return true
+	}
+	srcOf := func(name string) string {
+		if _, isGlobal := global[name]; isGlobal {
+			return "global"
+		}
+		return "user"
+	}
+	transportOf := func(name string) string {
+		if s, ok := global[name]; ok && s.Type != "" {
+			return s.Type
+		}
+		if s, ok := private[name]; ok && s.Type != "" {
+			return s.Type
+		}
+		return "stdio"
+	}
 	var out []serverView
+	seen := map[string]bool{}
+	addView := func(v serverView) {
+		if seen[v.Name] {
+			return
+		}
+		seen[v.Name] = true
+		out = append(out, v)
+	}
 	host := u.ctrl.Host()
 	if host != nil {
+		// 1) 已连接
 		for _, s := range host.Servers() {
 			if !inConfig(s.Name) {
 				continue // 已移除：不显示（等会话重建清理）
@@ -566,28 +602,55 @@ func (ts *TeamixServer) handleMCPServers(w http.ResponseWriter, r *http.Request,
 			for _, t := range s.ToolList {
 				tools = append(tools, toolInfo{Name: t.Name, Description: t.Description})
 			}
-			src := "user"
-			if _, isGlobal := global[s.Name]; isGlobal {
-				src = "global"
-			}
-			out = append(out, serverView{
-				Name: s.Name, Transport: s.Transport, Tools: s.Tools, ToolList: tools, Status: "connected", Source: src,
-				Sensitivity: string(sensByServer[s.Name]), Enabled: true,
+			addView(serverView{
+				Name: s.Name, Transport: s.Transport, Tools: s.Tools, ToolList: tools, Status: "connected", Source: srcOf(s.Name),
+				Sensitivity: string(sensByServer[s.Name]), Enabled: enabledOf(s.Name),
 			})
 		}
+		// 2) 连接测试中（启动握手在途）
+		for _, name := range host.ConnectingServers() {
+			if !inConfig(name) {
+				continue
+			}
+			addView(serverView{
+				Name: name, Transport: transportOf(name), Status: "initializing", Source: srcOf(name),
+				Sensitivity: string(sensByServer[name]), Enabled: enabledOf(name),
+			})
+		}
+		// 3) 连接失败（必须先于配置兜底，否则失败记录会被 seen 屏蔽、永远显示 testing）
 		for _, f := range host.Failures() {
 			if !inConfig(f.Name) {
 				continue // 已移除：不显示
 			}
-			src := "user"
-			if _, isGlobal := global[f.Name]; isGlobal {
-				src = "global"
-			}
-			out = append(out, serverView{
-				Name: f.Name, Transport: f.Transport, Status: "failed", Error: f.Error, Source: src,
-				Sensitivity: string(sensByServer[f.Name]),
+			addView(serverView{
+				Name: f.Name, Transport: f.Transport, Status: "failed", Error: f.Error, Source: srcOf(f.Name),
+				Sensitivity: string(sensByServer[f.Name]), Enabled: enabledOf(f.Name),
 			})
 		}
+	}
+	// 4) 配置已保存但尚无运行状态（后台连接即将开始/排队）——保证
+	// "点击添加立即显示"，哪怕参数是 123 也会立刻出现在列表里。
+	// 已禁用（enabled=false）的 server 加载路径会跳过、永不连接 → 显示 disabled。
+	names := make([]string, 0, len(global)+len(private))
+	for name := range global {
+		names = append(names, name)
+	}
+	for name := range private {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if seen[name] {
+			continue
+		}
+		status := "initializing"
+		if !enabledOf(name) {
+			status = "disabled"
+		}
+		addView(serverView{
+			Name: name, Transport: transportOf(name), Status: status, Source: srcOf(name),
+			Sensitivity: string(sensByServer[name]), Enabled: enabledOf(name),
+		})
 	}
 	if out == nil {
 		out = []serverView{}
@@ -649,6 +712,7 @@ func (ts *TeamixServer) handleMCPAdd(w http.ResponseWriter, r *http.Request, u *
 		return
 	}
 	args := parseMCPArgs(body.Args)
+	entry := config.PluginEntry{Name: body.Name, Type: body.Transport, Command: body.Command, Args: args}
 	if body.Scope == "global" {
 		if !ts.isArchitect(u) {
 			http.Error(w, "forbidden", http.StatusForbidden)
@@ -658,10 +722,11 @@ func (ts *TeamixServer) handleMCPAdd(w http.ResponseWriter, r *http.Request, u *
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// Broadcast to all online users
-		ts.broadcastMCP(config.PluginEntry{
-			Name: body.Name, Type: body.Transport, Command: body.Command, Args: args,
-		})
+		// Broadcast to all online users（异步：逐个会话连接可能耗时，不阻塞添加返回）
+		go ts.broadcastMCP(entry)
+		// 连接测试放后台：立即返回，列表先显示"正在测试连接"，
+		// 失败通过 host.RecordFailure 落 failed 状态供列表/前端轮询展示。
+		go ts.connectMCPAsync(u, entry)
 		writeJSON(w, map[string]any{"ok": true, "scope": "global"})
 		return
 	}
@@ -675,14 +740,38 @@ func (ts *TeamixServer) handleMCPAdd(w http.ResponseWriter, r *http.Request, u *
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_, err := u.ctrl.AddMCPServer(config.PluginEntry{
-		Name: body.Name, Type: body.Transport, Command: body.Command, Args: args,
-	})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	go ts.connectMCPAsync(u, entry)
+	writeJSON(w, map[string]any{"ok": true, "scope": "private"})
+}
+
+// connectMCPAsync 后台连接 MCP server，不阻塞 HTTP 响应（首次 npx 下载/启动
+// 可能耗时数十秒）。连接失败记录到 host.failures，前端轮询列表即可看到
+// failed + 具体错误，而不是添加请求一直挂着。
+func (ts *TeamixServer) connectMCPAsync(u *userSession, entry config.PluginEntry) {
+	if _, err := u.ctrl.ConnectMCPServer(entry); err != nil {
+		if h := u.ctrl.Host(); h != nil {
+			h.RecordFailure(plugin.Spec{
+				Name: entry.Name, Type: entry.Type, Command: entry.Command, Args: entry.Args,
+			}, err)
+		}
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "scope": "private"})
+	// 连接期间用户可能已把开关拨到禁用（toggle 断开了本会话）——
+	// 若配置已禁用，把刚连上的 server 断开，避免"开关关着却显示已连接"。
+	if !ts.mcpEnabledByConfig(u, entry.Name) {
+		u.ctrl.DisconnectMCPServer(entry.Name)
+	}
+}
+
+// mcpEnabledByConfig 按当前配置判断 server 是否启用（nil/true = 启用）。
+func (ts *TeamixServer) mcpEnabledByConfig(u *userSession, name string) bool {
+	if s, ok := ts.loadGlobalMCPServers()[name]; ok {
+		return mcpEnabled(s)
+	}
+	if s, ok := loadUserMCPServers(u.userRoot)[name]; ok {
+		return mcpEnabled(s)
+	}
+	return true
 }
 
 // parseMCPArgs accepts either a JSON string (space-separated) or a JSON array.
@@ -777,10 +866,6 @@ func (ts *TeamixServer) handleMCPRemove(w http.ResponseWriter, r *http.Request, 
 }
 
 func (ts *TeamixServer) handleSkillToggle(w http.ResponseWriter, r *http.Request, u *userSession) {
-	if !ts.isArchitect(u) {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
 	var body struct {
 		Name    string `json:"name"`
 		Enabled bool   `json:"enabled"`
@@ -788,6 +873,20 @@ func (ts *TeamixServer) handleSkillToggle(w http.ResponseWriter, r *http.Request
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
+	}
+	if !ts.isArchitect(u) {
+		// 普通用户仅可调整自己的私有 Skill（custom scope）；全局/内置由架构师管理
+		allowed := false
+		for _, s := range u.ctrl.AllSkills() {
+			if s.Name == body.Name && s.Scope == skill.ScopeCustom {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			http.Error(w, "仅架构师可调整全局/内置 Skill", http.StatusForbidden)
+			return
+		}
 	}
 	if err := u.ctrl.SetSkillEnabled(body.Name, body.Enabled); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

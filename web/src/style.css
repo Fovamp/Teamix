@@ -592,3 +592,13 @@ input,textarea{font:inherit;color:inherit}
 .ctx-menu__item:hover{background:var(--card-hover);color:var(--fg)}
 .ctx-menu__item--danger{color:var(--danger)}
 .ctx-menu__item--danger:hover{background:rgba(220,60,60,.15);color:var(--danger)}
+
+/* ── switch 开关（仿 desktop cap-switch，隐藏原生 checkbox） ──────── */
+.tm-switch{display:inline-flex;position:relative;cursor:pointer;flex-shrink:0}
+.tm-switch input{position:absolute;opacity:0;width:0;height:0}
+.tm-switch__track{position:relative;width:30px;height:17px;border-radius:999px;background:var(--border);transition:background .14s}
+.tm-switch__track::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:var(--fg-2);transition:transform .14s,background .14s}
+.tm-switch input:checked + .tm-switch__track{background:var(--success)}
+.tm-switch input:checked + .tm-switch__track::after{transform:translateX(13px);background:oklch(99% 0 0)}
+.tm-switch input:disabled + .tm-switch__track{opacity:.5;cursor:not-allowed}
+.tm-switch input:focus-visible + .tm-switch__track{outline:2px solid var(--accent);outline-offset:2px}

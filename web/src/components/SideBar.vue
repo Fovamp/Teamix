@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from "vue"
 import { api } from "../api"
+import { useToast } from "../composables/useToast"
+const { toast } = useToast()
 const emit = defineEmits<{ (e: "stats"): void; (e: "branches"): void; (e: "models"): void; (e: "workflows"): void; (e: "settings"): void; (e: "summaries"): void }>()
 const sessions = ref<any[]>([])
 const userName = ref("")
@@ -176,7 +178,7 @@ async function doArchive() {
     }
   } catch (err) {
     console.error('archiveSession error:', err)
-    window.alert(deleteMode.value === 'one' ? '归档会话失败' : '批量归档会话失败，请重试')
+    toast(deleteMode.value === 'one' ? '归档会话失败' : '批量归档会话失败，请重试')
   }
   showDelete.value = false
   try {

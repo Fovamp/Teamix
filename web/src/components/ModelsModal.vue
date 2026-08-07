@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from "vue"
 import { api } from "../api"
+import { useToast } from "../composables/useToast"
+const { toast } = useToast()
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: "close"): void }>()
 const models = ref<any[]>([])
@@ -35,10 +37,10 @@ async function toggleOffline() {
       offline.value = !offline.value
     } else {
       const text = await resp.text()
-      alert(text || '切换失败（可能仅架构师可操作）')
+      toast(text || '切换失败（可能仅架构师可操作）')
     }
   } catch {
-    alert('切换失败')
+    toast('切换失败')
   }
   saving.value = false
 }
