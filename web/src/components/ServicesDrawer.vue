@@ -9,6 +9,39 @@ const view = ref<"personal" | "global">("personal")
 const services = ref<any[]>([])
 let timer: any = null
 
+// 垂直位置：默认 25%，用户拖动把手调整（只允许上下，避免遮挡）
+const posTop = ref("25%")
+let dragging = false
+let dragged = false // 拖动过（区分"拖动"与"点击"）
+let startY = 0, startTop = 0
+
+function onTabDown(e: MouseEvent) {
+  dragging = true
+  dragged = false
+  startY = e.clientY
+  const cur = posTop.value.endsWith("%") ? (window.innerHeight * (parseInt(posTop.value, 10) / 100)) : parseInt(posTop.value, 10)
+  startTop = Number.isFinite(cur) ? cur : window.innerHeight * 0.25
+  document.body.style.cursor = "ns-resize"
+  document.body.style.userSelect = "none"
+  e.preventDefault()
+}
+function onMove(e: MouseEvent) {
+  if (!dragging) return
+  const dy = e.clientY - startY
+  if (Math.abs(dy) > 3) dragged = true
+  const top = Math.max(40, Math.min(window.innerHeight - 220, startTop + dy))
+  posTop.value = top + "px"
+}
+function onUp() {
+  dragging = false
+  document.body.style.cursor = ""
+  document.body.style.userSelect = ""
+}
+function onTabClick() {
+  if (dragged) return // 刚拖过位置，不算点击
+  open.value = !open.value
+}
+
 async function refresh() {
   try {
     const list = await api.servicesStatus()
@@ -32,14 +65,22 @@ const runningCount = ref(0)
 onMounted(() => {
   refresh()
   timer = setInterval(refresh, 3000)
+  window.addEventListener("mousemove", onMove)
+  window.addEventListener("mouseup", onUp)
 })
-onUnmounted(() => { if (timer) clearInterval(timer) })
+onUnmounted(() => {
+  if (timer) clearInterval(timer)
+  window.removeEventListener("mousemove", onMove)
+  window.removeEventListener("mouseup", onUp)
+})
 </script>
 
 <template>
-  <div class="svc-drawer" :class="{ 'svc-drawer--open': open }">
-    <!-- 常驻把手（露出一条） -->
-    <div class="svc-drawer__tab" :title="open ? '收起运行面板' : '展开运行面板'" @click="open = !open">
+  <div class="svc-drawer" :class="{ 'svc-drawer--open': open }" :style="{ top: posTop }">
+    <!-- 常驻把手（露出一条，可上下拖动调整位置） -->
+    <div class="svc-drawer__tab"
+      :title="open ? '收起运行面板（拖动可调整位置）' : '展开运行面板（拖动可调整位置）'"
+      @mousedown="onTabDown" @click="onTabClick">
       <span class="svc-drawer__dot" :class="{ 'svc-drawer__dot--live': runningCount > 0 }"></span>
       <span class="svc-drawer__tab-icon">{{ open ? "▸" : "◂" }}</span>
     </div>
@@ -64,6 +105,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             <span class="svc-drawer__port">:{{ s.port }}</span>
             <span class="svc-drawer__stage" :class="'svc-drawer__stage--' + s.stage">{{ stageLabel(s.stage) }}</span>
             <button class="svc-drawer__stop" @click="stop(s.id)">停止</button>
+            <div v-if="s.error" class="svc-drawer__err" :title="s.error">{{ s.error }}</div>
           </div>
         </template>
         <template v-else>
