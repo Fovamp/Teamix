@@ -111,14 +111,27 @@ func applyTeamixEnvFile(path string) {
 func (ts *TeamixServer) mcpSensitivityMap(userRoot string) map[string]provider.Sensitivity {
 	out := make(map[string]provider.Sensitivity)
 	add := func(specs map[string]mcpServerSpec) {
-		for name, srv := range specs {
-			if s := provider.NormalizeSensitivity(srv.Sensitivity); s != "" {
+		for name, srv := range specs {			if s := provider.NormalizeSensitivity(srv.Sensitivity); s != "" {
 				out[name] = s
 			}
 		}
 	}
 	add(ts.loadGlobalMCPServers())
 	add(loadUserMCPServers(userRoot))
+	return out
+}
+
+// toolSensitivityMap 内置工具声明敏感级（工具名 → 档位，来源 sensitive.yaml tools 段）。
+// 显式声明优先于默认兜底；非法档位跳过（按未声明处理）。
+func (ts *TeamixServer) toolSensitivityMap() map[string]provider.Sensitivity {
+	out := make(map[string]provider.Sensitivity)
+	if g := ts.GlobalCfg(); g != nil && g.Config != nil {
+		for name, v := range g.Config.Sensitive.Tools {
+			if s := provider.NormalizeSensitivity(v); s != "" {
+				out[name] = s
+			}
+		}
+	}
 	return out
 }
 

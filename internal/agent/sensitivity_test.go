@@ -97,6 +97,25 @@ func TestToolResultSensitivityDocKBSearch(t *testing.T) {
 	}
 }
 
+// 内置工具显式声明优先：架构师把 doc_kb_search 声明为 public → 覆盖默认 internal
+func TestToolResultSensitivityToolDeclaration(t *testing.T) {
+	a := &Agent{toolSensitivity: map[string]provider.Sensitivity{
+		"doc_kb_search": provider.SensitivityPublic,
+		"web_fetch":     provider.SensitivityRedact,
+	}}
+	if s := a.toolResultSensitivity("doc_kb_search", json.RawMessage(`{}`)); s != provider.SensitivityPublic {
+		t.Fatalf("declared public doc_kb_search = %q, want public", s)
+	}
+	if s := a.toolResultSensitivity("web_fetch", json.RawMessage(`{}`)); s != provider.SensitivityRedact {
+		t.Fatalf("declared redact web_fetch = %q, want redact", s)
+	}
+	// 未声明的工具不受影响（web_fetch 默认空标记）
+	a2 := &Agent{}
+	if s := a2.toolResultSensitivity("web_fetch", json.RawMessage(`{}`)); s != "" {
+		t.Fatalf("undeclared web_fetch = %q, want unmarked", s)
+	}
+}
+
 // 其他普通 builtin（web_fetch 等）→ 空标记（走正常路由）
 func TestToolResultSensitivityOtherBuiltin(t *testing.T) {
 	a := &Agent{}

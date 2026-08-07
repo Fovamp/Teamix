@@ -10,6 +10,7 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/keypool"
 	"reasonix/internal/plugin"
+	"reasonix/internal/provider"
 	"reasonix/internal/skill"
 	"reasonix/internal/teamixconfig"
 	"sort"
@@ -20,11 +21,13 @@ import (
 
 // Configuration, MCP, Skills, and Secrets management handlers.
 
-// GET /teamix/sensitive 返回当前生效的机密清单（dirs/files，所有人可读）。
+// GET /teamix/sensitive 返回当前生效的机密清单（dirs/files/tools，所有人可读）。
 func (ts *TeamixServer) handleSensitiveGet(w http.ResponseWriter, _ *http.Request, _ *userSession) {
 	dirs, files := []string{}, []string{}
+	tools := map[string]string{}
 	if ts.GlobalCfg() != nil && ts.GlobalCfg().Config != nil {
 		dirs, files = ts.GlobalCfg().Config.Sensitive.Dirs, ts.GlobalCfg().Config.Sensitive.Files
+		tools = ts.GlobalCfg().Config.Sensitive.Tools
 	}
 	if dirs == nil {
 		dirs = []string{}
@@ -32,20 +35,25 @@ func (ts *TeamixServer) handleSensitiveGet(w http.ResponseWriter, _ *http.Reques
 	if files == nil {
 		files = []string{}
 	}
-	writeJSON(w, map[string]any{"dirs": dirs, "files": files})
+	if tools == nil {
+		tools = map[string]string{}
+	}
+	writeJSON(w, map[string]any{"dirs": dirs, "files": files, "tools": tools})
 }
 
-// POST /teamix/sensitive {dirs, files} 保存机密清单（仅 architect）。
+// POST /teamix/sensitive {dirs, files, tools} 保存机密清单（仅 architect）。
+// tools = 内置工具敏感级声明（工具名 → public/internal/redact，非法档位丢弃）。
 // 写入独立文件 .teamix/sensitive.yaml（不碰 config.yaml 其他段），
-// 下次会话构建热加载生效（currentSensitiveRules 每次 Build 重读）。
+// 热加载即时生效（globalCfg 替换 + 新会话构建重读）。
 func (ts *TeamixServer) handleSensitiveSet(w http.ResponseWriter, r *http.Request, u *userSession) {
 	if !ts.isArchitect(u) {
 		http.Error(w, "仅架构师可修改机密清单", http.StatusForbidden)
 		return
 	}
 	var body struct {
-		Dirs  []string `json:"dirs"`
-		Files []string `json:"files"`
+		Dirs  []string          `json:"dirs"`
+		Files []string          `json:"files"`
+		Tools map[string]string `json:"tools"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
@@ -57,14 +65,28 @@ func (ts *TeamixServer) handleSensitiveSet(w http.ResponseWriter, r *http.Reques
 		Dirs:  cleanSensitiveList(body.Dirs),
 		Files: cleanSensitiveList(body.Files),
 	}
+	// 工具声明：只保留合法档位（public/internal/redact/confidential），
+	// 空值条目丢弃（表示恢复默认）。
+	for name, v := range body.Tools {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if s := provider.NormalizeSensitivity(strings.TrimSpace(v)); s != "" {
+			if sc.Tools == nil {
+				sc.Tools = map[string]string{}
+			}
+			sc.Tools[name] = string(s)
+		}
+	}
 	if err := teamixconfig.SaveSensitiveOverlay(ts.workspaceRoot, sc); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// 重新加载配置替换快照（热加载与请求路径共用 cfgMu，避免原地改对象的并发 race）
 	ts.setGlobalCfg(ts.loadGlobalConfig())
-	slog.Info("teamix: sensitive list updated", "by", u.name, "dirs", len(sc.Dirs), "files", len(sc.Files))
-	writeJSON(w, map[string]any{"ok": true, "dirs": sc.Dirs, "files": sc.Files})
+	slog.Info("teamix: sensitive list updated", "by", u.name, "dirs", len(sc.Dirs), "files", len(sc.Files), "tools", len(sc.Tools))
+	writeJSON(w, map[string]any{"ok": true, "dirs": sc.Dirs, "files": sc.Files, "tools": sc.Tools})
 }
 
 // cleanSensitiveList 过滤空白/注释条目，防止空串进机密清单。

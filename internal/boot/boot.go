@@ -175,6 +175,9 @@ type Options struct {
 	// MCPSensitivity MCP server 声明敏感级（Teamix：mcp.json sensitivity 字段，
 	// server 名 → 档位）。未声明的 MCP 工具结果默认 internal（数据入口兜底）。
 	MCPSensitivity map[string]provider.Sensitivity
+	// ToolSensitivity 内置工具声明敏感级（Teamix：sensitive.yaml tools 段，
+	// 工具名 → 档位）。显式声明优先于默认兜底（如 doc_kb_search 默认 internal）。
+	ToolSensitivity map[string]provider.Sensitivity
 	// MemoryCompilerDir 覆盖 Memory v5 编译状态目录（Teamix 按项目：
 	// userRoot/.teamix/memory/<project>/compiler）。空 = 默认机器级。
 	MemoryCompilerDir string
@@ -1330,6 +1333,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		SensitiveRules:                     sensitiveRulesForAgent(opts),
 		BaseSensitivity:                    opts.BaseSensitivity,
 		MCPSensitivity:                     opts.MCPSensitivity,
+		ToolSensitivity:                    opts.ToolSensitivity,
 	}, sink)
 
 	var runner agent.Runner = executor

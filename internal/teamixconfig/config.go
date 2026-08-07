@@ -62,9 +62,12 @@ type ModelPool struct {
 
 // SensitiveConfig 是机密黑名单（.teamix/config.yaml 的 sensitive 段）。
 // 命中 dirs/files 的内容强制走内部模型（fail-closed），配置层无外部路径。
+// Tools 是内置工具的敏感级声明（工具名 → public/internal/redact）：显式声明
+// 优先于默认兜底（如 doc_kb_search 默认 internal）。未声明工具走各自默认。
 type SensitiveConfig struct {
-	Dirs  []string `yaml:"dirs,omitempty"`
-	Files []string `yaml:"files,omitempty"`
+	Dirs  []string          `yaml:"dirs,omitempty"`
+	Files []string          `yaml:"files,omitempty"`
+	Tools map[string]string `yaml:"tools,omitempty"`
 }
 
 // AuditConfig 是 AI 调用审计日志配置（.teamix/config.yaml 的 audit 段）。

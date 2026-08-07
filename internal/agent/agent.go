@@ -273,9 +273,11 @@ type Agent struct {
 	sensitive      provider.Sensitivity
 	sensitiveRules *modelrouter.SensitiveRules
 	// baseSensitivity 会话初始敏感级（skill/记忆声明聚合，boot 传入）；
-	// mcpSensitivity MCP server 声明敏感级（server 名 → 档位，未声明默认 internal）。
+	// mcpSensitivity MCP server 声明敏感级（server 名 → 档位，未声明默认 internal）；
+	// toolSensitivity 内置工具声明敏感级（工具名 → 档位，显式声明优先于默认兜底）。
 	baseSensitivity provider.Sensitivity
 	mcpSensitivity  map[string]provider.Sensitivity
+	toolSensitivity map[string]provider.Sensitivity
 	// confidentialBlocked 记录被机密清单拦截的调用 ID（executeOne 并行执行，需锁）：
 	// 拦截调用的内容未进入上下文，回填时其消息不设敏感标记，防止会话被锁 internal。
 	confidentialMu      sync.Mutex
@@ -1032,6 +1034,9 @@ type Options struct {
 	// MCPSensitivity MCP server 声明敏感级（server 名 → 档位，配置来源 mcp.json
 	// 的 sensitivity 字段）。未声明的 MCP 工具结果默认 internal（数据入口兜底）。
 	MCPSensitivity map[string]provider.Sensitivity
+	// ToolSensitivity 内置工具声明敏感级（工具名 → 档位，配置来源 sensitive.yaml
+	// tools 段）。显式声明优先于默认兜底（如 doc_kb_search 默认 internal）。
+	ToolSensitivity map[string]provider.Sensitivity
 
 	// Jobs is the session's background-job manager (nil disables background tools).
 	Jobs *jobs.Manager
@@ -1167,6 +1172,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		sensitiveRules:           opts.SensitiveRules,
 		baseSensitivity:          opts.BaseSensitivity,
 		mcpSensitivity:           opts.MCPSensitivity,
+		toolSensitivity:          opts.ToolSensitivity,
 		sensitive:                opts.BaseSensitivity,
 		sink:                     sink,
 		gate:                     gate,
@@ -1259,9 +1265,14 @@ func (a *Agent) toolResultSensitivity(name string, args json.RawMessage) provide
 		}
 		return provider.SensitivityInternal
 	}
+	// 内置工具：配置声明优先（架构师在安全页显式声明的档位，覆盖默认兜底）
+	if a.toolSensitivity != nil {
+		if s, found := a.toolSensitivity[name]; found && s != "" {
+			return s
+		}
+	}
 	// doc_kb_search 是团队文档知识库入口：检索片段按"内部数据"对待——
 	// 默认 internal（不出网），符合"数据入口未声明 → internal 兜底"原则。
-	// 团队文档若要允许出网，需后续提供显式声明入口（RAGFLOW_SENSITIVITY）。
 	if name == "doc_kb_search" {
 		return provider.SensitivityInternal
 	}

@@ -300,6 +300,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		Router:              ts.routerCfg(name),
 		BaseSensitivity:     ts.baseSensitivityFor(userRoot, ""),
 		MCPSensitivity:      ts.mcpSensitivityMap(userRoot),
+		ToolSensitivity:     ts.toolSensitivityMap(),
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("build controller for %q: %w", name, err)

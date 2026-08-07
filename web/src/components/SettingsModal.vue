@@ -401,10 +401,12 @@ async function renderMemory() {
   contentHtml.value = h
 }
 
-// 安全 tab：机密清单（dirs/files）可视化编辑，仅 architect 可写。
+// 安全 tab：机密清单（dirs/files）+ 内置工具敏感级（tools）可视化编辑，仅 architect 可写。
+// 内置工具清单：声明敏感级的工具（未声明走默认兜底，如 doc_kb_search=internal）。
+const SENSITIVE_TOOLS = ["doc_kb_search", "web_fetch", "read_file", "write_file", "edit_file", "bash", "grep", "ls", "glob", "codeindex"]
 async function renderSensitive() {
   const q = tokenQuery()
-  contentHtml.value = '<div class="section"><h3>🛡 安全</h3><p class="desc">机密清单：AI 工具试图访问以下目录/文件时将直接拦截（不读取内容）。修改后下次新会话/切模型生效。</p></div><div id="sensitive-render">加载中...</div>'
+  contentHtml.value = '<div class="section"><h3>🛡 安全</h3><p class="desc">机密清单：AI 工具试图访问以下目录/文件时将直接拦截（不读取内容）。内置工具敏感级：声明工具结果数据的出网档位（未声明走默认，doc_kb_search 默认 internal）。修改后即时生效。</p></div><div id="sensitive-render">加载中...</div>'
   try {
     let role = ""
     try {
@@ -416,12 +418,25 @@ async function renderSensitive() {
     const data = await resp.json()
     const dirs: string[] = data.dirs || []
     const files: string[] = data.files || []
+    const tools: Record<string, string> = data.tools || {}
     const taStyle = 'width:100%;min-height:96px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:12px;font-family:var(--mono);box-sizing:border-box;resize:vertical;line-height:1.6'
     const labStyle = 'display:block;font-size:12px;color:var(--fg);font-weight:500;margin:0 0 4px'
     const hintStyle = 'font-size:11px;color:var(--muted-2);font-weight:400;margin-left:6px'
-    let h = '<div class="section"><h3>🛡 安全</h3><p class="desc">机密清单：AI 工具试图访问以下目录/文件时将直接拦截（不读取内容）。修改后下次新会话/切模型生效。</p></div>'
+    const selStyle = 'padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:12px'
+    let h = '<div class="section"><h3>🛡 安全</h3><p class="desc">机密清单：AI 工具试图访问以下目录/文件时将直接拦截（不读取内容）。内置工具敏感级：声明工具结果数据的出网档位（未声明走默认，doc_kb_search 默认 internal）。修改后即时生效。</p></div>'
     h += '<div style="margin-bottom:14px"><label style="' + labStyle + '">机密目录<span style="' + hintStyle + '">每行一个，前缀匹配，如 tenders/ data/ secrets/</span></label><textarea id="sens-dirs" style="' + taStyle + '" placeholder="tenders/">' + escH(dirs.join("\n")) + '</textarea></div>'
     h += '<div style="margin-bottom:14px"><label style="' + labStyle + '">机密文件<span style="' + hintStyle + '">每行一个，glob 匹配，如 .env *.pem</span></label><textarea id="sens-files" style="' + taStyle + '" placeholder=".env">' + escH(files.join("\n")) + '</textarea></div>'
+    // 内置工具敏感级（架构师可编辑）：可配置清单 ∪ 后端已有声明（防止保存时丢清单外声明）
+    const toolNames = SENSITIVE_TOOLS.concat(Object.keys(tools).filter((k) => !SENSITIVE_TOOLS.includes(k)))
+    h += '<div style="margin-bottom:14px"><label style="' + labStyle + '">内置工具敏感级<span style="' + hintStyle + '">public=可原文出网 · internal=不出网（默认）· redact=假名化出网 · 留空=默认</span></label>'
+    toolNames.forEach((tn) => {
+      const cur = tools[tn] || ""
+      const opt = (v: string, lbl: string) => '<option value="' + v + '"' + (cur === v ? " selected" : "") + '>' + lbl + '</option>'
+      h += '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px"><code style="width:150px;flex-shrink:0">' + escH(tn) + '</code>'
+      h += '<select data-tool-sens="' + escAttr(tn) + '" style="' + selStyle + '">' + opt("", "默认") + opt("public", "public") + opt("internal", "internal") + opt("redact", "redact") + '</select>'
+      h += '<span style="color:var(--muted-2);font-size:11px">' + (tn === "doc_kb_search" ? "团队文档默认 internal" : "未声明默认") + '</span></div>'
+    })
+    h += '</div>'
     if (isArch) {
       h += '<div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:4px"><button class="btn primary" onclick="saveSensitive()" style="padding:7px 20px;border:none;border-radius:6px;background:var(--accent);color:#000;font-size:12px;font-weight:500;cursor:pointer">保存机密清单</button><span id="sens-msg" style="font-size:12px;color:var(--muted-2)"></span></div>'
     } else {
@@ -748,15 +763,23 @@ w.saveSensitive = async function() {
   const filesText = (document.getElementById("sens-files") as HTMLTextAreaElement)?.value || ""
   const dirs = dirsText.split("\n").map(s => s.trim()).filter(s => s && !s.startsWith("#"))
   const files = filesText.split("\n").map(s => s.trim()).filter(s => s && !s.startsWith("#"))
+  // 内置工具敏感级：收集所有下拉值（空 = 未声明/默认）
+  const tools: Record<string, string> = {}
+  document.querySelectorAll("[data-tool-sens]").forEach((sel) => {
+    const el = sel as HTMLSelectElement
+    const name = el.getAttribute("data-tool-sens") || ""
+    const v = el.value || ""
+    if (name && v) tools[name] = v
+  })
   const t = localStorage.getItem("teamix_token")
   if (!t) return
   const resp = await fetch("/teamix/sensitive?token=" + encodeURIComponent(t), {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dirs, files })
+    body: JSON.stringify({ dirs, files, tools })
   })
   const msg = document.getElementById("sens-msg")
   if (resp.ok) {
-    if (msg) msg.textContent = "\u2713 \u5df2\u4fdd\u5b58\uff08\u4e0b\u6b21\u65b0\u4f1a\u8bdd/\u5207\u6a21\u578b\u751f\u6548\uff09"
+    if (msg) msg.textContent = "\u2713 \u5df2\u4fdd\u5b58\uff08\u70ed\u52a0\u8f7d\u5373\u65f6\u751f\u6548\uff0c\u65b0\u5de5\u5177\u7ed3\u679c\u4e0b\u6b21\u8bf7\u6c42\u751f\u6548\uff09"
     toast("机密清单已保存")
   } else {
     if (msg) msg.textContent = "\u2717 \u4fdd\u5b58\u5931\u8d25"
