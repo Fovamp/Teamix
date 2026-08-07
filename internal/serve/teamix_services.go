@@ -251,7 +251,10 @@ func safeModuleName(s string) bool {
 	return s != "" && safeModuleNameRe.MatchString(s)
 }
 
-// lookPathMaven 在 PATH 中查找 Maven（Windows 上 mvn.cmd / mvn.bat / mvn.exe）。
+// lookPathMaven 定位 Maven 可执行文件：
+//  1. PATH（mvn / mvn.cmd / mvn.bat / mvn.exe）
+//  2. MAVEN_HOME / MVN_HOME 环境变量（bin/mvn.cmd 等）
+// 返回绝对路径（启动命令直接用绝对路径，不依赖 cmd 的 PATH 解析）。
 func lookPathMaven() (string, error) {
 	if p, err := exec.LookPath("mvn"); err == nil {
 		return p, nil
@@ -261,38 +264,69 @@ func lookPathMaven() (string, error) {
 			return p, nil
 		}
 	}
-	return "", fmt.Errorf("mvn 不在 PATH")
+	for _, env := range []string{"MAVEN_HOME", "MVN_HOME"} {
+		if home := os.Getenv(env); home != "" {
+			for _, name := range []string{"bin/mvn.cmd", "bin/mvn.bat", "bin/mvn"} {
+				p := filepath.Join(home, filepath.FromSlash(name))
+				if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+					return p, nil
+				}
+			}
+		}
+	}
+	return "", fmt.Errorf("mvn 不在 PATH，也未设置 MAVEN_HOME")
 }
 
 // startService 在用户目录启动一个模块（映射端口 + nacos 注入）。
 // 返回 runningService（启动即登记，Stage=starting；进程退出转 failed 由 goroutine 处理）。
+// 任何失败也会登记一条 failed 记录（抽屉可见、可重试），而不是静默消失。
 func (ts *TeamixServer) startService(u *userSession, projectName, module string, port int) (*runningService, error) {
+	// recordFail：清理同模块旧记录并登记 failed（抽屉可见失败原因 + 可重试）
+	recordFail := func(err error) (*runningService, error) {
+		for _, old := range svcMgr.list(u.token) {
+			if old.Project == projectName && old.Service == module {
+				svcMgr.remove(u.token, old.ID)
+			}
+		}
+		rs := &runningService{
+			ID:        fmt.Sprintf("%s-%s-fail", projectName, module),
+			Project:   projectName,
+			Service:   module,
+			Port:      port,
+			Stage:     "failed",
+			Error:     err.Error(),
+			StartedAt: time.Now(),
+		}
+		svcMgr.add(u.token, rs)
+		return nil, err
+	}
+
 	proj := ts.GlobalCfg().Projects.FindProject(projectName)
 	if proj == nil {
-		return nil, fmt.Errorf("project not found")
+		return recordFail(fmt.Errorf("project not found"))
 	}
 	svc := proj.FindService(module)
 	if svc == nil {
-		return nil, fmt.Errorf("module %q not found in project", module)
+		return recordFail(fmt.Errorf("module %q not found in project", module))
 	}
 	projPath := filepath.Join(u.userRoot, projectName)
 	svcPath := filepath.Join(projPath, filepath.FromSlash(svc.Dir))
 	if _, err := os.Stat(svcPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("project not cloned yet, select project first")
+		return recordFail(fmt.Errorf("project not cloned yet, select project first"))
 	}
 
 	// 启动命令：在【模块目录】直接运行 mvn spring-boot:run（模块目录有自己的
 	// pom.xml；不能带 -pl——在模块目录内 -pl 找不到 reactor 模块会 exit status 1）。
 	// 映射端口用命令行参数覆盖（优先级最高）。
 	if !safeModuleName(module) {
-		return nil, fmt.Errorf("module name %q contains unsafe characters", module)
+		return recordFail(fmt.Errorf("module name %q contains unsafe characters", module))
 	}
-	// 先检测 Maven 可用性（mvn 不在 PATH 时 cmd 输出 "不是内部或外部命令" 的
-	// GBK 中文 → 乱码且难排查；这里直接给出可读错误）
-	if _, err := lookPathMaven(); err != nil {
-		return nil, fmt.Errorf("未检测到 Maven：%v（请安装 Maven 并加入 PATH，或配置 MVN_HOME 后重试）", err)
+	// 定位 Maven（PATH 或 MAVEN_HOME），用绝对路径执行（不依赖 cmd 的 PATH 解析）
+	mvnPath, err := lookPathMaven()
+	if err != nil {
+		return recordFail(fmt.Errorf("未检测到 Maven：%v（请安装 Maven 并加入 PATH，或配置 MAVEN_HOME 后重试）", err))
 	}
-	cmdLine := fmt.Sprintf("mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=%d", port)
+	cmdLine := fmt.Sprintf("%q spring-boot:run -Dspring-boot.run.arguments=--server.port=%d", mvnPath, port)
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		// chcp 65001 + JAVA_TOOL_OPTIONS 强制 UTF-8 输出，避免 GBK 乱码
@@ -310,7 +344,7 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 	cmd.Stderr = out
 
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start failed: %w", err)
+		return recordFail(fmt.Errorf("start failed: %w", err))
 	}
 
 	svcID := fmt.Sprintf("%s-%s-%d", projectName, module, cmd.Process.Pid)

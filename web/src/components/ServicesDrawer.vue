@@ -173,7 +173,7 @@ onUnmounted(() => {
 .svc-drawer__tab-icon { font-size: 10px; color: var(--muted-2); }
 .svc-drawer__panel {
   width: 400px;
-  max-height: 82vh;
+  height: 45vh; /* 约屏幕 1/3~1/2 高度，服务多时 body 内滚动 */
   display: flex;
   flex-direction: column;
   background: var(--panel);
