@@ -111,6 +111,13 @@ export const api = {
   projectSelect: (project: string): Promise<any> => post("/teamix/projects/select", { project }),
   cloneProgress: (project?: string): Promise<any> =>
     get("/teamix/clone/progress" + (project ? "?project=" + encodeURIComponent(project) : "")),
+  // 模块启动：校验映射端口 / 同步勾选集合 / 运行状态
+  servicesValidate: (items: Array<{ project: string; module: string; port: number }>): Promise<{ conflicts: Record<string, string> }> =>
+    post("/teamix/services/validate", { items }),
+  servicesSync: (items: Array<{ project: string; module: string; port: number }>): Promise<{ ok: boolean; conflicts?: Record<string, string>; results?: any[] }> =>
+    post("/teamix/services/sync", { items }),
+  servicesStatus: (): Promise<Array<{ id: string; project: string; service: string; port: number; pid: number; stage: string; error?: string; startedAt: string }>> =>
+    get("/teamix/services/status"),
   gitCredentials: (): Promise<{ sshKeyPath: string; httpsUsername: string; configured: boolean }> => get("/teamix/git/credentials"),
   gitCredentialsSave: (body: { sshKeyPath?: string; httpsUsername?: string; httpsPassword?: string }): Promise<any> =>
     post("/teamix/git/credentials", body),

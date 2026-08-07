@@ -35,6 +35,16 @@ func (ts *TeamixServer) AlertWebhook() string {
 	return ts.alertWebhook
 }
 
+// Nacos 返回 nacos 配置中心连接模板（cfgMu 读锁；未配置返回零值）。
+func (ts *TeamixServer) Nacos() teamixconfig.NacosConfig {
+	ts.cfgMu.RLock()
+	defer ts.cfgMu.RUnlock()
+	if ts.globalCfg != nil && ts.globalCfg.Config != nil {
+		return ts.globalCfg.Config.Nacos
+	}
+	return teamixconfig.NacosConfig{}
+}
+
 // setGlobalCfg 原子替换配置快照并同步派生字段（cfgMu 写锁）。
 func (ts *TeamixServer) setGlobalCfg(cfg *teamixconfig.GlobalConfig) {
 	ts.cfgMu.Lock()

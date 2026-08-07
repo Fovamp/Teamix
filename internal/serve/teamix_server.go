@@ -606,6 +606,8 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("POST /teamix/projects/{name}/services/start", ts.withUser(ts.handleServiceStart))
 	mux.HandleFunc("POST /teamix/services/stop", ts.withUser(ts.handleServiceStop))
 	mux.HandleFunc("GET /teamix/services/status", ts.withUser(ts.handleServicesStatus))
+	mux.HandleFunc("POST /teamix/services/validate", ts.withUser(ts.handleServiceValidate))
+	mux.HandleFunc("POST /teamix/services/sync", ts.withUser(ts.handleServiceSync))
 	mux.HandleFunc("GET /teamix/workflow", ts.withUser(ts.handleWorkflowGet))
 	mux.HandleFunc("POST /teamix/workflow/advance", ts.withUser(ts.handleWorkflowAdvance))
 	mux.HandleFunc("POST /teamix/workflow/rollback", ts.withUser(ts.handleWorkflowRollback))

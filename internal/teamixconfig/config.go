@@ -29,6 +29,18 @@ type Config struct {
 	Audit     AuditConfig     `yaml:"audit,omitempty"`
 	Quota     QuotaConfig     `yaml:"quota,omitempty"`
 	Alert     AlertConfig     `yaml:"alert,omitempty"`
+	Nacos     NacosConfig     `yaml:"nacos,omitempty"`
+}
+
+// NacosConfig 是 nacos 配置中心连接模板（.teamix/config.yaml 的 nacos 段）。
+// 个人/公共启动时以环境变量注入（Spring relaxed binding 优先级最高），
+// group 按场景替换：个人 = 当前用户名，公共 = teamix。
+// 初版不注入账号密码（测试项目可能无 nacos，留空则不注入）。
+type NacosConfig struct {
+	ServerAddr string `yaml:"server_addr,omitempty"` // nacos 服务地址（如 192.168.29.42:30107）
+	Namespace  string `yaml:"namespace,omitempty"`   // 统一命名空间（默认 Teamix）
+	Username   string `yaml:"username,omitempty"`
+	Password   string `yaml:"password,omitempty"`
 }
 
 // AlertConfig 致命告警渠道（P3）：企微机器人 webhook URL。空 = 仅日志/审计。

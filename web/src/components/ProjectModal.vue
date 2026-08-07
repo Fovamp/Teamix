@@ -41,15 +41,22 @@ function updatePercent() {
 
 watch(cloneProgress, updatePercent)
 
-// 模块选择（假选择，为资源池预留）：按项目多选，点项目卡片才真正选择项目。
-// 缓存按用户隔离，避免 admin 勾选的模块泄漏到其他用户。
-const selectedByProject = ref<Record<string, string[]>>({})
+// 模块选择（资源池）：按项目多选 + 映射端口，缓存按用户隔离。
+// selectedByProject: { project: { module: 映射端口 } }
+const selectedByProject = ref<Record<string, Record<string, number>>>({})
 const svcStoreKey = () => "teamix_selected_services_" + (api.currentUser() || "default")
 const showModule = ref(false)
 const moduleProject = ref("")
 const moduleServices = ref<any[]>([])
 const moduleLoading = ref(false)
 const moduleSel = ref<string[]>([])
+// 映射端口：module -> 端口（勾选时显示输入框）；冲突表 module -> reason
+const modulePorts = ref<Record<string, string>>({})
+const moduleConflicts = ref<Record<string, string>>({})
+// 启动状态（项目就绪后自动启动所选模块，轮询 status 显示阶段）
+const svcStarting = ref(false)
+const svcStatusRows = ref<Record<string, any>>({})
+let svcPollTimer: any = null
 
 // 凭证步骤
 const credStep = ref(false)
@@ -73,7 +80,16 @@ async function load() {
     projects.value = ps || []
     // 不回显上次选中的项目（每次打开都是初始状态）
     try {
-      selectedByProject.value = JSON.parse(localStorage.getItem(svcStoreKey()) || "{}")
+      const raw = JSON.parse(localStorage.getItem(svcStoreKey()) || "{}")
+      // 旧格式 {project: ["mod"]} → 新格式 {project: {mod: 端口}}
+      for (const [proj, v] of Object.entries(raw)) {
+        if (Array.isArray(v)) {
+          const m: Record<string, number> = {}
+          for (const name of v as string[]) m[name] = 0
+          ;(raw as any)[proj] = m
+        }
+      }
+      selectedByProject.value = raw
     } catch {
       selectedByProject.value = {}
     }
@@ -118,6 +134,71 @@ async function checkRunningClone() {
   } catch {}
 }
 
+// 同步勾选模块：先校验端口（冲突 → 打开模块弹窗标红，不启动），
+// 通过后 sync 启动/关闭，轮询 status 显示每模块阶段。
+// 返回 true = 已发起启动；false = 冲突/失败（调用方不关闭弹窗）。
+async function syncSelectedModules(project: string): Promise<boolean> {
+  const saved = selectedByProject.value[project] || {}
+  const items = Object.entries(saved)
+    .filter(([, port]) => port > 0)
+    .map(([module, port]) => ({ project, module, port }))
+  if (items.length === 0) return true
+  if (!(await checkPortConflicts(items))) {
+    // 冲突 → 回到模块选择弹窗让用户改端口（走 openModuleModal 完整初始化）
+    await openModuleModal(project)
+    toast("所选模块端口冲突，请在模块选择中修改后重试", "error")
+    return false
+  }
+  svcStarting.value = true
+  svcStatusRows.value = {}
+  try {
+    await api.servicesSync(items)
+    await pollSvcStatus(project)
+    const stillStarting = Object.values(svcStatusRows.value).some((s: any) => s && s.stage === "starting")
+    if (stillStarting) toast("部分模块仍在后台启动中（首次下载依赖较慢），可在运行面板查看", "info", 8000)
+  } catch (e: any) {
+    toast("模块启动失败: " + (e.message || e), "error")
+    return false
+  } finally {
+    svcStarting.value = false
+    stopSvcPolling()
+  }
+  return true
+}
+
+function pollSvcStatus(project: string) {
+  stopSvcPolling()
+  return new Promise<void>((resolve) => {
+    let tries = 0
+    svcPollTimer = setInterval(async () => {
+      tries++
+      try {
+        const list = await api.servicesStatus()
+        const rows: Record<string, any> = {}
+        for (const s of list) {
+          if (s.project === project) rows[s.service] = s
+        }
+        svcStatusRows.value = rows
+        // 只等"勾选且端口>0"的模块（sync 只启动这些）
+        const want = Object.entries(selectedByProject.value[project] || {})
+          .filter(([, p]) => p > 0)
+          .map(([m]) => m)
+        const allDone = want.length > 0 && want.every((m) => {
+          const s = rows[m]
+          return s && (s.stage === "running" || s.stage === "failed")
+        })
+        if (allDone || tries > 60) resolve() // 60 次 ≈ 2 分钟兜底
+      } catch {}
+    }, 2000)
+  })
+}
+function stopSvcPolling() {
+  if (svcPollTimer) {
+    clearInterval(svcPollTimer)
+    svcPollTimer = null
+  }
+}
+
 async function doSelect(project: string) {
   working.value = true
   credErr.value = ""
@@ -147,6 +228,10 @@ async function doSelect(project: string) {
     }
     if (r && r.ok) {
       currentProject.value = project
+      // 自动启动勾选模块（sync：勾了没跑→启动/在跑→不动/没勾在跑→关闭）；
+      // 端口冲突时返回 false，弹窗不关、回到模块选择改端口
+      const ok = await syncSelectedModules(project)
+      if (!ok) return
       toast("项目已就绪", "success")
       emit("selected")
       emit("close")
@@ -204,7 +289,13 @@ function close() {
 // 模块选择（独立二级模态窗，多选假选择，为资源池预留）
 async function openModuleModal(project: string) {
   moduleProject.value = project
-  moduleSel.value = [...(selectedByProject.value[project] || [])]
+  // 回显已存映射端口（旧 string[] 格式兼容为 0）
+  const saved = selectedByProject.value[project] || {}
+  moduleSel.value = Object.keys(saved)
+  const ports: Record<string, string> = {}
+  for (const [m, p] of Object.entries(saved)) ports[m] = p ? String(p) : ""
+  modulePorts.value = ports
+  moduleConflicts.value = {}
   showModule.value = true
   moduleLoading.value = true
   moduleServices.value = []
@@ -217,8 +308,23 @@ async function openModuleModal(project: string) {
 
 function toggleModule(name: string) {
   const i = moduleSel.value.indexOf(name)
-  if (i >= 0) moduleSel.value.splice(i, 1)
-  else moduleSel.value.push(name)
+  if (i >= 0) {
+    moduleSel.value.splice(i, 1)
+    const ports = { ...modulePorts.value }
+    delete ports[name]
+    modulePorts.value = ports
+  } else {
+    moduleSel.value.push(name)
+    // 默认映射端口建议：自身端口前加 1（如 8081 → 18081），可改
+    const svc = moduleServices.value.find((s: any) => s.name === name)
+    const selfPort = svc && svc.port ? svc.port : 0
+    const suggest = selfPort > 0 && selfPort < 60000 ? "1" + selfPort : ""
+    modulePorts.value = { ...modulePorts.value, [name]: suggest }
+  }
+  // 端口改动后清除该模块冲突标记
+  const c = { ...moduleConflicts.value }
+  delete c[name]
+  moduleConflicts.value = c
 }
 
 function closeModule() {
@@ -226,15 +332,72 @@ function closeModule() {
   showModule.value = false
 }
 
-// 确定：保存该项目的多选模块到 localStorage（假选择，点项目卡片才真正选项目）
-function confirmModule() {
-  selectedByProject.value[moduleProject.value] = [...moduleSel.value]
+// 确定：先校验映射端口（冲突标红、弹窗不关、改端口重试），通过后保存。
+async function confirmModule() {
+  const items = moduleSel.value
+    .filter((m) => modulePorts.value[m])
+    .map((m) => ({ project: moduleProject.value, module: m, port: parseInt(modulePorts.value[m], 10) || 0 }))
+  if (items.length === 0) {
+    moduleConflicts.value = Object.fromEntries(moduleSel.value.map((m) => [m, "port_required"]))
+    toast("请为选中的模块填写映射端口")
+    return
+  }
+  if (!(await checkPortConflicts(items))) return // 冲突标红、弹窗不关
+  // 通过 → 保存（module -> 端口）
+  const saved: Record<string, number> = {}
+  for (const it of items) saved[it.module] = it.port
+  selectedByProject.value[moduleProject.value] = saved
   localStorage.setItem(svcStoreKey(), JSON.stringify(selectedByProject.value))
+  moduleConflicts.value = {}
   showModule.value = false
+  toast("模块已选择，点击项目卡片开始拉取并启动", "success")
+}
+
+// checkPortConflicts 调服务端校验；有冲突 → 写入 moduleConflicts（key 归一为模块名）并返回 false。
+async function checkPortConflicts(items: Array<{ project: string; module: string; port: number }>): Promise<boolean> {
+  try {
+    const r = await api.servicesValidate(items)
+    const raw = (r && r.conflicts) || {}
+    const conflicts: Record<string, string> = {}
+    for (const [k, reason] of Object.entries(raw)) {
+      const module = k.includes("/") ? k.split("/").pop()! : k
+      conflicts[module] = reason
+    }
+    if (Object.keys(conflicts).length > 0) {
+      moduleConflicts.value = conflicts
+      toast("端口冲突，请修改后重试", "error")
+      return false
+    }
+    return true
+  } catch (e: any) {
+    toast("校验失败: " + (e.message || e), "error")
+    return false
+  }
 }
 
 function projectSelected(name: string) {
-  return selectedByProject.value[name] || []
+  return Object.keys(selectedByProject.value[name] || {})
+}
+// 端口输入后清除该模块冲突标记
+function clearConflict(name: string) {
+  const c = { ...moduleConflicts.value }
+  delete c[name]
+  moduleConflicts.value = c
+}
+// 冲突原因中文
+function conflictText(reason: string): string {
+  if (reason === "port_inuse") return "端口已被占用"
+  if (reason === "port_required") return "请填写映射端口"
+  if (reason === "port_invalid") return "端口无效（1-65535）"
+  if (reason.startsWith("dup_port:")) return "与 " + reason.slice(9) + " 映射端口重复"
+  return reason
+}
+// 阶段中文
+function stageLabel(s: string): string {
+  if (s === "running") return "运行中"
+  if (s === "failed") return "启动失败"
+  if (s === "starting") return "启动中（下载依赖/编译）"
+  return s || "未知"
 }
 </script>
 
@@ -288,6 +451,18 @@ function projectSelected(name: string) {
           </div>
         </template>
 
+        <!-- 模块启动状态（选择项目后自动启动，每模块阶段轮询显示） -->
+        <div v-if="svcStarting" class="svc-starting">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px">正在启动所选模块（下载依赖/编译/启动中...）</div>
+          <div v-for="(s, m) in svcStatusRows" :key="m" class="svc-starting__row">
+            <code>{{ m }}</code>
+            <span v-if="s.port" class="svc-starting__port">:{{ s.port }}</span>
+            <span class="svc-starting__stage" :class="'svc-starting__stage--' + s.stage">{{ stageLabel(s.stage) }}</span>
+            <span v-if="s.error" style="color:#f44336;font-size:11px">{{ s.error }}</span>
+          </div>
+          <div v-if="Object.keys(svcStatusRows).length === 0" style="color:var(--muted-2);font-size:12px">等待启动...</div>
+        </div>
+
         <!-- 凭证表单 -->
         <div v-if="credStep" class="cred-box">
           <div class="cred-box__title">配置 Git 凭证（{{ targetProject }}）</div>
@@ -340,12 +515,24 @@ function projectSelected(name: string) {
             <span class="proj-card__svc-check">{{ moduleSel.includes(s.name) ? "✓" : "" }}</span>
             <span class="proj-card__svc-name">{{ s.name }}</span>
             <span class="proj-card__svc-type">{{ s.type }}</span>
-            <span v-if="s.port" class="proj-card__svc-port">:{{ s.port }}</span>
+            <span v-if="s.port" class="proj-card__svc-port">自身 :{{ s.port }}</span>
+            <!-- 勾选后才显示映射端口输入框 -->
+            <template v-if="moduleSel.includes(s.name)">
+              <span class="proj-card__svc-arrow">→</span>
+              <input v-model="modulePorts[s.name]" @click.stop @input="clearConflict(s.name)"
+                class="proj-card__svc-input" type="text" inputmode="numeric"
+                :placeholder="s.port ? ('如 1' + s.port) : '必填端口'"
+                :class="{ 'proj-card__svc-input--err': moduleConflicts[s.name] }" />
+            </template>
+          </div>
+          <div v-if="Object.keys(moduleConflicts).length" style="margin-top:6px;font-size:12px;color:#f44336">
+            <div v-for="(reason, m) in moduleConflicts" :key="m">{{ m }}：{{ conflictText(reason) }}</div>
+            <div style="color:var(--muted-2);margin-top:2px">请修改映射端口后重新确认（冲突未解决前不会启动）</div>
           </div>
           <div style="margin-top:12px;display:flex;gap:8px;justify-content:center">
-            <button class="btn" @click="closeModule">跳过（选整个项目）</button>
+            <button class="btn" @click="closeModule">取消</button>
             <button class="btn primary" :disabled="moduleSel.length === 0" @click="confirmModule">
-              确定选择（{{ moduleSel.length }}）
+              确认并校验端口（{{ moduleSel.length }}）
             </button>
           </div>
         </template>
@@ -366,6 +553,23 @@ function projectSelected(name: string) {
 .btn.primary:hover { background: var(--accent-strong); color: #000; }
 .btn.primary:disabled { opacity: .6; cursor: not-allowed; }
 .btn:disabled:hover { opacity: .6; cursor: not-allowed; }
+.proj-card__svc-input {
+  width: 92px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--bg); color: var(--fg); font-size: 12px; outline: none;
+}
+.proj-card__svc-input:focus { border-color: var(--accent); }
+.proj-card__svc-input--err { border-color: #f44336 !important; background: rgba(244,67,54,.06); }
+.proj-card__svc-arrow { color: var(--muted-2); font-size: 12px; margin: 0 2px; }
+.svc-starting {
+  margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--bg-2);
+}
+.svc-starting__row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
+.svc-starting__port { color: var(--muted-2); }
+.svc-starting__stage { font-size: 11px; padding: 1px 8px; border-radius: 99px; }
+.svc-starting__stage--running { background: rgba(76,175,80,.15); color: #4caf50; }
+.svc-starting__stage--failed { background: rgba(244,67,54,.16); color: #f44336; }
+.svc-starting__stage--starting { background: rgba(33,150,243,.15); color: #2196f3; }
 .proj-card {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 12px 14px; margin-bottom: 8px; border: 1px solid var(--border);
