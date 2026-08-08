@@ -692,11 +692,13 @@ async function auditStatsHTML(data: any): Promise<string> {
     h += '<div style="display:flex;align-items:flex-end;gap:8px;height:120px;padding:8px 2px 0">'
     totals.forEach((t: any, di: number) => {
       // 柱高按最高点规划：最高 82%（留余量），最小 6%（小数据也可见）
-      const pct = maxTk > 0 ? Math.max(6, Math.round(((t.tokens || 0) / maxTk) * 82)) : 6
+      // 柱高按最高点规划：最高 82%（留余量），最小 6%（小数据也可见）；
+      // 0 token（无调用）的天不画柱，避免空占位干扰比例观感
+      const pct = (t.tokens || 0) > 0 ? Math.max(6, Math.round(((t.tokens || 0) / maxTk) * 82)) : 0
       const short = (t.date || "").slice(5)
       // 该天各用户占比段
       let segs = ""
-      let tip = t.date + " · " + fmtTokens(t.tokens) + " tok · " + t.calls + " 次调用"
+      let tip = t.date + " · " + fmtTokens(t.tokens) + " tok（输入 " + fmtTokens(t.in) + " / 输出 " + fmtTokens(t.out) + "）· " + t.calls + " 次调用"
       users.forEach((u: any) => {
         const d = (u.daily || [])[di]
         if (!d || !(d.tokens > 0)) return
@@ -706,10 +708,13 @@ async function auditStatsHTML(data: any): Promise<string> {
       })
       h += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0">'
       h += '<div style="flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center">'
+      if (pct > 0) {
       h += '<div onmouseover="this.querySelector(\'.bar-tip\').style.display=\'block\'" onmouseout="this.querySelector(\'.bar-tip\').style.display=\'none\'" style="position:relative;width:min(30px,70%);height:' + pct + '%;min-height:4px;border-radius:5px 5px 2px 2px;overflow:hidden;display:flex;flex-direction:column;cursor:pointer">'
       h += segs || '<div style="flex:1;background:var(--bg-2)"></div>'
       h += '<div class="bar-tip" style="display:none;position:absolute;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);background:var(--panel-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:10px;color:var(--fg);white-space:nowrap;z-index:5;box-shadow:var(--shadow-md)">' + tip + '</div>'
-      h += '</div></div>'
+      h += '</div>'
+      }
+      h += '</div>'
       h += '<div style="font-size:10px;color:var(--muted-2)">' + escH(short) + '</div>'
       h += '</div>'
     })
@@ -736,7 +741,7 @@ async function auditStatsHTML(data: any): Promise<string> {
     h += '<div data-audit-row style="display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;background:var(--bg-2);font-size:12px;flex-wrap:wrap">'
     h += '<b style="font-size:12px">' + escH(u.user) + '</b>'
     h += '<span style="color:var(--fg)">' + fmtTokens(u.tokens) + ' tok</span>'
-    h += '<span style="color:var(--muted-2);font-size:11px">内 ' + fmtTokens(u.in) + ' / 外 ' + fmtTokens(u.out) + '</span>'
+    h += '<span style="color:var(--muted-2);font-size:11px">输入 ' + fmtTokens(u.in) + ' / 输出 ' + fmtTokens(u.out) + '</span>'
     h += '<span style="color:var(--muted-2);font-size:11px">' + u.calls + ' 次调用</span>'
     if (u.outbound > 0) h += '<span style="font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(76,175,80,.15);color:#4caf50">出网 ' + u.outbound + '</span>'
     if (crit) h += '<span style="font-size:10px;padding:1px 6px;border-radius:99px;background:rgba(244,67,54,.16);color:#f44336">致命 ' + u.critical + '</span>'
@@ -745,7 +750,7 @@ async function auditStatsHTML(data: any): Promise<string> {
     h += '<div data-audit-detail style="display:none;padding:6px 12px;border-top:1px solid var(--border);background:var(--bg);font-size:11px">'
     ;(u.daily || []).forEach((d: any) => {
       if (!d || (d.tokens === 0 && d.calls === 0)) return
-      h += '<div style="display:flex;gap:10px;padding:3px 0;color:var(--fg-2);align-items:center;flex-wrap:wrap"><span style="width:84px;color:var(--muted-2)">' + escH(d.date) + '</span><span>' + fmtTokens(d.tokens) + ' tok</span><span style="color:var(--muted-2)">内 ' + fmtTokens(d.in) + ' / 外 ' + fmtTokens(d.out) + '</span><span style="color:var(--muted-2)">' + d.calls + ' 次</span>' + (d.outbound > 0 ? '<span style="color:#4caf50">出网 ' + d.outbound + '</span>' : '') + '</div>'
+      h += '<div style="display:flex;gap:10px;padding:3px 0;color:var(--fg-2);align-items:center;flex-wrap:wrap"><span style="width:84px;color:var(--muted-2)">' + escH(d.date) + '</span><span>' + fmtTokens(d.tokens) + ' tok</span><span style="color:var(--muted-2)">输入 ' + fmtTokens(d.in) + ' / 输出 ' + fmtTokens(d.out) + '</span><span style="color:var(--muted-2)">' + d.calls + ' 次</span>' + (d.outbound > 0 ? '<span style="color:#4caf50">出网 ' + d.outbound + '</span>' : '') + '</div>'
     })
     h += '</div></div>'
   })
