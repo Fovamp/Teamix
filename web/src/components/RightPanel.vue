@@ -386,7 +386,12 @@ function openFilePreview(path: string) {
     p = document.createElement('div')
     p.id = 'preview-panel'
     p.style.cssText = 'position:fixed;right:0;top:0;bottom:0;width:400px;background:var(--panel);border-left:2px solid var(--accent);z-index:50;display:flex;flex-direction:column;box-shadow:var(--shadow-lg);animation:msg-in .2s ease;min-width:200px'
-    p.innerHTML = '<div id="pv-resize" style="position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:col-resize;z-index:5"></div><div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px;font-weight:500"><span id="pv-title"></span><span id="pv-close" style="cursor:pointer;font-size:18px;color:var(--muted-2);line-height:1">&times;</span></div><pre id="pv-body" style="flex:1;overflow:auto;padding:12px;font-family:var(--mono);font-size:12px;line-height:1.5;color:var(--fg-2);white-space:pre-wrap;margin:0"></pre>'
+    p.innerHTML = '<div id="pv-resize" style="position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:col-resize;z-index:5"></div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px;font-weight:500"><span id="pv-title" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>' +
+      '<span style="display:flex;gap:8px;align-items:center"><button id="pv-save" style="display:none;font-size:11px;padding:2px 10px;border:none;border-radius:6px;background:var(--accent);color:#000;cursor:pointer">保存</button>' +
+      '<span id="pv-close" style="cursor:pointer;font-size:18px;color:var(--muted-2);line-height:1">&times;</span></span></div>' +
+      '<textarea id="pv-body" spellcheck="false" style="flex:1;overflow:auto;padding:12px;font-family:var(--mono);font-size:12px;line-height:1.5;color:var(--fg-2);background:var(--bg);border:none;resize:none;outline:none;box-sizing:border-box;white-space:pre;tab-size:2"></textarea>' +
+      '<div id="pv-status" style="display:none;padding:4px 12px;font-size:11px;color:var(--muted-2);border-top:1px solid var(--border)"></div>'
     document.body.appendChild(p)
     document.getElementById('pv-close')!.onclick = () => { p!.style.display = 'none' }
     const rv = document.getElementById('pv-resize')!
@@ -403,7 +408,13 @@ function openFilePreview(path: string) {
   }
   p.style.display = 'flex'
   document.getElementById('pv-title')!.textContent = path
-  document.getElementById('pv-body')!.textContent = 'Loading...'
+  const body = document.getElementById('pv-body') as HTMLTextAreaElement
+  const saveBtn = document.getElementById('pv-save') as HTMLElement
+  const status = document.getElementById('pv-status') as HTMLElement
+  body.value = 'Loading...'
+  body.readOnly = true
+  saveBtn.style.display = 'none'
+  status.style.display = 'none'
   const token = localStorage.getItem('teamix_token')
   const url = '/teamix/file?path=' + encodeURIComponent(path) + (token ? '&token=' + encodeURIComponent(token) : '')
   fetch(url)
@@ -412,9 +423,39 @@ function openFilePreview(path: string) {
       let data: any = null
       try { data = JSON.parse(txt) } catch { /* 非 JSON 响应体（如 4xx 纯文本） */ }
       if (!r.ok || !data) throw new Error('HTTP ' + r.status + (txt ? ' · ' + txt.slice(0, 160) : ''))
-      document.getElementById('pv-body')!.textContent = data.body || 'Empty file'
+      body.value = data.body || 'Empty file'
+      const isBinary = (data.body || '').indexOf('\u0000') >= 0
+      body.readOnly = isBinary || !!data.truncated
+      // 可编辑（文本且未截断）→ 显示保存按钮；二进制/大文件只读
+      if (isBinary) {
+        status.style.display = 'block'
+        status.textContent = '⚠ 疑似二进制文件，仅只读'
+      } else if (data.truncated) {
+        status.style.display = 'block'
+        status.textContent = '⚠ 文件较大已截断显示，为避免丢失内容已禁用编辑'
+      } else {
+        saveBtn.style.display = 'inline-block'
+      }
     })
-    .catch((e: Error) => { document.getElementById('pv-body')!.textContent = 'Error loading file: ' + e.message })
+    .catch((e: Error) => { body.value = 'Error loading file: ' + e.message })
+  // 保存（写回项目文件；用户操作，不在 AI 回合内，不进操作日志）
+  saveBtn.onclick = async () => {
+    saveBtn.textContent = '保存中...'
+    try {
+      await api.fileTreeOps({ action: 'write', project: currentProject.value, path, content: body.value })
+      status.style.display = 'block'
+      status.textContent = '✓ 已保存 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+      saveBtn.textContent = '保存'
+      loadFileTree()
+    } catch (e: any) {
+      status.style.display = 'block'
+      status.textContent = '保存失败: ' + (e.message || '')
+      saveBtn.textContent = '保存'
+    }
+  }
+  body.onkeydown = (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveBtn.click() }
+  }
 }
 </script>
 
