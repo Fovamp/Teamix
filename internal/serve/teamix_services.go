@@ -454,14 +454,20 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 		if !safeModPath(plArg) {
 			return recordFail(fmt.Errorf("module path %q contains unsafe characters", plArg))
 		}
+		// 两步启动：
+		//  1) mvn install -DskipTests -pl <X> -am —— 构建并安装兄弟模块到 .m2（不运行）
+		//  2) mvn spring-boot:run -pl <X> —— 单模块运行（兄弟依赖从 .m2 解析）
+		// 注意：不能把 spring-boot:run 与 -am 同用——-am 会让依赖模块也执行 run，
+		// 聚合 pom 模块（无 main class）会 "Unable to find a suitable main class"。
 		if runtime.GOOS == "windows" {
 			// 临时 .cmd 脚本绕开 cmd 引号解析问题。
 			// 注意：不能用 -llr（Maven 3.9.1+ 已移除该选项，会直接报错）。
-			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\n\"%s\" spring-boot:run -pl %s -am -Dspring-boot.run.arguments=--server.port=%d\r\n",
-				mvnPath, plArg, port)
+			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\n\"%s\" install -DskipTests -pl %s -am\r\nif errorlevel 1 exit /b 1\r\n\"%s\" spring-boot:run -pl %s -Dspring-boot.run.arguments=--server.port=%d\r\n",
+				mvnPath, plArg, mvnPath, plArg, port)
 			cmd = newCmdScript(u, projectName, module, port, script, "mvn")
 		} else {
-			cmdLine := fmt.Sprintf("%q spring-boot:run -pl %s -am -Dspring-boot.run.arguments=--server.port=%d", mvnPath, plArg, port)
+			cmdLine := fmt.Sprintf("%q install -DskipTests -pl %s -am && %q spring-boot:run -pl %s -Dspring-boot.run.arguments=--server.port=%d",
+				mvnPath, plArg, mvnPath, plArg, port)
 			cmd = exec.Command("sh", "-c", cmdLine)
 		}
 		cmd.Dir = runDir
