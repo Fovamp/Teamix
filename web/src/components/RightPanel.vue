@@ -60,27 +60,27 @@ function opNote(op: any): string {
   const t = new Date(op.time).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
   return ["时间: " + t, "会话: " + (op.session || "-"), "第 " + (op.turn || 0) + " 轮", "问题: " + (op.issue || "-")].join("\n")
 }
-// 文件树操作：执行并刷新
-async function treeOp(action: string, path: string, isDir: boolean) {
+// 文件树操作弹窗（页面风格，替代原生 prompt/confirm）
+const treeDlg = ref<{ mode: string; path: string; isDir: boolean; value: string } | null>(null)
+function askTreeOp(mode: string, path: string, isDir: boolean) {
   ctxMenu.value = null
+  treeDlg.value = { mode, path, isDir, value: mode === "rename" ? path : "" }
+}
+async function confirmTreeDlg() {
+  const d = treeDlg.value
+  if (!d) return
   const project = currentProject.value
   if (!project) return
-  let name = "", content = ""
-  if (action === "rename") {
-    name = prompt("新路径（相对项目根，如 src/newName.ts）:", path) || ""
-  } else if (action === "mkdir") {
-    name = prompt("新目录路径（相对项目根，如 src/utils）:") || ""
-    if (name) { name = (path ? path + "/" : "") + name }
-  } else if (action === "write") {
-    name = prompt("新文件路径（相对项目根，如 src/utils/x.ts）:") || ""
-    if (name) { name = (path ? path + "/" : "") + name }
-  } else if (action === "delete") {
-    if (!confirm("确定删除 " + path + " ？")) return
+  const action = d.mode
+  let name = d.value.trim()
+  if (action === "mkdir" || action === "write") {
+    if (!name) { alert("请输入路径"); return }
+    name = (d.path ? d.path + "/" : "") + name
   }
   if (action === "rename" && !name) return
-  if ((action === "mkdir" || action === "write") && !name) return
+  treeDlg.value = null
   try {
-    await api.fileTreeOps({ action: action === "write" ? "write" : action, project, path, name, content })
+    await api.fileTreeOps({ action: action === "write" ? "write" : action, project, path: d.path, name, content: "" })
     loadFileTree()
   } catch (e: any) {
     alert(e.message || "操作失败")
@@ -522,12 +522,29 @@ function openFilePreview(path: string) {
   </aside>
   <!-- 文件树右键菜单 -->
   <div v-if="ctxMenu" class="rp-ctxmenu" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }" @click.stop @contextmenu.prevent>
-    <div v-if="ctxMenu.isDir" class="rp-ctxmenu__item" @click="treeOp('mkdir', ctxMenu.path, true)">新建目录</div>
-    <div v-if="ctxMenu.isDir" class="rp-ctxmenu__item" @click="treeOp('write', ctxMenu.path, true)">新建文件</div>
-    <div class="rp-ctxmenu__item" @click="treeOp('rename', ctxMenu.path, ctxMenu.isDir)">重命名</div>
-    <div class="rp-ctxmenu__item rp-ctxmenu__item--danger" @click="treeOp('delete', ctxMenu.path, ctxMenu.isDir)">删除</div>
+    <div v-if="ctxMenu.isDir" class="rp-ctxmenu__item" @click="askTreeOp('mkdir', ctxMenu.path, true)">新建目录</div>
+    <div v-if="ctxMenu.isDir" class="rp-ctxmenu__item" @click="askTreeOp('write', ctxMenu.path, true)">新建文件</div>
+    <div class="rp-ctxmenu__item" @click="askTreeOp('rename', ctxMenu.path, ctxMenu.isDir)">重命名</div>
+    <div class="rp-ctxmenu__item rp-ctxmenu__item--danger" @click="askTreeOp('delete', ctxMenu.path, ctxMenu.isDir)">删除</div>
   </div>
   <div v-if="ctxMenu" class="rp-ctxmenu-mask" @click="closeCtxMenu" @contextmenu.prevent="closeCtxMenu"></div>
+  <!-- 文件树操作弹窗（重命名/新建/删除，页面风格） -->
+  <div v-if="treeDlg" class="modal-overlay" style="display:flex;z-index:320" @click.self="treeDlg = null">
+    <div class="modal" style="width:420px">
+      <div class="modal__head"><span>{{ treeDlg.mode === 'delete' ? '删除' : treeDlg.mode === 'rename' ? '重命名' : treeDlg.mode === 'mkdir' ? '新建目录' : '新建文件' }}</span><span class="modal__close" @click="treeDlg = null">&times;</span></div>
+      <div class="modal__body">
+        <p v-if="treeDlg.mode === 'delete'" style="margin:0;font-size:13px;line-height:1.6">确定删除 <code>{{ treeDlg.path }}</code> ？此操作不可恢复。</p>
+        <template v-else>
+          <label style="display:block;font-size:11px;color:var(--muted-2);margin-bottom:4px">{{ treeDlg.mode === 'rename' ? '新路径（相对项目根）' : '名称（相对项目根，如 src/utils 或 x.ts）' }}</label>
+          <input v-model="treeDlg.value" class="rp-dlg-input" @keydown.enter="confirmTreeDlg" :placeholder="treeDlg.mode === 'rename' ? 'src/newName.ts' : 'src/utils'" spellcheck="false" />
+        </template>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;padding:10px 14px;border-top:1px solid var(--border)">
+        <button class="rp-dlg-btn" @click="treeDlg = null">取消</button>
+        <button class="rp-dlg-btn rp-dlg-btn--primary" @click="confirmTreeDlg">{{ treeDlg.mode === 'delete' ? '删除' : '确定' }}</button>
+      </div>
+    </div>
+  </div>
 </template>
 
 <style scoped>
@@ -587,6 +604,24 @@ function openFilePreview(path: string) {
 .rp-ctxmenu__item:hover { background: var(--bg-2); color: var(--fg); }
 .rp-ctxmenu__item--danger { color: #f44336; }
 .rp-ctxmenu-mask { position: fixed; inset: 0; z-index: 299; }
+/* 文件树操作弹窗 */
+.rp-dlg-input {
+  width: 100%; box-sizing: border-box; padding: 7px 10px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg);
+  outline: none; font-family: var(--mono);
+}
+.rp-dlg-input:focus { border-color: var(--accent); }
+.rp-dlg-btn { padding: 6px 16px; font-size: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg-2); cursor: pointer; }
+.rp-dlg-btn:hover { background: var(--bg-2); color: var(--fg); }
+.rp-dlg-btn--primary { border: none; background: var(--accent); color: #000; font-weight: 600; }
+.rp-dlg-btn--primary:hover { background: var(--accent-strong); color: #000; }
+/* 编辑面板滚动条（消除文字光标悬浮样式） */
+#pv-body { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+#pv-body::-webkit-scrollbar { width: 9px; height: 9px; }
+#pv-body::-webkit-scrollbar-track { background: transparent; }
+#pv-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; cursor: default; }
+#pv-body::-webkit-scrollbar-thumb:hover { background: var(--muted-2); cursor: default; }
+#pv-body::-webkit-scrollbar-corner { background: transparent; }
 .rp-a { width: 14px; flex-shrink: 0; cursor: pointer; font-size: 10px; color: var(--muted-2); }
 .rp-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-noti__proj { margin-left: 6px; font-size: 10px; padding: 1px 6px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); vertical-align: middle; }
