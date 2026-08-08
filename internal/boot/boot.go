@@ -27,7 +27,6 @@ import (
 	"reasonix/internal/command"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
-	"reasonix/internal/diff"
 	"reasonix/internal/environment"
 	"reasonix/internal/event"
 	"reasonix/internal/guardian"
@@ -185,9 +184,9 @@ type Options struct {
 	// 返回 block=true 时拦截该调用。nil = 不启用。与用户 shell hooks 组合：
 	// 先跑 interceptor，再透传用户 hooks。
 	PreToolUseInterceptor func(ctx context.Context, name string, args json.RawMessage) (block bool, message string)
-	// OnFileChange 每次文件写操作执行前回调（previewed change），透传给
-	// controller（Teamix AI 操作日志：文件树高亮 + 确认/取消快照）。nil = 不启用。
-	OnFileChange func(ch diff.Change)
+	// OnTurnDone 每轮 AI 回合结束后回调，透传给 controller（Teamix 做 AI 操作
+	// diff：回合起点快照 vs 当前，覆盖任何写文件方式）。nil = 不启用。
+	OnTurnDone func()
 	// MemoryCompilerDir 覆盖 Memory v5 编译状态目录（Teamix 按项目：
 	// userRoot/.teamix/memory/<project>/compiler）。空 = 默认机器级。
 	MemoryCompilerDir string
@@ -1453,7 +1452,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		},
 		SessionRecoveryMeta: opts.SessionRecoveryMeta,
 		OnSessionRecovered:  opts.OnSessionRecovered,
-		OnFileChange:        opts.OnFileChange,
+		OnTurnDone:          opts.OnTurnDone,
 	}
 	// Guardian: when guardian_model is configured, spawn an LLM safety reviewer
 	// that can auto-allow safe Ask decisions and annotate risky ones before

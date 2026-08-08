@@ -102,6 +102,7 @@ type Controller struct {
 	skillProfile        skill.ProfileResolver
 	slashSkillSeq       atomic.Uint64
 	hooks               *hook.Runner // session hook runner; nil-safe (no hooks configured)
+	onTurnDone           func()       // Teamix: 回合结束回调（AI 操作 diff）
 	// hookContexts carries one-shot lifecycle hook context into the next real
 	// user turn without changing the cache-stable system prompt.
 	hookContexts []string
@@ -435,10 +436,9 @@ type Options struct {
 	// OnSessionRecovered is called after a stale runtime's transcript has been
 	// saved as a recovery branch, before the controller commits to that branch.
 	OnSessionRecovered func(SessionRecoveryInfo) error
-	// OnFileChange 每次文件写操作执行前回调（previewed change，未落盘）。
-	// Teamix 用它做 AI 操作日志（文件树高亮 + 确认/取消快照）。与 checkpoint
-	// 快照并行，互不影响。nil = 不启用。
-	OnFileChange func(ch diff.Change)
+	// OnTurnDone fires after each turn finishes (TurnDone emitted). Teamix 用它
+	// 做 AI 操作 diff（回合起点快照 vs 当前，覆盖任何写文件方式）。nil = 不启用。
+	OnTurnDone func()
 	// PlanModeAllowedTools names extra custom tools the plan-mode policy may treat
 	// as read-only. Known blocked tools and unsafe bash still lose.
 	PlanModeAllowedTools []string
@@ -510,6 +510,7 @@ func New(opts Options) *Controller {
 		runtimeProfile:                    runtimeProfile,
 		workspaceRoot:                     opts.WorkspaceRoot,
 		externalFolderToolRefs:            opts.ExternalFolderToolRefs,
+		onTurnDone:                        opts.OnTurnDone,
 		approval:                          newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
 	}
 	if strings.TrimSpace(opts.WorkspaceRoot) != "" {
@@ -523,9 +524,6 @@ func New(opts Options) *Controller {
 	if c.executor != nil {
 		c.executor.SetPreEditHook(func(ch diff.Change) {
 			c.checkpoints.snapshot(ch)
-			if opts.OnFileChange != nil {
-				opts.OnFileChange(ch)
-			}
 		})
 		c.executor.SetMemoryQueue(c)
 	}
@@ -851,6 +849,11 @@ func (c *Controller) finishGuardedTurn(err error) {
 		c.spawnGuardedTurn(ctx, cancel, next)
 	}()
 	c.sink.Emit(event.Event{Kind: event.TurnDone, Err: err, Outcome: turnOutcome(err)})
+	// OnTurnDone：回合结束后回调（Teamix 用它做 AI 操作 diff——快照回合起点
+	// vs 当前，识别本轮 AI 对项目文件的所有改动，含 bash/python 等任意方式）。
+	if c.onTurnDone != nil {
+		c.onTurnDone()
+	}
 }
 
 func turnOutcome(err error) string {

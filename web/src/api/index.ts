@@ -125,7 +125,11 @@ export const api = {
   fileOps: (project?: string): Promise<Array<{ id: string; project: string; path: string; kind: string; time: string; added: number; removed: number; status: string; hasUndo: boolean }>> =>
     get("/teamix/fileops" + (project ? "?project=" + encodeURIComponent(project) : "")),
   fileOpsAck: (id: string): Promise<any> => post("/teamix/fileops/ack", { id }),
+  fileOpsAckAll: (project?: string): Promise<any> => post("/teamix/fileops/ack_all", { project: project || "" }),
   fileOpsUndo: (id: string): Promise<any> => post("/teamix/fileops/undo", { id }),
+  // 文件树操作（新建/重命名/删除，仅项目内）
+  fileTreeOps: (body: { action: string; project: string; path: string; name?: string; content?: string }): Promise<any> =>
+    post("/teamix/filetree/ops", body),
   servicesStop: (id: string): Promise<any> => post("/teamix/services/stop", { id }),
   servicesStart: (project: string, service: string, port: number): Promise<any> =>
     post("/teamix/projects/" + encodeURIComponent(project) + "/services/start", { service, port }),

@@ -20,7 +20,6 @@ import (
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
-	"reasonix/internal/diff"
 	"reasonix/internal/headroom"
 	"reasonix/internal/keypool"
 	"reasonix/internal/modelrouter"
@@ -320,7 +319,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 	}
 	token := teamixGenerateToken()
 	bc := NewBroadcaster()
-	ops := newFileOpsManager(userRoot)
+	ops := newFileOpsManager(userRoot, bc)
 	// 模型仅公共可配（公司统一 token）：公共 teamix.default_model 非空则覆盖启动参数，否则回落启动参数。
 	model := ts.modelRef
 	if ts.GlobalCfg() != nil && ts.GlobalCfg().Config != nil && ts.GlobalCfg().Config.Teamix.DefaultModel != "" {
@@ -346,8 +345,8 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		MCPSensitivity:      ts.mcpSensitivityMap(userRoot),
 		ToolSensitivity:     ts.toolSensitivityMap(),
 		PreToolUseInterceptor: ts.buildInstallGuard(name),
-		OnFileChange: func(ch diff.Change) {
-			onFileOp(userRoot, ops, bc, ch)
+		OnTurnDone: func() {
+			ops.endTurn()
 		},
 	})
 	if err != nil {
@@ -658,7 +657,9 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("GET /teamix/services/log", ts.withUser(ts.handleServiceLog))
 	mux.HandleFunc("GET /teamix/fileops", ts.withUser(ts.handleFileOpsList))
 	mux.HandleFunc("POST /teamix/fileops/ack", ts.withUser(ts.handleFileOpsAck))
+	mux.HandleFunc("POST /teamix/fileops/ack_all", ts.withUser(ts.handleFileOpsAckAll))
 	mux.HandleFunc("POST /teamix/fileops/undo", ts.withUser(ts.handleFileOpsUndo))
+	mux.HandleFunc("POST /teamix/filetree/ops", ts.withUser(ts.handleFileTreeOps))
 	mux.HandleFunc("POST /teamix/services/validate", ts.withUser(ts.handleServiceValidate))
 	mux.HandleFunc("POST /teamix/services/sync", ts.withUser(ts.handleServiceSync))
 	mux.HandleFunc("GET /teamix/workflow", ts.withUser(ts.handleWorkflowGet))

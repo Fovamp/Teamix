@@ -67,6 +67,19 @@ func (ts *TeamixServer) handleSubmit(w http.ResponseWriter, r *http.Request, u *
 		return
 	}
 	trimmed := strings.TrimSpace(body.Input)
+	// AI 操作日志回合开始：上一轮 new→old（默认同意）+ 快照项目（本轮 diff 起点）。
+	// 会话名/轮次/输入摘要作为操作备注（备注悬浮展示）。
+	session := ""
+	if u.ctrl != nil && u.ctrl.SessionPath() != "" {
+		session = strings.TrimSuffix(filepath.Base(u.ctrl.SessionPath()), ".jsonl")
+	}
+	issue := trimmed
+	if len(issue) > 60 {
+		issue = issue[:60] + "…"
+	}
+	if u.ops != nil {
+		u.ops.beginTurn(session, issue)
+	}
 	if strings.HasPrefix(trimmed, "!") {
 		http.Error(w, "shell commands are unavailable over HTTP", http.StatusForbidden)
 		return
