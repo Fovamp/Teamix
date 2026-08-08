@@ -227,8 +227,8 @@ function loadFileTree() {
   let nodes = treeData.value
   const f = treeFilter.value.trim()
   if (f) {
-    if (f.startsWith('内容:')) {
-      const q = f.slice(3).trim()
+    if (f.startsWith(':')) {
+      const q = f.slice(1).trim()
       if (q) {
         // 内容搜索：后端 grep → 只显示命中文件及其祖先目录
         api.fileTreeSearch(currentProject.value, q).then((res: any) => {
@@ -426,7 +426,7 @@ function openFilePreview(path: string) {
     </div>
     <!-- 文件搜索 -->
     <div class="rp-search" id="rp-search">
-      <input v-model="treeFilter" @input="loadFileTree" placeholder="搜索文件（内容: 搜内容）…" spellcheck="false" />
+      <input v-model="treeFilter" @input="loadFileTree" placeholder=":关键词 搜内容 · 其他为文件名" spellcheck="false" />
       <span v-if="treeFilter" class="rp-search__clear" @click="treeFilter = ''; loadFileTree()">&times;</span>
     </div>
     <div class="right-panel__tree" id="rp-tree" style="flex:3;min-height:80px;padding:4px 0;overflow-y:auto;font-size:12px">
