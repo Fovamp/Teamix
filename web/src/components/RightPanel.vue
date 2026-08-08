@@ -391,7 +391,7 @@ function openFilePreview(path: string) {
       '<span style="display:flex;gap:8px;align-items:center"><button id="pv-save" style="display:none;font-size:11px;padding:2px 10px;border:none;border-radius:6px;background:var(--accent);color:#000;cursor:pointer">保存</button>' +
       '<span id="pv-close" style="cursor:pointer;font-size:18px;color:var(--muted-2);line-height:1">&times;</span></span></div>' +
       '<div id="pv-wrap" style="flex:1;overflow:auto;padding:12px;box-sizing:border-box;background:var(--bg)">' +
-      '<textarea id="pv-body" spellcheck="false" style="width:100%;min-height:100%;box-sizing:border-box;font-family:var(--mono);font-size:12px;line-height:1.5;color:var(--fg-2);background:transparent;border:none;resize:none;outline:none;overflow:hidden;white-space:pre;tab-size:2;display:block"></textarea></div>' +
+      '<textarea id="pv-body" spellcheck="false" style="width:100%;box-sizing:border-box;font-family:var(--mono);font-size:12px;line-height:1.5;color:var(--fg-2);background:transparent;border:none;resize:none;outline:none;overflow:hidden;white-space:pre;tab-size:2;display:block"></textarea></div>' +
       '<div id="pv-status" style="display:none;padding:4px 12px;font-size:11px;color:var(--muted-2);border-top:1px solid var(--border)"></div>'
     document.body.appendChild(p)
     document.getElementById('pv-close')!.onclick = () => { p!.style.display = 'none' }
@@ -416,13 +416,15 @@ function openFilePreview(path: string) {
   body.readOnly = true
   saveBtn.style.display = 'none'
   status.style.display = 'none'
-  // textarea 高度自适应内容（滚动交给外层 #pv-wrap，滚动条光标为默认而非文字光标）
+  // textarea 高度自适应（内容少撑满容器，内容多撑高由外层 #pv-wrap 滚动，滚动条光标默认）
+  const wrap = document.getElementById('pv-wrap') as HTMLElement
   const autosize = () => {
     body.style.height = 'auto'
-    body.style.height = body.scrollHeight + 'px'
+    const wrapH = (wrap ? wrap.clientHeight : 0) || 300
+    body.style.height = Math.max(body.scrollHeight, wrapH) + 'px'
   }
   body.oninput = () => { if (!body.readOnly) autosize() }
-  window.setTimeout(autosize, 0)
+  body.onfocus = autosize
   const token = localStorage.getItem('teamix_token')
   const url = '/teamix/file?path=' + encodeURIComponent(path) + (token ? '&token=' + encodeURIComponent(token) : '')
   fetch(url)
@@ -444,8 +446,13 @@ function openFilePreview(path: string) {
       } else {
         saveBtn.style.display = 'inline-block'
       }
+      // 内容加载后重新自适应（等布局稳定，避免 scrollHeight 读取过早）
+      window.setTimeout(autosize, 60)
     })
-    .catch((e: Error) => { body.value = 'Error loading file: ' + e.message })
+    .catch((e: Error) => {
+      body.value = 'Error loading file: ' + e.message
+      window.setTimeout(autosize, 60)
+    })
   // 保存（写回项目文件；用户操作，不在 AI 回合内，不进操作日志）
   saveBtn.onclick = async () => {
     saveBtn.textContent = '保存中...'
