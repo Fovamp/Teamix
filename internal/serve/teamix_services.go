@@ -427,13 +427,13 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 			return recordFail(fmt.Errorf("未检测到 pnpm：%v（请安装 pnpm 并加入 PATH 后重试）", err))
 		}
 		if runtime.GOOS == "windows" {
-			// --ignore-scripts：pnpm 10+ 默认阻止依赖 build scripts（ERR_PNPM_IGNORED_BUILDS
-			// 会让 install 失败）；esbuild 等二进制走 optionalDependencies 自动安装，
-			// 跳过 postinstall 不影响 vite dev
-			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nif not exist node_modules call pnpm install --ignore-scripts\r\nif errorlevel 1 exit /b 1\r\ncall pnpm dev --port %d\r\n", port)
+			// --config.onlyBuiltDependencies[]=* ：允许所有依赖的 build scripts
+			// （等效 pnpm approve-builds 全选，避免 ERR_PNPM_IGNORED_BUILDS 让 install
+			// 失败；esbuild/less 的 postinstall 正常执行，vite 运行时二进制就绪）
+			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nif not exist node_modules call pnpm install --config.onlyBuiltDependencies[]=*\r\nif errorlevel 1 exit /b 1\r\ncall pnpm dev --port %d\r\n", port)
 			cmd = newCmdScript(u, projectName, module, port, script, "pnpm")
 		} else {
-			cmdLine := fmt.Sprintf("[ -d node_modules ] || pnpm install --ignore-scripts; pnpm dev --port %d", port)
+			cmdLine := fmt.Sprintf("[ -d node_modules ] || pnpm install --config.onlyBuiltDependencies[]=*; pnpm dev --port %d", port)
 			cmd = exec.Command("sh", "-c", cmdLine)
 		}
 		cmd.Dir = svcPath
