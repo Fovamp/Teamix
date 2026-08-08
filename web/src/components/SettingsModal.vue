@@ -691,7 +691,8 @@ async function auditStatsHTML(data: any): Promise<string> {
   if (totals.length > 0) {
     h += '<div style="display:flex;align-items:flex-end;gap:8px;height:120px;padding:8px 2px 0">'
     totals.forEach((t: any, di: number) => {
-      const pct = Math.max(3, Math.round(((t.tokens || 0) / maxTk) * 100))
+      // 柱高按最高点规划：最高 82%（留余量），最小 6%（小数据也可见）
+      const pct = maxTk > 0 ? Math.max(6, Math.round(((t.tokens || 0) / maxTk) * 82)) : 6
       const short = (t.date || "").slice(5)
       // 该天各用户占比段
       let segs = ""

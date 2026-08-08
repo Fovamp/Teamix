@@ -463,6 +463,9 @@ func auditRecord(user string, d modelrouter.Decision) auditlog.Record {
 			Tokens: d.EstimatedTokens,
 		}},
 		Outbound: auditlog.Outbound{Sent: outboundFromDecision(d)},
+		// Cost：决策发生在发送前，拿不到真实 usage——用窗口预检的估算输入
+		// tokens 兜底（非 0，供周报/柱状图展示请求规模；真实 usage 待路由层增强）。
+		Cost: auditlog.Cost{InTokens: d.EstimatedTokens},
 	}
 	// 泄露信号 ②：非 public 敏感级却出网 = 事故（本该拦截的内容出去了）→ 致命告警
 	if rec.Outbound.Sent && d.Sensitivity != "" && d.Sensitivity != provider.SensitivityPublic {
