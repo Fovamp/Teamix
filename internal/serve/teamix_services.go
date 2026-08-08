@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -372,6 +373,82 @@ func mavenInHome(home string) string {
 	return ""
 }
 
+// syncFrontendProxyEnv 让前端 vite proxy 自动指向用户映射的后端端口：
+// 读取前端模块 .env.development（缺失则 .env），把其中所有 VITE_* 行里的
+// localhost:<后端原端口> 替换为 localhost:<映射端口>（仅替换正在运行/启动中的
+// backend 模块），写入 gitignored 的 .env.development.local——vite 加载优先级
+// 高于 .env.development，覆盖生效且不污染项目跟踪文件。
+// 无运行中后端 / 无 VITE_* 引用 / 文件不可写 → 静默跳过，不影响启动。
+func (ts *TeamixServer) syncFrontendProxyEnv(u *userSession, projectName, svcPath string) {
+	proj := ts.GlobalCfg().Projects.FindProject(projectName)
+	if proj == nil {
+		return
+	}
+	// 收集正在运行/启动中的 backend 模块：原端口 -> 映射端口
+	portMap := map[int]int{}
+	for _, rs := range svcMgr.list(u.token) {
+		if rs.Project != projectName || rs.Port <= 0 || rs.Stage == "stopped" || rs.Stage == "failed" {
+			continue
+		}
+		svc := proj.FindService(rs.Service)
+		if svc == nil || svc.Type != "backend" || svc.Port <= 0 || svc.Port == rs.Port {
+			continue
+		}
+		portMap[svc.Port] = rs.Port
+	}
+	if len(portMap) == 0 {
+		return
+	}
+	// 读取 .env.development（优先）/ .env
+	src := filepath.Join(svcPath, ".env.development")
+	if _, err := os.Stat(src); err != nil {
+		src = filepath.Join(svcPath, ".env")
+		if _, err := os.Stat(src); err != nil {
+			return
+		}
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(strings.TrimPrefix(string(data), "\xef\xbb\xbf"), "\n")
+	var out []string
+	changed := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// 只处理 VITE_* 且值里含 localhost: 的行（proxy target / api url 等）
+		if !strings.HasPrefix(trimmed, "VITE_") || !strings.Contains(trimmed, "localhost:") {
+			continue
+		}
+		newLine := line
+		for orig, mapped := range portMap {
+			newLine = strings.ReplaceAll(newLine, fmt.Sprintf("localhost:%d", orig), fmt.Sprintf("localhost:%d", mapped))
+		}
+		if newLine != line {
+			changed = true
+			out = append(out, newLine)
+		}
+	}
+	if !changed {
+		return
+	}
+	// 合并已有 .env.development.local：移除旧的 VITE_* 行（避免重复/陈旧端口），
+	// 保留用户其他手动内容，再追加本次生成的替换行。
+	local := filepath.Join(svcPath, ".env.development.local")
+	var keep []string
+	if old, err := os.ReadFile(local); err == nil {
+		for _, l := range strings.Split(strings.TrimPrefix(string(old), "\xef\xbb\xbf"), "\n") {
+			t := strings.TrimSpace(l)
+			if strings.HasPrefix(t, "VITE_") && strings.Contains(t, "localhost:") {
+				continue
+			}
+			keep = append(keep, l)
+		}
+	}
+	content := strings.Join(append(keep, out...), "\n")
+	_ = os.WriteFile(local, []byte(content), 0o644)
+}
+
 // startService 在用户目录启动一个模块（映射端口 + nacos 注入）。
 // 返回 runningService（启动即登记，Stage=starting；进程退出转 failed 由 goroutine 处理）。
 // 任何失败也会登记一条 failed 记录（抽屉可见、可重试），而不是静默消失。
@@ -423,6 +500,8 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 	var cmd *exec.Cmd
 	if svc.Type == "frontend" {
 		// 前端模块：pnpm 下载依赖 + vite 启动（dev script 透传 --port 覆盖映射端口）
+		// 先同步 vite proxy 到映射端口（.env.development.local，见 syncFrontendProxyEnv）
+		ts.syncFrontendProxyEnv(u, projectName, svcPath)
 		if _, err := lookPathPnpm(); err != nil {
 			return recordFail(fmt.Errorf("未检测到 pnpm：%v（请安装 pnpm 并加入 PATH 后重试）", err))
 		}
