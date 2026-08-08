@@ -689,9 +689,8 @@ async function auditStatsHTML(data: any): Promise<string> {
   let h = '<div class="section-title">最近 ' + days + ' 天 Token 用量</div>'
   // 按天堆叠柱状图：每根柱子按用户分色堆叠，悬浮显示完整日期 + 各用户 token 与占比
   if (totals.length > 0) {
-    h += '<div style="display:flex;align-items:flex-end;gap:8px;height:120px;padding:8px 2px 0">'
+    h += '<div style="display:flex;gap:8px;height:120px;padding:8px 2px 0">'
     totals.forEach((t: any, di: number) => {
-      // 柱高按最高点规划：最高 82%（留余量），最小 6%（小数据也可见）
       // 柱高按最高点规划：最高 82%（留余量），最小 6%（小数据也可见）；
       // 0 token（无调用）的天不画柱，避免空占位干扰比例观感
       const pct = (t.tokens || 0) > 0 ? Math.max(6, Math.round(((t.tokens || 0) / maxTk) * 82)) : 0
@@ -706,13 +705,15 @@ async function auditStatsHTML(data: any): Promise<string> {
         segs += '<div style="flex:' + share + ';background:' + userColor[u.user] + ';min-height:2px"></div>'
         tip += '<br>' + escH(u.user) + ": " + fmtTokens(d.tokens) + " tok (" + share + "%)"
       })
-      h += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0">'
-      h += '<div style="flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center">'
+      // 列容器：align-self:stretch 覆盖父容器拉伸（否则柱高度百分比相对 0 高度塌掉）
+      h += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0;align-self:stretch;justify-content:flex-end">'
+      // 对齐容器：position:relative 承载 tip（无 overflow:hidden，tip 不被裁剪）
+      h += '<div style="flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center;position:relative">'
       if (pct > 0) {
-      h += '<div onmouseover="this.querySelector(\'.bar-tip\').style.display=\'block\'" onmouseout="this.querySelector(\'.bar-tip\').style.display=\'none\'" style="position:relative;width:min(30px,70%);height:' + pct + '%;min-height:4px;border-radius:5px 5px 2px 2px;overflow:hidden;display:flex;flex-direction:column;cursor:pointer">'
-      h += segs || '<div style="flex:1;background:var(--bg-2)"></div>'
-      h += '<div class="bar-tip" style="display:none;position:absolute;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);background:var(--panel-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:10px;color:var(--fg);white-space:nowrap;z-index:5;box-shadow:var(--shadow-md)">' + tip + '</div>'
-      h += '</div>'
+        h += '<div onmouseover="this.parentElement.querySelector(\'.bar-tip\').style.display=\'block\'" onmouseout="this.parentElement.querySelector(\'.bar-tip\').style.display=\'none\'" style="position:relative;width:min(30px,70%);height:' + pct + '%;min-height:4px;border-radius:5px 5px 2px 2px;overflow:hidden;display:flex;flex-direction:column;cursor:pointer">'
+        h += segs || '<div style="flex:1;background:var(--bg-2)"></div>'
+        h += '</div>'
+        h += '<div class="bar-tip" style="display:none;position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:var(--panel-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:10px;color:var(--fg);white-space:nowrap;z-index:5;box-shadow:var(--shadow-md)">' + tip + '</div>'
       }
       h += '</div>'
       h += '<div style="font-size:10px;color:var(--muted-2)">' + escH(short) + '</div>'
