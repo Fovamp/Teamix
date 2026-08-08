@@ -568,13 +568,13 @@ function stageLabel(s: string): string {
             <span class="proj-card__svc-name">{{ s.name }}</span>
             <span class="proj-card__svc-type">{{ s.type }}</span>
             <span v-if="s.port" class="proj-card__svc-port">自身 :{{ s.port }}</span>
-            <!-- 勾选后才显示映射端口输入框（建议端口只读预览，输入框由用户填写） -->
+            <!-- 勾选后才显示映射端口输入框（建议端口放 placeholder，输入框由用户填写） -->
             <template v-if="moduleSel.includes(s.name)">
               <span class="proj-card__svc-arrow">→</span>
-              <span class="proj-card__svc-suggest" v-if="moduleSuggest[s.name]">建议 {{ moduleSuggest[s.name] }}</span>
               <input v-model="modulePorts[s.name]" @click.stop @input="clearConflict(s.name)"
                 class="proj-card__svc-input" type="text" inputmode="numeric"
-                placeholder="映射端口" @keyup.enter="confirmModule"
+                :placeholder="moduleSuggest[s.name] ? ('建议 ' + moduleSuggest[s.name]) : '映射端口'"
+                @keyup.enter="confirmModule"
                 :class="{ 'proj-card__svc-input--err': moduleConflicts[s.name] }" />
             </template>
           </div>

@@ -313,6 +313,24 @@ func lookPathMaven() (string, error) {
 	return "", fmt.Errorf("mvn 不在 PATH，也未设置 MAVEN_HOME")
 }
 
+// findReactorRoot 从模块目录向上找最近的聚合 pom（含 <modules>）作为 Maven
+// reactor 根——嵌套仓库（如 JeecgBoot 的 jeecg-boot/ 子目录）克隆根不是 reactor 根，
+// -pl 相对路径/artifactId 都可能找不到。返回 reactor 根目录 + 模块相对路径。
+func findReactorRoot(svcPath string) (root, relPath string) {
+	dir := filepath.Clean(svcPath)
+	for {
+		if data, err := os.ReadFile(filepath.Join(dir, "pom.xml")); err == nil && bytes.Contains(data, []byte("<modules>")) {
+			rel, _ := filepath.Rel(dir, svcPath)
+			return dir, filepath.ToSlash(rel)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", ""
+		}
+		dir = parent
+	}
+}
+
 // lookPathPnpm 定位 pnpm（PATH 中 pnpm / pnpm.cmd / pnpm.exe）。
 func lookPathPnpm() (string, error) {
 	if p, err := exec.LookPath("pnpm"); err == nil {
@@ -420,24 +438,33 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 		}
 		cmd.Dir = svcPath
 	} else {
-		// 后端模块：Maven reactor 构建（-pl :<artifactId> -am 连带依赖模块）
+		// 后端模块：Maven reactor 构建。从模块目录向上找聚合 pom（reactor 根），
+		// 在根执行 `mvn spring-boot:run -pl <相对路径> -am`（-am 连带构建兄弟模块）。
 		mvnPath, err := lookPathMaven()
 		if err != nil {
 			return recordFail(fmt.Errorf("未检测到 Maven：%v（请安装 Maven 并加入 PATH，或配置 MAVEN_HOME 后重试）", err))
 		}
-		// -pl 用 artifactId 形式（:模块名）——相对路径依赖 reactor 结构，
-		// 嵌套仓库（如 jeecg-boot/ 子目录）会 "Could not find the selected project"
+		reactorRoot, relPath := findReactorRoot(svcPath)
+		runDir := projPath // 兜底：克隆根
+		plArg := ":" + module
+		if reactorRoot != "" && relPath != "" {
+			runDir = reactorRoot
+			plArg = relPath
+		}
+		if !safeModPath(plArg) {
+			return recordFail(fmt.Errorf("module path %q contains unsafe characters", plArg))
+		}
 		if runtime.GOOS == "windows" {
 			// 临时 .cmd 脚本绕开 cmd 引号解析问题。
 			// 注意：不能用 -llr（Maven 3.9.1+ 已移除该选项，会直接报错）。
-			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\n\"%s\" spring-boot:run -pl :%s -am -Dspring-boot.run.arguments=--server.port=%d\r\n",
-				mvnPath, module, port)
+			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\n\"%s\" spring-boot:run -pl %s -am -Dspring-boot.run.arguments=--server.port=%d\r\n",
+				mvnPath, plArg, port)
 			cmd = newCmdScript(u, projectName, module, port, script, "mvn")
 		} else {
-			cmdLine := fmt.Sprintf("%q spring-boot:run -pl :%s -am -Dspring-boot.run.arguments=--server.port=%d", mvnPath, module, port)
+			cmdLine := fmt.Sprintf("%q spring-boot:run -pl %s -am -Dspring-boot.run.arguments=--server.port=%d", mvnPath, plArg, port)
 			cmd = exec.Command("sh", "-c", cmdLine)
 		}
-		cmd.Dir = projPath
+		cmd.Dir = runDir
 	}
 	// per-process 环境：继承 serve 环境 + nacos 注入（group=用户名）
 	env := append(os.Environ(), ts.nacosEnv(u.name)...)
