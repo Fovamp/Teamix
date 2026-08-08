@@ -121,6 +121,11 @@ export const api = {
   // 服务日志增量读取（详情实时滚动）：offset=上次读到的字节位置，返回 {id, offset, data}
   serviceLog: (id: string, offset: number): Promise<{ id: string; offset: number; data: string }> =>
     get("/teamix/services/log?id=" + encodeURIComponent(id) + "&offset=" + offset),
+  // AI 文件操作日志（文件树高亮 + 确认/取消）
+  fileOps: (project?: string): Promise<Array<{ id: string; project: string; path: string; kind: string; time: string; added: number; removed: number; status: string; hasUndo: boolean }>> =>
+    get("/teamix/fileops" + (project ? "?project=" + encodeURIComponent(project) : "")),
+  fileOpsAck: (id: string): Promise<any> => post("/teamix/fileops/ack", { id }),
+  fileOpsUndo: (id: string): Promise<any> => post("/teamix/fileops/undo", { id }),
   servicesStop: (id: string): Promise<any> => post("/teamix/services/stop", { id }),
   servicesStart: (project: string, service: string, port: number): Promise<any> =>
     post("/teamix/projects/" + encodeURIComponent(project) + "/services/start", { service, port }),

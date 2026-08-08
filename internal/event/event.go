@@ -43,6 +43,8 @@ const (
 	// Notice is an out-of-band message — a warning, truncation, block, or
 	// compaction notice (Level + Text).
 	Notice
+	// FileOp 记录一次 AI 对项目文件的写操作（Teamix 操作日志，Text = fileOp JSON）。
+	FileOp
 	// Phase marks a coordinator boundary, e.g. planner→executor handoff (Text =
 	// label such as "deepseek · planning").
 	Phase

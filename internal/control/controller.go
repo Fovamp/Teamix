@@ -435,6 +435,10 @@ type Options struct {
 	// OnSessionRecovered is called after a stale runtime's transcript has been
 	// saved as a recovery branch, before the controller commits to that branch.
 	OnSessionRecovered func(SessionRecoveryInfo) error
+	// OnFileChange 每次文件写操作执行前回调（previewed change，未落盘）。
+	// Teamix 用它做 AI 操作日志（文件树高亮 + 确认/取消快照）。与 checkpoint
+	// 快照并行，互不影响。nil = 不启用。
+	OnFileChange func(ch diff.Change)
 	// PlanModeAllowedTools names extra custom tools the plan-mode policy may treat
 	// as read-only. Known blocked tools and unsafe bash still lose.
 	PlanModeAllowedTools []string
@@ -519,6 +523,9 @@ func New(opts Options) *Controller {
 	if c.executor != nil {
 		c.executor.SetPreEditHook(func(ch diff.Change) {
 			c.checkpoints.snapshot(ch)
+			if opts.OnFileChange != nil {
+				opts.OnFileChange(ch)
+			}
 		})
 		c.executor.SetMemoryQueue(c)
 	}

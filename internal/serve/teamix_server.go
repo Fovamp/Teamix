@@ -20,6 +20,7 @@ import (
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
+	"reasonix/internal/diff"
 	"reasonix/internal/headroom"
 	"reasonix/internal/keypool"
 	"reasonix/internal/modelrouter"
@@ -37,7 +38,8 @@ type userSession struct {
 	workflow        *workflow.State
 	userRoot        string
 	selectedProject string
-	model           string // 合并后的有效默认模型（私有 > 公共 > 启动参数）
+	model           string
+	ops             *fileOpsManager // AI 文件操作日志（文件树高亮 + 确认/取消） // 合并后的有效默认模型（私有 > 公共 > 启动参数）
 }
 
 type TeamixServer struct {
@@ -318,6 +320,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 	}
 	token := teamixGenerateToken()
 	bc := NewBroadcaster()
+	ops := newFileOpsManager(userRoot)
 	// 模型仅公共可配（公司统一 token）：公共 teamix.default_model 非空则覆盖启动参数，否则回落启动参数。
 	model := ts.modelRef
 	if ts.GlobalCfg() != nil && ts.GlobalCfg().Config != nil && ts.GlobalCfg().Config.Teamix.DefaultModel != "" {
@@ -343,6 +346,9 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		MCPSensitivity:      ts.mcpSensitivityMap(userRoot),
 		ToolSensitivity:     ts.toolSensitivityMap(),
 		PreToolUseInterceptor: ts.buildInstallGuard(name),
+		OnFileChange: func(ch diff.Change) {
+			onFileOp(userRoot, ops, bc, ch)
+		},
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("build controller for %q: %w", name, err)
@@ -357,6 +363,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		workflow: workflow.NewEmptyState("", ""),
 		userRoot: userRoot,
 		model:    model,
+		ops:      ops,
 	}
 	ts.sessions[token] = sess
 	ts.nameToTok[name] = token
@@ -649,6 +656,9 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("POST /teamix/services/stop", ts.withUser(ts.handleServiceStop))
 	mux.HandleFunc("GET /teamix/services/status", ts.withUser(ts.handleServicesStatus))
 	mux.HandleFunc("GET /teamix/services/log", ts.withUser(ts.handleServiceLog))
+	mux.HandleFunc("GET /teamix/fileops", ts.withUser(ts.handleFileOpsList))
+	mux.HandleFunc("POST /teamix/fileops/ack", ts.withUser(ts.handleFileOpsAck))
+	mux.HandleFunc("POST /teamix/fileops/undo", ts.withUser(ts.handleFileOpsUndo))
 	mux.HandleFunc("POST /teamix/services/validate", ts.withUser(ts.handleServiceValidate))
 	mux.HandleFunc("POST /teamix/services/sync", ts.withUser(ts.handleServiceSync))
 	mux.HandleFunc("GET /teamix/workflow", ts.withUser(ts.handleWorkflowGet))

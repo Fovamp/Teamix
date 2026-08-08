@@ -10,6 +10,37 @@ const notifications = ref<any[]>([])
 const notiCollapsed = ref(true)
 const projectName = ref("项目文件")
 const currentProject = ref("")
+// AI 文件操作日志（文件树高亮 + 确认/取消，与 git 隔离）
+const aiOps = ref<any[]>([])
+const aiOpsCollapsed = ref(true)
+let aiOpsTimer: any = null
+
+async function loadFileOps() {
+  if (!currentProject.value) return
+  try {
+    aiOps.value = (await api.fileOps(currentProject.value)) || []
+  } catch {}
+}
+function ackOp(id: string) {
+  api.fileOpsAck(id).then(() => { loadFileOps(); loadFileTree() }).catch(() => {})
+}
+function undoOp(id: string) {
+  api.fileOpsUndo(id).then((r: any) => {
+    if (r && r.ok) { loadFileOps(); loadFileTree() } else { alert("撤销失败：快照不存在或已被处理")
+    }
+  }).catch(() => {})
+}
+// 文件路径是否被 AI 操作过（高亮）
+function aiOpPathSet(): Set<string> {
+  const s = new Set<string>()
+  for (const op of aiOps.value) s.add(op.path)
+  return s
+}
+function aiOpCountFor(path: string): number {
+  let n = 0
+  for (const op of aiOps.value) if (op.path === path) n++
+  return n
+}
 
 onMounted(async () => {
   try {
@@ -28,6 +59,9 @@ onMounted(async () => {
   const saved = localStorage.getItem("rp_noti_collapsed")
   if (saved !== null) notiCollapsed.value = saved === "true"
   loadNotis()
+  // AI 操作日志轮询（3s；也可由 /events 的 fileop 事件触发，此处轮询兜底）
+  loadFileOps()
+  aiOpsTimer = setInterval(loadFileOps, 3000)
 
   // rp-resize-h drag for tree/noti split
   const resize = document.getElementById('rp-resize-h')
@@ -69,6 +103,7 @@ watch(treeData, () => { setTimeout(loadFileTree, 50) })
 onUnmounted(() => {
   window.removeEventListener("notifications-update", onNotiUpdate as any)
   window.removeEventListener("teamix-project-selected", reloadTree as any)
+  if (aiOpsTimer) clearInterval(aiOpsTimer)
 })
 
 async function reloadTree() {
@@ -81,6 +116,7 @@ async function reloadTree() {
       projectName.value = st.selectedProject
     }
     loadNotis()
+    loadFileOps() // 切项目后刷新操作日志
   } catch {}
 }
 
@@ -194,6 +230,15 @@ function rn(n: any, d: number): HTMLElement {
     }
   } else {
     wrap.className = 'rp-item'
+    // AI 操作高亮：该文件被 agent 修改过（未确认）
+    if (aiOpCountFor(_rp) > 0) {
+      wrap.className = 'rp-item rp-item--ai-op'
+      const badge = document.createElement('span')
+      badge.className = 'rp-ai-badge'
+      badge.textContent = 'AI'
+      badge.title = 'agent 已修改此文件（右侧操作面板可确认/取消）'
+      wrap.appendChild(badge)
+    }
     wrap.draggable = true
     wrap.title = _rp
     wrap.ondragstart = (e) => {
@@ -265,6 +310,25 @@ function openFilePreview(path: string) {
       <div v-if="!treeData" style="padding:16px;font-size:12px;color:var(--muted-2)">加载文件树...</div>
     </div>
     <div class="rp-resize-h" id="rp-resize-h"></div>
+    <!-- AI 操作日志面板（文件树高亮配套：agent 修改的文件可确认/取消，与 git 隔离） -->
+    <div v-if="currentProject && aiOps.length > 0" class="rp-aiops" id="rp-aiops">
+      <div class="rp-aiops__head" @click="aiOpsCollapsed = !aiOpsCollapsed">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline :points="aiOpsCollapsed ? '9 6 15 12 9 18' : '6 9 12 15 18 9'"/></svg>
+        <span class="rp-aiops__title">AI 操作 {{ aiOps.length }} 项未确认</span>
+      </div>
+      <div v-if="!aiOpsCollapsed" class="rp-aiops__list">
+        <div v-for="op in aiOps" :key="op.id" class="rp-aiops__row">
+          <div class="rp-aiops__meta">
+            <code class="rp-aiops__path">{{ op.path }}</code>
+            <span class="rp-aiops__time">{{ new Date(op.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }} · {{ op.kind }} · +{{ op.added }}/-{{ op.removed }}</span>
+          </div>
+          <div class="rp-aiops__btns">
+            <button class="rp-aiops__btn rp-aiops__btn--ack" @click="ackOp(op.id)">确认</button>
+            <button class="rp-aiops__btn rp-aiops__btn--undo" @click="undoOp(op.id)">取消</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="rp-noti" id="rp-noti" :class="{ 'rp-noti--collapsed': notiCollapsed }" style="flex:2;min-height:60px">
       <div class="rp-noti__head" id="rp-noti-head" @click="toggleNoti">
         <svg class="rp-noti__head-arrow" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
@@ -296,6 +360,33 @@ function openFilePreview(path: string) {
 .rp-item { padding-top: 2px; padding-bottom: 2px; cursor: default; display: flex; gap: 4px; align-items: center; }
 .rp-item:hover { background: var(--card-hover); }
 .rp-item--dir { cursor: pointer; }
+/* AI 操作高亮：agent 修改过的文件（未确认） */
+.rp-item--ai-op { background: rgba(255, 193, 7, .10); border-left: 2px solid #ffc107; }
+.rp-item--ai-op:hover { background: rgba(255, 193, 7, .16); }
+.rp-ai-badge {
+  font-size: 8px; padding: 0 4px; border-radius: 6px; background: #ffc107; color: #000;
+  font-weight: 700; margin-left: auto; flex-shrink: 0; line-height: 13px; letter-spacing: .3px;
+}
+/* AI 操作面板 */
+.rp-aiops { border-bottom: 1px solid var(--border); background: var(--bg-2); }
+.rp-aiops__head {
+  display: flex; align-items: center; gap: 6px; padding: 5px 8px; cursor: pointer;
+  font-size: 11px; color: var(--fg-2); border-bottom: 1px solid var(--border);
+}
+.rp-aiops__head svg { flex-shrink: 0; }
+.rp-aiops__title { font-weight: 600; color: #ffc107; }
+.rp-aiops__list { max-height: 140px; overflow-y: auto; }
+.rp-aiops__row {
+  display: flex; align-items: center; gap: 8px; padding: 4px 8px; font-size: 11px;
+  border-bottom: 1px solid var(--border); }
+.rp-aiops__row:last-child { border-bottom: none; }
+.rp-aiops__meta { flex: 1; min-width: 0; }
+.rp-aiops__path { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--fg); }
+.rp-aiops__time { font-size: 10px; color: var(--muted-2); }
+.rp-aiops__btns { display: flex; gap: 4px; flex-shrink: 0; }
+.rp-aiops__btn { font-size: 10px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); cursor: pointer; }
+.rp-aiops__btn--ack { color: #4caf50; border-color: rgba(76,175,80,.4); }
+.rp-aiops__btn--undo { color: #f44336; border-color: rgba(244,67,54,.4); }
 .rp-a { width: 14px; flex-shrink: 0; cursor: pointer; font-size: 10px; color: var(--muted-2); }
 .rp-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-noti__proj { margin-left: 6px; font-size: 10px; padding: 1px 6px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); vertical-align: middle; }

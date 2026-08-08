@@ -686,7 +686,7 @@ async function auditStatsHTML(data: any): Promise<string> {
   const palette = ["#4caf50", "#2196f3", "#ff9800", "#9c27b0", "#f44336", "#00bcd4", "#8bc34a", "#ff5722"]
   const userColor: Record<string, string> = {}
   users.forEach((u: any, i: number) => { userColor[u.user] = palette[i % palette.length] })
-  let h = '<div class="section-title">最近 ' + days + ' 天 Token 用量（按用户堆叠）</div>'
+  let h = '<div class="section-title">最近 ' + days + ' 天 Token 用量</div>'
   // 按天堆叠柱状图：每根柱子按用户分色堆叠，悬浮显示完整日期 + 各用户 token 与占比
   if (totals.length > 0) {
     h += '<div style="display:flex;align-items:flex-end;gap:8px;height:120px;padding:8px 2px 0">'
