@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -142,18 +141,9 @@ func (sm *serviceManager) killProcess(svc *runningService) {
 		return
 	}
 	slog.Info("teamix: stopping service", "id", svc.ID, "pid", svc.PID)
-	if runtime.GOOS == "windows" {
-		// Windows 上 Signal(SIGTERM) 不可用，且只杀 cmd.exe 外壳会残留 java 子进程
-		// 占端口 → taskkill /T 杀整棵进程树
-		_ = exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(svc.PID)).Run()
-	} else {
-		_ = svc.cmd.Process.Signal(syscall.SIGTERM)
-		// 5s 兜底强杀（只发信号，不调 Wait——Wait 由 startService 退出 goroutine 负责）
-		go func() {
-			time.Sleep(5 * time.Second)
-			_ = svc.cmd.Process.Kill()
-		}()
-	}
+	// 平台相关：Windows taskkill /T 杀树；Unix 负 PGID 杀进程组（见 proc_*.go）。
+	// 只杀外壳会残留 java/mvn 子进程占端口，下次启动端口冲突。
+	killTree(svc.cmd.Process.Pid)
 }
 
 var svcMgr = newServiceManager()
@@ -587,6 +577,8 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 	}
 	cmd.Stdout = w
 	cmd.Stderr = w
+	// 平台相关进程组设置（Unix 独立 PGID 便于停止时整组杀；Windows 无操作）
+	setProcGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return recordFail(fmt.Errorf("start failed: %w", err))
