@@ -427,13 +427,19 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 			return recordFail(fmt.Errorf("未检测到 pnpm：%v（请安装 pnpm 并加入 PATH 后重试）", err))
 		}
 		if runtime.GOOS == "windows" {
-			// --config.onlyBuiltDependencies[]=* ：允许所有依赖的 build scripts
-			// （等效 pnpm approve-builds 全选，避免 ERR_PNPM_IGNORED_BUILDS 让 install
-			// 失败；esbuild/less 的 postinstall 正常执行，vite 运行时二进制就绪）
-			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nif not exist node_modules call pnpm install --config.onlyBuiltDependencies[]=*\r\nif errorlevel 1 exit /b 1\r\ncall pnpm dev --port %d\r\n", port)
+			// pnpm 11 移除了 onlyBuiltDependencies 配置（--config.onlyBuiltDependencies[]=*
+			// 已失效，install 会因 strictDepBuilds 报 ERR_PNPM_IGNORED_BUILDS 退出 1）。
+			// 改用 --config.dangerouslyAllowAllBuilds=true（等效 approve-builds 全选，
+			// esbuild/less 的 postinstall 正常执行，vite 运行时二进制就绪）。
+			// dev 前用 --config.verifyDepsBeforeRun=false 关掉 pnpm run 的依赖状态检查
+			// （默认 install：node_modules 状态不符会再自动裸跑一次 install，同样
+			// 因 ignored builds 失败，报错堆栈即 runDepsStatusCheck）。
+			// 注意：--config.* 必须放在 pnpm 命令名之前才会被 pnpm 消费，
+			// 放在 dev 之后会被透传给 vite 导致启动失败。
+			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nif not exist node_modules call pnpm --config.dangerouslyAllowAllBuilds=true install\r\nif errorlevel 1 exit /b 1\r\ncall pnpm --config.verifyDepsBeforeRun=false dev --port %d\r\n", port)
 			cmd = newCmdScript(u, projectName, module, port, script, "pnpm")
 		} else {
-			cmdLine := fmt.Sprintf("[ -d node_modules ] || pnpm install --config.onlyBuiltDependencies[]=*; pnpm dev --port %d", port)
+			cmdLine := fmt.Sprintf("[ -d node_modules ] || pnpm --config.dangerouslyAllowAllBuilds=true install; pnpm --config.verifyDepsBeforeRun=false dev --port %d", port)
 			cmd = exec.Command("sh", "-c", cmdLine)
 		}
 		cmd.Dir = svcPath
