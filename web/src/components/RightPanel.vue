@@ -390,7 +390,8 @@ function openFilePreview(path: string) {
       '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px;font-weight:500"><span id="pv-title" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>' +
       '<span style="display:flex;gap:8px;align-items:center"><button id="pv-save" style="display:none;font-size:11px;padding:2px 10px;border:none;border-radius:6px;background:var(--accent);color:#000;cursor:pointer">保存</button>' +
       '<span id="pv-close" style="cursor:pointer;font-size:18px;color:var(--muted-2);line-height:1">&times;</span></span></div>' +
-      '<textarea id="pv-body" spellcheck="false" style="flex:1;overflow:auto;padding:12px;font-family:var(--mono);font-size:12px;line-height:1.5;color:var(--fg-2);background:var(--bg);border:none;resize:none;outline:none;box-sizing:border-box;white-space:pre;tab-size:2"></textarea>' +
+      '<div id="pv-wrap" style="flex:1;overflow:auto;padding:12px;box-sizing:border-box;background:var(--bg)">' +
+      '<textarea id="pv-body" spellcheck="false" style="width:100%;min-height:100%;box-sizing:border-box;font-family:var(--mono);font-size:12px;line-height:1.5;color:var(--fg-2);background:transparent;border:none;resize:none;outline:none;overflow:hidden;white-space:pre;tab-size:2;display:block"></textarea></div>' +
       '<div id="pv-status" style="display:none;padding:4px 12px;font-size:11px;color:var(--muted-2);border-top:1px solid var(--border)"></div>'
     document.body.appendChild(p)
     document.getElementById('pv-close')!.onclick = () => { p!.style.display = 'none' }
@@ -415,6 +416,13 @@ function openFilePreview(path: string) {
   body.readOnly = true
   saveBtn.style.display = 'none'
   status.style.display = 'none'
+  // textarea 高度自适应内容（滚动交给外层 #pv-wrap，滚动条光标为默认而非文字光标）
+  const autosize = () => {
+    body.style.height = 'auto'
+    body.style.height = body.scrollHeight + 'px'
+  }
+  body.oninput = () => { if (!body.readOnly) autosize() }
+  window.setTimeout(autosize, 0)
   const token = localStorage.getItem('teamix_token')
   const url = '/teamix/file?path=' + encodeURIComponent(path) + (token ? '&token=' + encodeURIComponent(token) : '')
   fetch(url)
@@ -615,13 +623,13 @@ function openFilePreview(path: string) {
 .rp-dlg-btn:hover { background: var(--bg-2); color: var(--fg); }
 .rp-dlg-btn--primary { border: none; background: var(--accent); color: #000; font-weight: 600; }
 .rp-dlg-btn--primary:hover { background: var(--accent-strong); color: #000; }
-/* 编辑面板滚动条（消除文字光标悬浮样式） */
-#pv-body { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-#pv-body::-webkit-scrollbar { width: 9px; height: 9px; }
-#pv-body::-webkit-scrollbar-track { background: transparent; }
-#pv-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; cursor: default; }
-#pv-body::-webkit-scrollbar-thumb:hover { background: var(--muted-2); cursor: default; }
-#pv-body::-webkit-scrollbar-corner { background: transparent; }
+/* 编辑面板滚动条（外层滚动容器，光标默认非文字） */
+#pv-wrap { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+#pv-wrap::-webkit-scrollbar { width: 9px; height: 9px; }
+#pv-wrap::-webkit-scrollbar-track { background: transparent; }
+#pv-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+#pv-wrap::-webkit-scrollbar-thumb:hover { background: var(--muted-2); }
+#pv-wrap::-webkit-scrollbar-corner { background: transparent; }
 .rp-a { width: 14px; flex-shrink: 0; cursor: pointer; font-size: 10px; color: var(--muted-2); }
 .rp-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-noti__proj { margin-left: 6px; font-size: 10px; padding: 1px 6px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); vertical-align: middle; }
