@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue"
+import { ref, onMounted, onUnmounted, nextTick } from "vue"
 import { api } from "../api"
 import { useToast } from "../composables/useToast"
 const { toast } = useToast()
@@ -11,6 +11,48 @@ const view = ref<"personal" | "global">("personal")
 const services = ref<any[]>([])
 // 展开详情的服务 ID（点击行切换，pre 可选中复制）
 const expandedId = ref("")
+// 详情实时日志：{ id: { text, offset, timer } }
+const svcLogs = ref<Record<string, { text: string; offset: number; timer: any }>>({})
+const svcLogEls = ref<Record<string, HTMLElement | null>>({})
+function setSvcLogEl(id: string) {
+  return (el: HTMLElement | null) => { svcLogEls.value[id] = el }
+}
+function toggleDetail(id: string) {
+  if (expandedId.value === id) {
+    expandedId.value = ""
+    stopSvcLog(id)
+  } else {
+    if (expandedId.value) stopSvcLog(expandedId.value)
+    expandedId.value = id
+    svcLogs.value[id] = { text: "", offset: 0, timer: null }
+    fetchSvcLog(id)
+    svcLogs.value[id].timer = setInterval(() => fetchSvcLog(id), 1000)
+  }
+}
+function stopSvcLog(id: string) {
+  const l = svcLogs.value[id]
+  if (l && l.timer) {
+    clearInterval(l.timer)
+    l.timer = null
+  }
+}
+async function fetchSvcLog(id: string) {
+  const l = svcLogs.value[id]
+  if (!l) return
+  try {
+    const res = await api.serviceLog(id, l.offset)
+    if (res && res.data) {
+      l.text += res.data
+      l.offset = res.offset
+      nextTick(() => {
+        const el = svcLogEls.value[id]
+        if (el) el.scrollTop = el.scrollHeight
+      })
+    } else if (res) {
+      l.offset = res.offset
+    }
+  } catch {}
+}
 let timer: any = null
 
 // 垂直位置：默认 25%，用户拖动把手调整（只允许上下，避免遮挡）
@@ -95,6 +137,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   if (timer) clearInterval(timer)
+  for (const id of Object.keys(svcLogs.value)) stopSvcLog(id)
   window.removeEventListener("mousemove", onMove)
   window.removeEventListener("mouseup", onUp)
 })
@@ -126,7 +169,7 @@ onUnmounted(() => {
             暂无运行中的服务<br /><span style="font-size:11px;color:var(--muted-2)">在「选择项目 → 选择模块」中勾选并启动</span>
           </div>
           <template v-for="s in services" :key="s.id">
-            <div class="svc-drawer__row" @click="expandedId = expandedId === s.id ? '' : s.id">
+            <div class="svc-drawer__row" @click="toggleDetail(s.id)">
               <code class="svc-drawer__name">{{ s.project }}/{{ s.service }}</code>
               <span class="svc-drawer__port">:{{ s.port }}</span>
               <span class="svc-drawer__stage" :class="'svc-drawer__stage--' + s.stage">{{ stageLabel(s.stage) }}</span>
@@ -136,9 +179,9 @@ onUnmounted(() => {
               <span v-if="s.error && s.stage !== 'stopped' && !isExitCodeOnly(s.error)" class="svc-drawer__errline">{{ s.error }}</span>
               <span class="svc-drawer__expand">{{ expandedId === s.id ? "收起" : "详情" }}</span>
             </div>
-            <!-- 展开详情：输出/错误，pre 可选中复制 -->
-            <pre v-if="expandedId === s.id" class="svc-drawer__detail">{{
-              (s.error ? "错误: " + s.error + "\n\n" : "") + (s.output || "（无输出）")
+            <!-- 展开详情：完整实时日志（每秒增量拉取，自动滚到底），pre 可选中复制 -->
+            <pre v-if="expandedId === s.id" :ref="setSvcLogEl(s.id)" class="svc-drawer__detail">{{
+              (s.error ? "错误: " + s.error + "\n\n" : "") + (svcLogs[s.id]?.text || s.output || "（无输出）")
             }}</pre>
           </template>
         </template>

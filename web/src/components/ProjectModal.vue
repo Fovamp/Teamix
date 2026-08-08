@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { ref, watch } from "vue"
+import { ref, watch, onUnmounted, nextTick } from "vue"
 import { api } from "../api"
 import { useToast } from "../composables/useToast"
 
@@ -58,9 +58,54 @@ const moduleConflicts = ref<Record<string, string>>({})
 const svcStarting = ref(false)
 // 启动状态区展开详情的模块名（点击"详情"切换，pre 可复制）
 const expandedSvc = ref("")
-function toggleSvcDetail(m: string) {
-  expandedSvc.value = expandedSvc.value === m ? "" : m
+// 详情实时日志：{ module: { text: 已累积内容, offset: 文件读取位置, timer } }
+const svcLogs = ref<Record<string, { text: string; offset: number; timer: any }>>({})
+const svcLogEls = ref<Record<string, HTMLElement | null>>({})
+function setSvcLogEl(m: string) {
+  return (el: HTMLElement | null) => { svcLogEls.value[m] = el }
 }
+function toggleSvcDetail(m: string) {
+  if (expandedSvc.value === m) {
+    expandedSvc.value = ""
+    stopSvcLog(m)
+  } else {
+    // 收起旧的，展开新的
+    if (expandedSvc.value) stopSvcLog(expandedSvc.value)
+    expandedSvc.value = m
+    svcLogs.value[m] = { text: "", offset: 0, timer: null }
+    fetchSvcLog(m) // 立即拉一次全量，再每秒增量
+    svcLogs.value[m].timer = setInterval(() => fetchSvcLog(m), 1000)
+  }
+}
+function stopSvcLog(m: string) {
+  const l = svcLogs.value[m]
+  if (l && l.timer) {
+    clearInterval(l.timer)
+    l.timer = null
+  }
+}
+async function fetchSvcLog(m: string) {
+  const l = svcLogs.value[m]
+  const s = svcStatusRows.value[m]
+  if (!l || !s || !s.id) return
+  try {
+    const res = await api.serviceLog(s.id, l.offset)
+    if (res && res.data) {
+      l.text += res.data
+      l.offset = res.offset
+      // 自动滚到底（详情展开时总是跟随最新输出）
+      nextTick(() => {
+        const el = svcLogEls.value[m]
+        if (el) el.scrollTop = el.scrollHeight
+      })
+    } else if (res) {
+      l.offset = res.offset
+    }
+  } catch {}
+}
+onUnmounted(() => {
+  for (const m of Object.keys(svcLogs.value)) stopSvcLog(m)
+})
 const svcStatusRows = ref<Record<string, any>>({})
 let svcPollTimer: any = null
 
@@ -508,8 +553,8 @@ function stageLabel(s: string): string {
               <span class="svc-starting__stage" :class="'svc-starting__stage--' + s.stage">{{ stageLabel(s.stage) }}</span>
               <span v-if="s.error" class="svc-starting__detail" @click="toggleSvcDetail(m)">{{ expandedSvc === m ? "收起" : "详情" }}</span>
             </div>
-            <pre v-if="expandedSvc === m" class="svc-starting__log">{{
-              (s.error ? "错误: " + s.error + "\n\n" : "") + (s.output || "（无输出）")
+            <pre v-if="expandedSvc === m" :ref="setSvcLogEl(m)" class="svc-starting__log">{{
+              (s.error ? "错误: " + s.error + "\n\n" : "") + (svcLogs[m]?.text || s.output || "（无输出）")
             }}</pre>
           </template>
           <div v-if="Object.keys(svcStatusRows).length === 0" style="color:var(--muted-2);font-size:12px">等待启动...</div>

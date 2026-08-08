@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -63,6 +64,7 @@ type runningService struct {
 	StartedAt time.Time `json:"startedAt"`
 	cmd       *exec.Cmd
 	out       *limitedBuffer // 进程输出（滚动保留，status 返回供查看）
+	logPath   string         // 完整日志文件（users/<user>/.teamix/logs/services/，进程退出后仍可读）
 
 	mu sync.Mutex // 保护 Stage/Error（进程退出 goroutine vs status 读）
 }
@@ -565,10 +567,23 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 	// per-process 环境：继承 serve 环境 + nacos 注入（group=用户名）
 	env := append(os.Environ(), ts.nacosEnv(u.name)...)
 	cmd.Env = env
-	// 捕获输出（滚动保留尾部，供前端悬浮查看启动/失败详情），不再打到 serve 控制台
+	// 日志落盘：users/<user>/.teamix/logs/services/<project>-<module>-<port>.log，
+	// 每次启动覆盖；run 阶段输出完整落盘（install 输出已隔离到临时文件，失败才可见），
+	// 供「详情」实时滚动查看（增量 log 接口），进程退出后文件仍可读。
+	logPath := filepath.Join(u.userRoot, ".teamix", "logs", "services",
+		fmt.Sprintf("%s-%s-%d.log", projectName, module, port))
+	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
+	var lf *os.File
+	if f, err := os.Create(logPath); err == nil {
+		lf = f
+	}
 	out := newLimitedBuffer(32 * 1024)
-	cmd.Stdout = out
-	cmd.Stderr = out
+	var w io.Writer = out
+	if lf != nil {
+		w = io.MultiWriter(out, lf)
+	}
+	cmd.Stdout = w
+	cmd.Stderr = w
 
 	if err := cmd.Start(); err != nil {
 		return recordFail(fmt.Errorf("start failed: %w", err))
@@ -585,6 +600,7 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 		StartedAt: time.Now(),
 		cmd:       cmd,
 		out:       out,
+		logPath:   logPath,
 	}
 	// 清理同 项目/模块 的旧记录（stopped/failed 残留，避免重复）
 	for _, old := range svcMgr.list(u.token) {
@@ -602,6 +618,9 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 	go func() {
 		err := cmd.Wait()
 		close(done)
+		if lf != nil {
+			_ = lf.Close()
+		}
 		rs.mu.Lock()
 		if rs.Stage != "stopped" { // 手动停止（killProcess 已置 stopped）不覆盖
 			rs.Stage = "failed"
@@ -814,4 +833,42 @@ func (ts *TeamixServer) handleServicesStatus(w http.ResponseWriter, r *http.Requ
 		s.mu.Unlock()
 	}
 	writeJSON(w, out)
+}
+
+// GET /teamix/services/log?id=<svcID>&offset=<bytes> 增量读取服务日志文件：
+// 从 offset 起返回新内容，{id, offset(读取后的新位置), data}；进程退出后文件仍可读，
+// 配合前端每秒轮询实现「详情」实时滚动。无文件/服务不存在返回空增量（不报错）。
+func (ts *TeamixServer) handleServiceLog(w http.ResponseWriter, r *http.Request, u *userSession) {
+	id := r.URL.Query().Get("id")
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	svc := svcMgr.find(u.token, id)
+	if svc == nil || svc.logPath == "" {
+		writeJSON(w, map[string]any{"id": id, "offset": offset, "data": ""})
+		return
+	}
+	f, err := os.Open(svc.logPath)
+	if err != nil {
+		writeJSON(w, map[string]any{"id": id, "offset": offset, "data": "", "error": err.Error()})
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		writeJSON(w, map[string]any{"id": id, "offset": offset, "data": ""})
+		return
+	}
+	size := fi.Size()
+	if int64(offset) >= size {
+		writeJSON(w, map[string]any{"id": id, "offset": size, "data": ""})
+		return
+	}
+	buf := make([]byte, size-int64(offset))
+	if _, err := f.ReadAt(buf, int64(offset)); err != nil && err != io.EOF {
+		writeJSON(w, map[string]any{"id": id, "offset": offset, "data": ""})
+		return
+	}
+	writeJSON(w, map[string]any{"id": id, "offset": size, "data": string(buf)})
 }

@@ -118,6 +118,9 @@ export const api = {
     post("/teamix/services/sync", { items }),
   servicesStatus: (): Promise<Array<{ id: string; project: string; service: string; port: number; pid: number; stage: string; error?: string; startedAt: string }>> =>
     get("/teamix/services/status"),
+  // 服务日志增量读取（详情实时滚动）：offset=上次读到的字节位置，返回 {id, offset, data}
+  serviceLog: (id: string, offset: number): Promise<{ id: string; offset: number; data: string }> =>
+    get("/teamix/services/log?id=" + encodeURIComponent(id) + "&offset=" + offset),
   servicesStop: (id: string): Promise<any> => post("/teamix/services/stop", { id }),
   servicesStart: (project: string, service: string, port: number): Promise<any> =>
     post("/teamix/projects/" + encodeURIComponent(project) + "/services/start", { service, port }),
