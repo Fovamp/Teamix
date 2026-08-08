@@ -9,11 +9,12 @@ import (
 )
 
 // UserConfig 对应用户私有配置 users/<name>/.teamix/config.yaml
-// 只保留协作配置：git 凭证 + 偏好。技能/MCP/人格实体在 .reasonix/，
+// 只保留协作配置：git 凭证 + 偏好 + nacos 模板。技能/MCP/人格实体在 .reasonix/，
 // 经 reasonix.toml（[skills] paths / [[plugins]] / system_prompt_file）生效。
 type UserConfig struct {
 	Git         GitConfig   `yaml:"git"`
 	Preferences Preferences `yaml:"preferences"`
+	Nacos       NacosConfig `yaml:"nacos,omitempty"` // 用户级 nacos 模板（覆盖团队级）
 }
 
 type GitConfig struct {

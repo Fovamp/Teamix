@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"reasonix/internal/teamixconfig"
 )
 
 // limitedBuffer 滚动保留尾部内容的 writer（供服务输出捕获，防止无限增长）。
@@ -156,26 +158,40 @@ type svcItem struct {
 }
 
 // nacosEnv 构造启动子进程的 nacos 注入环境变量（per-process cmd.Env，不污染
-// serve 全局环境——多用户各启各的 group，互不冲突）。nacos 未配置时返回空
-// （测试项目可能无 nacos，直接不注入）。
-func (ts *TeamixServer) nacosEnv(group string) []string {
-	var out []string
-	nc := ts.Nacos()
+// nacosEnvFor 返回 nacos 模板覆盖的环境变量（仅当项目配置了 nacos 时注入）。
+// 模板优先级 = 用户级 users/<user>/.teamix/config.yaml nacos 段 > 团队级。
+// 覆盖规则（Spring relaxed binding 环境变量 > application.yml）：
+//   config（拉配置）:  namespace=Teamix + group=ConfigGroup（默认 Global，共享一份配置）
+//   discovery（注册）: namespace=Teamix + group=<用户名>（服务注册隔离）
+// 项目模块目录没有 spring.cloud.nacos 配置 → 不注入（保持项目原生连接）。
+func (ts *TeamixServer) nacosEnvFor(u *userSession, svcPath string) []string {
+	nc := ts.userNacos(u)
 	if nc.ServerAddr == "" {
+		return nil
+	}
+	if svcPath != "" && !hasNacosConfig(svcPath) {
 		return nil
 	}
 	ns := nc.Namespace
 	if ns == "" {
 		ns = "Teamix"
 	}
-	out = append(out,
-		"SPRING_CLOUD_NACOS_CONFIG_NAMESPACE="+ns,
-		"SPRING_CLOUD_NACOS_CONFIG_GROUP="+group,
-		"SPRING_CLOUD_NACOS_DISCOVERY_NAMESPACE="+ns,
-		"SPRING_CLOUD_NACOS_DISCOVERY_GROUP="+group,
-		"SPRING_CLOUD_NACOS_CONFIG_SERVER_ADDR="+nc.ServerAddr,
-		"SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR="+nc.ServerAddr,
-	)
+	cfgGroup := nc.ConfigGroup
+	if cfgGroup == "" {
+		cfgGroup = "Global"
+	}
+	user := ""
+	if u != nil {
+		user = u.name
+	}
+	out := []string{
+		"SPRING_CLOUD_NACOS_CONFIG_NAMESPACE=" + ns,
+		"SPRING_CLOUD_NACOS_CONFIG_GROUP=" + cfgGroup,
+		"SPRING_CLOUD_NACOS_DISCOVERY_NAMESPACE=" + ns,
+		"SPRING_CLOUD_NACOS_DISCOVERY_GROUP=" + user,
+		"SPRING_CLOUD_NACOS_CONFIG_SERVER_ADDR=" + nc.ServerAddr,
+		"SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR=" + nc.ServerAddr,
+	}
 	if nc.Username != "" {
 		out = append(out,
 			"SPRING_CLOUD_NACOS_CONFIG_USERNAME="+nc.Username,
@@ -189,6 +205,48 @@ func (ts *TeamixServer) nacosEnv(group string) []string {
 		)
 	}
 	return out
+}
+
+// userNacos 用户级 nacos 模板（优先），回落团队级。
+func (ts *TeamixServer) userNacos(u *userSession) teamixconfig.NacosConfig {
+	if u != nil && u.userRoot != "" {
+		if uc, err := teamixconfig.LoadUserConfig(u.userRoot); err == nil && uc.Nacos.ServerAddr != "" {
+			return uc.Nacos
+		}
+	}
+	return ts.Nacos()
+}
+
+// hasNacosConfig 判断模块目录下是否存在 spring.cloud.nacos 配置
+// （application*.yml/bootstrap.yml，递归、排除构建产物）。宽松匹配：
+// yaml 文件同时含 "cloud:" 与 "nacos:" 即认为配置了 nacos（可被覆盖）。
+func hasNacosConfig(svcPath string) bool {
+	found := false
+	_ = filepath.WalkDir(svcPath, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if fileOpsSkipDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		name := d.Name()
+		if !strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml") {
+			return nil
+		}
+		data, rerr := os.ReadFile(p)
+		if rerr != nil || len(data) > 256*1024 {
+			return nil
+		}
+		if bytes.Contains(data, []byte("cloud:")) && bytes.Contains(data, []byte("nacos:")) {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 // portInUse 检查本机端口是否被占用（Listen 失败 = 占用）。
@@ -558,7 +616,7 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 		cmd.Dir = runDir
 	}
 	// per-process 环境：继承 serve 环境 + nacos 注入（group=用户名）
-	env := append(os.Environ(), ts.nacosEnv(u.name)...)
+	env := append(os.Environ(), ts.nacosEnvFor(u, svcPath)...)
 	cmd.Env = env
 	// 日志落盘：users/<user>/.teamix/logs/services/<project>-<module>-<port>.log，
 	// 每次启动覆盖；run 阶段输出完整落盘（install 输出已隔离到临时文件，失败才可见），
