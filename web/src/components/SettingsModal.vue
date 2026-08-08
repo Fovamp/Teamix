@@ -710,11 +710,11 @@ async function auditStatsHTML(data: any): Promise<string> {
       // 对齐容器：position:relative 承载 tip（无 overflow:hidden，tip 不被裁剪）
       h += '<div style="flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center;position:relative">'
       if (pct > 0) {
-        // 悬浮明细：原生 title（跟随鼠标、最上层，不会因弹窗滚动容器裁剪溢出）；
-        // <br> 转 \n 实现多行
-        const ttip = tip.replace(/<br>/g, '\n').replace(/"/g, '&quot;')
-        h += '<div title="' + ttip + '" style="position:relative;width:min(30px,70%);height:' + pct + '%;min-height:4px;border-radius:5px 5px 2px 2px;overflow:hidden;display:flex;flex-direction:column;cursor:pointer">'
+        // 自定义悬浮气泡：position:fixed 脱离弹窗滚动容器（不被裁剪），
+        // mousemove 跟随鼠标位置
+        h += '<div onmousemove="var t=this.querySelector(\'.btip\');if(t){t.style.left=(event.clientX+12)+\'px\';t.style.top=(event.clientY-12)+\'px\'}" onmouseover="var t=this.querySelector(\'.btip\');if(t){t.style.display=\'block\';t.style.left=(event.clientX+12)+\'px\';t.style.top=(event.clientY-12)+\'px\'}" onmouseout="var t=this.querySelector(\'.btip\');if(t){t.style.display=\'none\'}" style="position:relative;width:min(30px,70%);height:' + pct + '%;min-height:4px;border-radius:5px 5px 2px 2px;overflow:hidden;display:flex;flex-direction:column;cursor:pointer">'
         h += segs || '<div style="flex:1;background:var(--bg-2)"></div>'
+        h += '<div class="btip" style="display:none;position:fixed;z-index:1000;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:11px;line-height:1.6;color:var(--fg);box-shadow:var(--shadow-lg);pointer-events:none;white-space:nowrap;max-width:280px">' + tip + '</div>'
         h += '</div>'
       }
       h += '</div>'
