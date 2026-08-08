@@ -102,10 +102,7 @@ func NewTeamixServer(serveCfg config.ServeConfig, modelRef, profile string) *Tea
 	ts.headroomHook = ts.buildHeadroomHook()
 	if g := ts.GlobalCfg(); g != nil && g.Config != nil {
 		auditCfg := g.Config.Audit
-		if auditCfg.Dir == "" {
-			auditCfg.Dir = ".teamix/logs/ai-audit"
-		}
-		ts.auditWriter = auditlog.New(auditCfg.Dir, auditCfg.RetentionDays)
+		ts.auditWriter = auditlog.New(ts.auditDir(), auditCfg.RetentionDays)
 		q := g.Config.Quota
 		if q.PerUserPerDay > 0 || q.GlobalPerMonth > 0 {
 			ts.quota = NewQuotaTracker(q.PerUserPerDay, q.GlobalPerMonth)
@@ -125,6 +122,50 @@ func teamixGenerateToken() string {
 
 func (ts *TeamixServer) UsersRoot() string {
 	return filepath.Join(ts.workspaceRoot, "users")
+}
+
+// auditDir 审计日志目录（绝对路径）：config.yaml 的 audit.dir 可能是相对路径
+// （相对 serve workspaceRoot），相对 cwd 会落错位置——统一解析到工作区下。
+// buildInstallGuard 返回 PreToolUse 拦截器：非架构师禁止通过对话安装全局
+// MCP/Skill。install_source 未显式 scope 时 MCP 默认写全局（绕开工作区限制的
+// 洞）；install_skill 显式 scope=global 同样拦。project scope 放行（写自己工作区）。
+// 架构师返回 nil（不拦截）。
+func (ts *TeamixServer) buildInstallGuard(name string) func(ctx context.Context, tool string, args json.RawMessage) (bool, string) {
+	if ts.GlobalCfg() != nil && ts.GlobalCfg().IsArchitect(name) {
+		return nil
+	}
+	return func(ctx context.Context, tool string, args json.RawMessage) (bool, string) {
+		if tool != "install_source" && tool != "install_skill" {
+			return false, ""
+		}
+		var a struct {
+			Scope string `json:"scope"`
+		}
+		_ = json.Unmarshal(args, &a)
+		scope := strings.ToLower(strings.TrimSpace(a.Scope))
+		switch tool {
+		case "install_source":
+			if scope != "project" {
+				return true, "普通用户不能通过对话安装全局 MCP：请让架构师在设置页配置，或改用 scope=project 安装到当前工作区。"
+			}
+		case "install_skill":
+			if scope == "global" {
+				return true, "普通用户不能通过对话安装全局 Skill：请让架构师安装，或改用 scope=project 安装到当前项目。"
+			}
+		}
+		return false, ""
+	}
+}
+
+func (ts *TeamixServer) auditDir() string {
+	dir := ".teamix/logs/ai-audit"
+	if g := ts.GlobalCfg(); g != nil && g.Config != nil && g.Config.Audit.Dir != "" {
+		dir = g.Config.Audit.Dir
+	}
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(ts.workspaceRoot, dir)
+	}
+	return dir
 }
 
 // buildHeadroomHook 根据 .teamix/config.yaml 的 headroom 段构建 provider 包装器。
@@ -301,6 +342,7 @@ func (ts *TeamixServer) Login(name string) (*userSession, bool, error) {
 		BaseSensitivity:     ts.baseSensitivityFor(userRoot, ""),
 		MCPSensitivity:      ts.mcpSensitivityMap(userRoot),
 		ToolSensitivity:     ts.toolSensitivityMap(),
+		PreToolUseInterceptor: ts.buildInstallGuard(name),
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("build controller for %q: %w", name, err)

@@ -7,7 +7,7 @@ const emit = defineEmits<{ (e: "close"): void }>()
 const { toast } = useToast()
 const isArch = ref(false)
 const tab = ref("keys")
-const allTabs = ["users", "projects", "keys", "mcp", "soul", "skills", "memory", "sensitive", "kb", "audit"]
+const allTabs = ["soul", "skills", "memory", "mcp", "projects", "users", "keys", "kb", "sensitive", "audit"]
 // 普通用户可见：MCP/Skills/记忆/人格（人格=全局只读可选 + 私有可编辑）；用户/项目/密钥池/安全为架构师专属
 const visibleTabs = ref<string[]>(allTabs)
 const tabLbl: Record<string, string> = { users: "\u7528\u6237", projects: "\u9879\u76ee", keys: "\u5bc6\u94a5\u6c60", mcp: "MCP", soul: "AI \u4eba\u683c", skills: "Skills", memory: "\u8bb0\u5fc6", sensitive: "\u5b89\u5168", kb: "\u77e5\u8bc6\u5e93", audit: "AI \u5ba1\u8ba1" }
@@ -682,22 +682,45 @@ async function auditStatsHTML(data: any): Promise<string> {
   const users: any[] = data.users || []
   const days: number = (data.days || []).length
   const maxTk = Math.max(1, ...totals.map((t: any) => t.tokens || 0))
-  let h = '<div class="section-title">最近 ' + days + ' 天 Token 用量</div>'
-  // 按天柱状图（纯 CSS，悬浮柱子显示当天数值）
+  // 用户调色板：按 users 顺序固定分配，图例与堆叠段同色
+  const palette = ["#4caf50", "#2196f3", "#ff9800", "#9c27b0", "#f44336", "#00bcd4", "#8bc34a", "#ff5722"]
+  const userColor: Record<string, string> = {}
+  users.forEach((u: any, i: number) => { userColor[u.user] = palette[i % palette.length] })
+  let h = '<div class="section-title">最近 ' + days + ' 天 Token 用量（按用户堆叠）</div>'
+  // 按天堆叠柱状图：每根柱子按用户分色堆叠，悬浮显示完整日期 + 各用户 token 与占比
   if (totals.length > 0) {
     h += '<div style="display:flex;align-items:flex-end;gap:8px;height:120px;padding:8px 2px 0">'
-    totals.forEach((t: any) => {
+    totals.forEach((t: any, di: number) => {
       const pct = Math.max(3, Math.round(((t.tokens || 0) / maxTk) * 100))
       const short = (t.date || "").slice(5)
+      // 该天各用户占比段
+      let segs = ""
+      let tip = t.date + " · " + fmtTokens(t.tokens) + " tok · " + t.calls + " 次调用"
+      users.forEach((u: any) => {
+        const d = (u.daily || [])[di]
+        if (!d || !(d.tokens > 0)) return
+        const share = t.tokens > 0 ? Math.round((d.tokens / t.tokens) * 100) : 0
+        segs += '<div style="flex:' + share + ';background:' + userColor[u.user] + ';min-height:2px"></div>'
+        tip += '<br>' + escH(u.user) + ": " + fmtTokens(d.tokens) + " tok (" + share + "%)"
+      })
       h += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0">'
       h += '<div style="flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center">'
-      h += '<div onmouseover="this.querySelector(\'.bar-tip\').style.display=\'block\'" onmouseout="this.querySelector(\'.bar-tip\').style.display=\'none\'" style="position:relative;width:min(30px,70%);height:' + pct + '%;min-height:4px;border-radius:5px 5px 2px 2px;background:linear-gradient(180deg,var(--accent),color-mix(in srgb,var(--accent) 40%,var(--bg-2)));cursor:pointer;transition:filter .15s">'
-      h += '<div class="bar-tip" style="display:none;position:absolute;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);background:var(--panel-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:10px;color:var(--fg);white-space:nowrap;z-index:5;box-shadow:var(--shadow-md)">' + fmtTokens(t.tokens) + ' tok · ' + t.calls + ' 次调用</div>'
+      h += '<div onmouseover="this.querySelector(\'.bar-tip\').style.display=\'block\'" onmouseout="this.querySelector(\'.bar-tip\').style.display=\'none\'" style="position:relative;width:min(30px,70%);height:' + pct + '%;min-height:4px;border-radius:5px 5px 2px 2px;overflow:hidden;display:flex;flex-direction:column;cursor:pointer">'
+      h += segs || '<div style="flex:1;background:var(--bg-2)"></div>'
+      h += '<div class="bar-tip" style="display:none;position:absolute;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);background:var(--panel-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:10px;color:var(--fg);white-space:nowrap;z-index:5;box-shadow:var(--shadow-md)">' + tip + '</div>'
       h += '</div></div>'
       h += '<div style="font-size:10px;color:var(--muted-2)">' + escH(short) + '</div>'
       h += '</div>'
     })
     h += '</div>'
+    // 用户图例
+    if (users.length > 0) {
+      h += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:6px 2px 0">'
+      users.forEach((u: any) => {
+        h += '<span style="font-size:10px;color:var(--muted-2);display:inline-flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:' + userColor[u.user] + ';display:inline-block"></span>' + escH(u.user) + '</span>'
+      })
+      h += '</div>'
+    }
   } else {
     h += '<div style="color:var(--muted-2);padding:10px;font-size:12px">近 ' + days + ' 天暂无 AI 调用记录</div>'
   }

@@ -130,7 +130,7 @@ func (ts *TeamixServer) handleAuditReport(w http.ResponseWriter, r *http.Request
 // readAuditLogs 读取审计目录下的 JSONL 记录，按时间倒序（最新在前）。
 // user 为空 = 全部用户；date 为空 = 全部日期。
 func (ts *TeamixServer) readAuditLogs(user, date string) ([]auditlog.Record, error) {
-	dir := auditDirOf(ts)
+	dir := ts.auditDir()
 	var out []auditlog.Record
 	userDirs := []string{user}
 	if user == "" {
@@ -180,17 +180,6 @@ func (ts *TeamixServer) readAuditLogs(user, date string) ([]auditlog.Record, err
 	return out, nil
 }
 
-func auditDirOf(ts *TeamixServer) string {
-	if ts.auditWriter != nil {
-		// auditWriter 的 dir 不可直接读（私有）；从默认配置取——serve 初始化时
-		// 用的是 globalCfg.Audit.Dir，回退默认值。
-	}
-	dir := ".teamix/logs/ai-audit"
-	if ts.GlobalCfg() != nil && ts.GlobalCfg().Config != nil && ts.GlobalCfg().Config.Audit.Dir != "" {
-		dir = ts.GlobalCfg().Config.Audit.Dir
-	}
-	return filepath.Join(ts.workspaceRoot, dir)
-}
 
 // readJSONL 逐行解析一个审计文件。
 func readJSONL(path string) ([]auditlog.Record, error) {

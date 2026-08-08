@@ -1,4 +1,4 @@
-// Package boot assembles a ready-to-drive control.Controller from configuration:
+﻿// Package boot assembles a ready-to-drive control.Controller from configuration:
 // it loads config, resolves the model(s), builds the tool registry (built-ins +
 // plugins), wires the permission gate, and constructs the executor — optionally
 // wrapping it in a two-model Coordinator. It is the one place that turns "what the
@@ -10,6 +10,7 @@ package boot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -178,6 +179,11 @@ type Options struct {
 	// ToolSensitivity 内置工具声明敏感级（Teamix：sensitive.yaml tools 段，
 	// 工具名 → 档位）。显式声明优先于默认兜底（如 doc_kb_search 默认 internal）。
 	ToolSensitivity map[string]provider.Sensitivity
+	// PreToolUseInterceptor 每次工具调用执行前（权限通过后、执行前）额外回调
+	// （Teamix 多租户：非架构师禁止通过对话安装全局 MCP/Skill 等越权工具）。
+	// 返回 block=true 时拦截该调用。nil = 不启用。与用户 shell hooks 组合：
+	// 先跑 interceptor，再透传用户 hooks。
+	PreToolUseInterceptor func(ctx context.Context, name string, args json.RawMessage) (block bool, message string)
 	// MemoryCompilerDir 覆盖 Memory v5 编译状态目录（Teamix 按项目：
 	// userRoot/.teamix/memory/<project>/compiler）。空 = 默认机器级。
 	MemoryCompilerDir string
@@ -734,6 +740,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if hook.ProjectDefinesHooks(root) && !hooksTrusted {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 			Text: "this project defines hooks but they are not trusted — run /hooks trust to enable them"})
+	}
+	// Teamix 权限拦截：额外 PreToolUse 回调与用户 shell hooks 组合（先拦后透传）。
+	// 实现 agent.ToolHooks 接口，保持 nil-safe（无 hooks / 无拦截器时行为不变）。
+	hooks := agent.ToolHooks(hookRunner)
+	if opts.PreToolUseInterceptor != nil {
+		hooks = &toolHooksWrapper{base: hookRunner, extra: opts.PreToolUseInterceptor}
 	}
 
 	// The `task` tool spawns sub-agents that reuse the parent's provider and
@@ -1308,7 +1320,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Temperature:                        cfg.Agent.Temperature,
 		Pricing:                            entry.Price,
 		Gate:                               headlessGate,
-		Hooks:                              hookRunner,
+		Hooks:                              hooks,
 		Jobs:                               jm,
 		ProjectChecks:                      projectChecks,
 		DeliveryProfile:                    tokenDelivery,
@@ -2216,4 +2228,54 @@ func providerNames(cfg *config.Config) string {
 		names[i] = p.Name
 	}
 	return strings.Join(names, "/")
+}
+
+// toolHooksWrapper 组合 Teamix 权限拦截器与用户 shell hooks：PreToolUse 先跑
+// interceptor（拦截则直接 block），再透传 base；其余 ToolHooks 方法透传 base
+// （nil-safe，无 hooks 时行为与不包装一致）。
+type toolHooksWrapper struct {
+	base  agent.ToolHooks
+	extra func(ctx context.Context, name string, args json.RawMessage) (block bool, message string)
+}
+
+func (w *toolHooksWrapper) PreToolUse(ctx context.Context, name string, args json.RawMessage) (bool, string) {
+	if w.extra != nil {
+		if block, msg := w.extra(ctx, name, args); block {
+			return block, msg
+		}
+	}
+	if w.base != nil {
+		return w.base.PreToolUse(ctx, name, args)
+	}
+	return false, ""
+}
+
+func (w *toolHooksWrapper) PostToolUse(ctx context.Context, name string, args json.RawMessage, result string) {
+	if w.base != nil {
+		w.base.PostToolUse(ctx, name, args, result)
+	}
+}
+
+func (w *toolHooksWrapper) PostLLMCall(ctx context.Context, reasoning string, turn int) string {
+	if w.base != nil {
+		return w.base.PostLLMCall(ctx, reasoning, turn)
+	}
+	return reasoning
+}
+
+func (w *toolHooksWrapper) HasPostLLMCall() bool {
+	return w.base != nil && w.base.HasPostLLMCall()
+}
+
+func (w *toolHooksWrapper) SubagentStop(ctx context.Context, last string) {
+	if w.base != nil {
+		w.base.SubagentStop(ctx, last)
+	}
+}
+
+func (w *toolHooksWrapper) PreCompact(ctx context.Context, trigger string) string {
+	if w.base != nil {
+		return w.base.PreCompact(ctx, trigger)
+	}
+	return ""
 }

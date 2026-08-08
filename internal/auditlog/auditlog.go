@@ -185,6 +185,9 @@ func (w *Writer) append(r Record) {
 	}
 	_, _ = fb.bw.Write(line)
 	_ = fb.bw.WriteByte('\n')
+	// 立即 flush：bufio 缓冲不落盘，teamix.exe 常驻时文件永远是 0 字节
+	// （此前"Token 周报无数据"根因——只有 Close 时才 flush，进程不退不写）。
+	_ = fb.bw.Flush()
 }
 
 // cleanupOnce 启动时清理超过保留期的旧文件（按目录 mtime 简单判断）。
