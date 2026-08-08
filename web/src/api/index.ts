@@ -130,6 +130,9 @@ export const api = {
   // 文件树操作（新建/重命名/删除，仅项目内）
   fileTreeOps: (body: { action: string; project: string; path: string; name?: string; content?: string }): Promise<any> =>
     post("/teamix/filetree/ops", body),
+  // 项目文件内容搜索
+  fileTreeSearch: (project: string, q: string): Promise<{ hits: string[] }> =>
+    get("/teamix/filetree/search?project=" + encodeURIComponent(project) + "&q=" + encodeURIComponent(q)),
   servicesStop: (id: string): Promise<any> => post("/teamix/services/stop", { id }),
   servicesStart: (project: string, service: string, port: number): Promise<any> =>
     post("/teamix/projects/" + encodeURIComponent(project) + "/services/start", { service, port }),

@@ -169,6 +169,8 @@ function askArchiveAll() {
 }
 async function doArchive() {
   const name = deleteName.value
+  // 记录归档前当前会话名（归档当前会话后 controller 会重建同名文件 → 需新建）
+  const before = sessions.value.find((s: any) => s.current)?.name || ""
   try {
     if (deleteMode.value === 'one') {
       if (!name) return
@@ -179,14 +181,17 @@ async function doArchive() {
   } catch (err) {
     console.error('archiveSession error:', err)
     toast(deleteMode.value === 'one' ? '归档会话失败' : '批量归档会话失败，请重试')
+    showDelete.value = false
+    return // 归档失败：不刷新列表、不新建会话
   }
   showDelete.value = false
   try {
     sessions.value = await api.sessions()
   } catch {}
   window.dispatchEvent(new Event("session-deleted"))
-  // Only create new session if there are no remaining sessions
-  if (sessions.value.length === 0) {
+  // 归档后当前会话若已不在（被归档）→ 新建一个会话
+  const after = sessions.value.find((s: any) => s.current)
+  if (!after && (before || sessions.value.length === 0)) {
     const t = localStorage.getItem('teamix_token')
     if (t) {
       await fetch('/new?token=' + encodeURIComponent(t), { method: 'POST', headers: { 'Content-Type': 'application/json' } })

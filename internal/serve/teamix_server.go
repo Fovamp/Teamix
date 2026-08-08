@@ -660,6 +660,7 @@ func (ts *TeamixServer) buildHandler() http.Handler {
 	mux.HandleFunc("POST /teamix/fileops/ack_all", ts.withUser(ts.handleFileOpsAckAll))
 	mux.HandleFunc("POST /teamix/fileops/undo", ts.withUser(ts.handleFileOpsUndo))
 	mux.HandleFunc("POST /teamix/filetree/ops", ts.withUser(ts.handleFileTreeOps))
+	mux.HandleFunc("GET /teamix/filetree/search", ts.withUser(ts.handleFileTreeSearch))
 	mux.HandleFunc("POST /teamix/services/validate", ts.withUser(ts.handleServiceValidate))
 	mux.HandleFunc("POST /teamix/services/sync", ts.withUser(ts.handleServiceSync))
 	mux.HandleFunc("GET /teamix/workflow", ts.withUser(ts.handleWorkflowGet))

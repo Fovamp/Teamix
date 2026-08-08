@@ -223,10 +223,47 @@ function loadFileTree() {
     return
   }
   el.innerHTML = ''
-  // 搜索过滤：路径含关键字或子树匹配才显示
+  // 搜索过滤：文件名/路径匹配（默认）或内容搜索（前缀 内容:）
   let nodes = treeData.value
-  if (treeFilter.value.trim()) {
-    const q = treeFilter.value.trim().toLowerCase()
+  const f = treeFilter.value.trim()
+  if (f) {
+    if (f.startsWith('内容:')) {
+      const q = f.slice(3).trim()
+      if (q) {
+        // 内容搜索：后端 grep → 只显示命中文件及其祖先目录
+        api.fileTreeSearch(currentProject.value, q).then((res: any) => {
+          const hits = new Set((res && res.hits) || [])
+          if (hits.size === 0) {
+            el.innerHTML = '<div style="padding:12px;color:var(--muted-2);font-size:12px;text-align:center">无内容命中</div>'
+            return
+          }
+          const hitPath = (p: string): boolean => {
+            // 节点路径是某命中的前缀（目录）或等于命中（文件）
+            for (const h of hits) {
+              if (h === p || h.startsWith(p + '/')) return true
+            }
+            return false
+          }
+          const prune = (list: any[]): any[] => {
+            const out: any[] = []
+            for (const n of list) {
+              const p = n.path || n.name || ''
+              if (hitPath(p)) out.push(n)
+            }
+            return out
+          }
+          const pruned = prune(treeData.value)
+          if (pruned.length === 0) {
+            el.innerHTML = '<div style="padding:12px;color:var(--muted-2);font-size:12px;text-align:center">无内容命中</div>'
+            return
+          }
+          el.innerHTML = ''
+          pruned.forEach((n: any) => { el.appendChild(rn(n, 0)) })
+        }).catch(() => {})
+      }
+      return
+    }
+    const q = f.toLowerCase()
     const match = (n: any): boolean => {
       const p = (n.path || n.name || '').toLowerCase()
       if (p.indexOf(q) >= 0) return true
@@ -389,7 +426,7 @@ function openFilePreview(path: string) {
     </div>
     <!-- 文件搜索 -->
     <div class="rp-search" id="rp-search">
-      <input v-model="treeFilter" @input="loadFileTree" placeholder="搜索文件…" spellcheck="false" />
+      <input v-model="treeFilter" @input="loadFileTree" placeholder="搜索文件（内容: 搜内容）…" spellcheck="false" />
       <span v-if="treeFilter" class="rp-search__clear" @click="treeFilter = ''; loadFileTree()">&times;</span>
     </div>
     <div class="right-panel__tree" id="rp-tree" style="flex:3;min-height:80px;padding:4px 0;overflow-y:auto;font-size:12px">

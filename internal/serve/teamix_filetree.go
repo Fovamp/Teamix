@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -99,4 +100,50 @@ func (ts *TeamixServer) handleFileTreeOps(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// GET /teamix/filetree/search?project=X&q=KW 项目文件内容搜索
+// （仅文本文件、跳过构建产物/大文件，最多 200 个命中，防呆大小写不敏感）。
+func (ts *TeamixServer) handleFileTreeSearch(w http.ResponseWriter, r *http.Request, u *userSession) {
+	project := r.URL.Query().Get("project")
+	q := r.URL.Query().Get("q")
+	if project == "" || q == "" || !safeModuleName(project) {
+		http.Error(w, `{"error":"project and q required"}`, http.StatusBadRequest)
+		return
+	}
+	projPath := filepath.Join(u.userRoot, project)
+	var hits []string
+	const limit = 200
+	lq := strings.ToLower(q)
+	_ = filepath.WalkDir(projPath, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if fileOpsSkipDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if fi, e := d.Info(); e != nil || fi.Size() > 512*1024 {
+			return nil // 跳过大文件
+		}
+		data, rerr := os.ReadFile(p)
+		if rerr != nil || bytes.IndexByte(data, 0) >= 0 {
+			return nil // 读取失败或疑似二进制
+		}
+		if bytes.Contains(data, []byte(q)) || bytes.Contains(bytes.ToLower(data), []byte(lq)) {
+			if rel, rerr := filepath.Rel(projPath, p); rerr == nil {
+				hits = append(hits, filepath.ToSlash(rel))
+				if len(hits) >= limit {
+					return filepath.SkipAll
+				}
+			}
+		}
+		return nil
+	})
+	if hits == nil {
+		hits = []string{}
+	}
+	writeJSON(w, map[string]any{"hits": hits})
 }
