@@ -441,6 +441,19 @@ func (ts *TeamixServer) SetWorkspaceRoot(wr string) {
 	}
 	ts.setGlobalCfg(cfg)
 
+	// 重建审计 writer：构造函数里创建时 workspaceRoot 尚未就绪（auditDir 回落
+	// cwd 相对路径），导致写入旧路径、读取新路径永远读不到。此处路径已定，
+	// 统一到 <workspaceRoot>/.teamix/logs/ai-audit（历史旧路径残留不影响）。
+	if cfg != nil && cfg.Config != nil {
+		ts.auditWriter = auditlog.New(ts.auditDir(), cfg.Config.Audit.RetentionDays)
+		// 同样：构造函数时配置未就绪 quota 为 nil，此处重建（配额才生效）
+		q := cfg.Config.Quota
+		ts.quota = nil
+		if q.PerUserPerDay > 0 || q.GlobalPerMonth > 0 {
+			ts.quota = NewQuotaTracker(q.PerUserPerDay, q.GlobalPerMonth)
+		}
+	}
+
 	// 工作区路径已知后才注入项目 .env + 初始化模型池和密钥池
 	loadTeamixEnv(wr)
 	ts.internalProvider = buildInternalProvider()
