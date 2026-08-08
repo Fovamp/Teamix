@@ -416,12 +416,16 @@ function openFilePreview(path: string) {
   body.readOnly = true
   saveBtn.style.display = 'none'
   status.style.display = 'none'
-  // textarea 高度自适应（内容少撑满容器，内容多撑高由外层 #pv-wrap 滚动，滚动条光标默认）
+  // textarea 自适应（纵向撑满容器或撑高；横向按最长行加宽，让外层产生横向滚动）
   const wrap = document.getElementById('pv-wrap') as HTMLElement
   const autosize = () => {
     body.style.height = 'auto'
     const wrapH = (wrap ? wrap.clientHeight : 0) || 300
     body.style.height = Math.max(body.scrollHeight, wrapH) + 'px'
+    // 横向：先还原宽度再按内容行宽计算（white-space:pre 长行不换行）
+    body.style.width = 'auto'
+    const wrapW = (wrap ? wrap.clientWidth : 0) || 400
+    body.style.width = Math.max(body.scrollWidth + 24, wrapW) + 'px'
   }
   body.oninput = () => { if (!body.readOnly) autosize() }
   body.onfocus = autosize
