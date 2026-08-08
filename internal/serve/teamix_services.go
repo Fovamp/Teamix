@@ -554,7 +554,10 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 			// install 输出重定向到 %TEMP% 临时文件（成功即删、失败才 type 出来），
 			// 避免 30s 编译日志占满 32KB 滚动缓冲、把 spring-boot:run 的真实报错
 			// （如端口占用/启动异常）挤掉——这是此前"进程已退出"难排查的根因。
-			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\nset IL=%%TEMP%%\\teamix-%s-install.log\r\n\"%s\" install -DskipTests -pl %s -am >\"%%IL%%\" 2>&1\r\nif errorlevel 1 (\r\n  echo [install failed] last output:\r\n  type \"%%IL%%\"\r\n  del \"%%IL%%\" >nul 2>&1\r\n  exit /b 1\r\n)\r\ndel \"%%IL%%\" >nul 2>&1\r\n\"%s\" spring-boot:run -pl %s -Dspring-boot.run.arguments=--server.port=%d\r\n",
+			// 必须用 call 调用 mvn.cmd：cmd 批处理里直接调另一个 .cmd 时，内层
+			// 结束后外层脚本即终止（控制权不返回），spring-boot:run 永远不会执行
+			// （症状：日志 0 字节 + 进程已退出，实测 2026-08-08）。
+			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\nset IL=%%TEMP%%\\teamix-%s-install.log\r\ncall \"%s\" install -DskipTests -pl %s -am >\"%%IL%%\" 2>&1\r\nif errorlevel 1 (\r\n  echo [install failed] last output:\r\n  type \"%%IL%%\"\r\n  del \"%%IL%%\" >nul 2>&1\r\n  exit /b 1\r\n)\r\ndel \"%%IL%%\" >nul 2>&1\r\ncall \"%s\" spring-boot:run -pl %s -Dspring-boot.run.arguments=--server.port=%d\r\n",
 				module, mvnPath, plArg, mvnPath, plArg, port)
 			cmd = newCmdScript(u, projectName, module, port, script, "mvn")
 		} else {
