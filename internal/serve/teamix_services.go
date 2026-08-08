@@ -515,10 +515,12 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 			// 因 ignored builds 失败，报错堆栈即 runDepsStatusCheck）。
 			// 注意：--config.* 必须放在 pnpm 命令名之前才会被 pnpm 消费，
 			// 放在 dev 之后会被透传给 vite 导致启动失败。
-			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nif not exist node_modules call pnpm --config.dangerouslyAllowAllBuilds=true install\r\nif errorlevel 1 exit /b 1\r\ncall pnpm --config.verifyDepsBeforeRun=false dev --port %d\r\n", port)
+			// install 输出重定向到临时文件（成功即删、失败才 type 出来），
+			// 避免占用 32KB 滚动缓冲把 dev 阶段的真实报错挤掉。
+			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nif not exist node_modules (\r\n  pnpm --config.dangerouslyAllowAllBuilds=true install >\"%%TEMP%%\\teamix-%s-pnpm-install.log\" 2>&1\r\n  if errorlevel 1 (\r\n    echo [install failed] last output:\r\n    type \"%%TEMP%%\\teamix-%s-pnpm-install.log\"\r\n    del \"%%TEMP%%\\teamix-%s-pnpm-install.log\" >nul 2>&1\r\n    exit /b 1\r\n  )\r\n  del \"%%TEMP%%\\teamix-%s-pnpm-install.log\" >nul 2>&1\r\n)\r\ncall pnpm --config.verifyDepsBeforeRun=false dev --port %d\r\n", module, module, module, module, port)
 			cmd = newCmdScript(u, projectName, module, port, script, "pnpm")
 		} else {
-			cmdLine := fmt.Sprintf("[ -d node_modules ] || pnpm --config.dangerouslyAllowAllBuilds=true install; pnpm --config.verifyDepsBeforeRun=false dev --port %d", port)
+			cmdLine := fmt.Sprintf("if [ ! -d node_modules ]; then IL=$(mktemp); pnpm --config.dangerouslyAllowAllBuilds=true install >\"$IL\" 2>&1 && rm -f \"$IL\" || { cat \"$IL\"; rm -f \"$IL\"; exit 1; }; fi; pnpm --config.verifyDepsBeforeRun=false dev --port %d", port)
 			cmd = exec.Command("sh", "-c", cmdLine)
 		}
 		cmd.Dir = svcPath
@@ -547,11 +549,14 @@ func (ts *TeamixServer) startService(u *userSession, projectName, module string,
 		if runtime.GOOS == "windows" {
 			// 临时 .cmd 脚本绕开 cmd 引号解析问题。
 			// 注意：不能用 -llr（Maven 3.9.1+ 已移除该选项，会直接报错）。
-			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\n\"%s\" install -DskipTests -pl %s -am\r\nif errorlevel 1 exit /b 1\r\n\"%s\" spring-boot:run -pl %s -Dspring-boot.run.arguments=--server.port=%d\r\n",
-				mvnPath, plArg, mvnPath, plArg, port)
+			// install 输出重定向到 %TEMP% 临时文件（成功即删、失败才 type 出来），
+			// 避免 30s 编译日志占满 32KB 滚动缓冲、把 spring-boot:run 的真实报错
+			// （如端口占用/启动异常）挤掉——这是此前"进程已退出"难排查的根因。
+			script := fmt.Sprintf("@echo off\r\nchcp 65001>nul\r\nset JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8\r\nset IL=%%TEMP%%\\teamix-%s-install.log\r\n\"%s\" install -DskipTests -pl %s -am >\"%%IL%%\" 2>&1\r\nif errorlevel 1 (\r\n  echo [install failed] last output:\r\n  type \"%%IL%%\"\r\n  del \"%%IL%%\" >nul 2>&1\r\n  exit /b 1\r\n)\r\ndel \"%%IL%%\" >nul 2>&1\r\n\"%s\" spring-boot:run -pl %s -Dspring-boot.run.arguments=--server.port=%d\r\n",
+				module, mvnPath, plArg, mvnPath, plArg, port)
 			cmd = newCmdScript(u, projectName, module, port, script, "mvn")
 		} else {
-			cmdLine := fmt.Sprintf("%q install -DskipTests -pl %s -am && %q spring-boot:run -pl %s -Dspring-boot.run.arguments=--server.port=%d",
+			cmdLine := fmt.Sprintf("IL=$(mktemp); %q install -DskipTests -pl %s -am >\"$IL\" 2>&1 && rm -f \"$IL\" || { cat \"$IL\"; rm -f \"$IL\"; exit 1; }; %q spring-boot:run -pl %s -Dspring-boot.run.arguments=--server.port=%d",
 				mvnPath, plArg, mvnPath, plArg, port)
 			cmd = exec.Command("sh", "-c", cmdLine)
 		}

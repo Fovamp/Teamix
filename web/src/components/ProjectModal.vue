@@ -638,7 +638,11 @@ function stageLabel(s: string): string {
 .svc-starting__stage--failed { background: rgba(244,67,54,.16); color: #f44336; }
 .svc-starting__stage--starting { background: rgba(33,150,243,.15); color: #2196f3; }
 .proj-card {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  /* grid 两列：name/desc 占 1fr、meta 固定 auto；chips 用 grid-column:1/-1 独占第二行。
+     之前用 flex 时 chips 的 grid-column 不生效，与 name/meta 挤同一行，空间不足时
+     模块 tag 被压缩换行竖排（用户反馈"tag 竖起来了"）。 */
+  display: grid; grid-template-columns: 1fr auto; align-items: center;
+  gap: 6px 10px;
   padding: 12px 14px; margin-bottom: 8px; border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--card); cursor: pointer;
   transition: border-color .15s, background .15s;
