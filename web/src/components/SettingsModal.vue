@@ -141,6 +141,37 @@ async function renderProjects() {
     h += '<div style="color:#f44336;padding:12px">\u52a0\u8f7d\u5931\u8d25</div>'
   }
   h += '</div>'
+  // Nacos 配置中心模板区块（团队默认 + 我的覆盖）
+  let teamNc: any = {}, userNc: any = {}
+  try {
+    const [tr, ur] = await Promise.all([
+      fetch("/teamix/nacos" + q).then(r => r.json()).catch(() => ({})),
+      fetch("/teamix/nacos/user" + q).then(r => r.json()).catch(() => ({})),
+    ])
+    teamNc = tr || {}; userNc = ur || {}
+  } catch {}
+  h += '<div class="section" style="margin-top:14px"><div class="section-title">Nacos 配置中心模板</div>'
+  h += '<p class="desc">启动后端模块时，若项目配置了 spring.cloud.nacos，则用此模板覆盖（环境变量注入，不改项目文件）：config 拉配置 = namespace Teamix + group config_group（Global 共享）；discovery 注册 = namespace Teamix + group 你的用户名。留空则不注入。</p>'
+  h += '<div class="card" style="flex-direction:column;align-items:stretch;gap:6px;padding:10px 12px">'
+  h += '<div class="card-title">团队默认模板' + (isArch.value ? '' : '（只读，仅架构师可改）') + '</div>'
+  const teamFields = [["team-nc-addr", "server_addr", "Server 地址"], ["team-nc-ns", "namespace", "Namespace（留空=Teamix）"], ["team-nc-cg", "config_group", "Config Group（拉配置组）"], ["team-nc-user", "username", "用户名"], ["team-nc-pass", "password", "密码"]]
+  teamFields.forEach((f: any) => {
+    const id = f[0], k = f[1], label = f[2], v = teamNc[k] || ""
+    h += '<div style="display:flex;align-items:center;gap:8px"><label style="width:170px;font-size:11px;color:var(--muted-2);flex-shrink:0">' + label + '</label><input id="' + id + '" type="' + (k === "password" ? "password" : "text") + '" value="' + escAttr(v) + '" ' + (isArch.value ? '' : 'disabled') + ' style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+  })
+  if (isArch.value) h += '<div style="text-align:right;margin-top:4px"><button class="btn primary sm" onclick="saveNacosTeam()" style="padding:5px 14px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">保存团队模板</button></div>'
+  h += '</div>'
+  h += '<div class="card" style="flex-direction:column;align-items:stretch;gap:6px;padding:10px 12px;margin-top:8px">'
+  h += '<div class="card-title">我的覆盖（留空 = 跟随团队默认）</div>'
+  const userFields = [["user-nc-addr", "server_addr", "Server 地址"], ["user-nc-ns", "namespace", "Namespace（留空=Teamix）"], ["user-nc-cg", "config_group", "Config Group"], ["user-nc-user", "username", "用户名"], ["user-nc-pass", "password", "密码"]]
+  userFields.forEach((f: any) => {
+    const id = f[0], k = f[1], label = f[2], v = userNc[k] || ""
+    h += '<div style="display:flex;align-items:center;gap:8px"><label style="width:170px;font-size:11px;color:var(--muted-2);flex-shrink:0">' + label + '</label><input id="' + id + '" type="' + (k === "password" ? "password" : "text") + '" value="' + escAttr(v) + '" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:12px"></div>'
+  })
+  h += '<div style="text-align:right;margin-top:4px"><button class="btn primary sm" onclick="saveNacosUser()" style="padding:5px 14px;border:none;border-radius:4px;background:var(--accent);color:#000;font-size:12px;cursor:pointer">保存我的覆盖</button></div>'
+  h += '</div>'
+  h += '<div id="nacos-msg" style="font-size:11px;color:var(--muted-2);margin-top:6px"></div>'
+  h += '</div>'
   contentHtml.value = h
 }
 
@@ -1466,6 +1497,27 @@ async function editSoul(name: string, scope: string) {
   } catch (e) { }
 }
 w.switchSettingsTab = function(t: string) { tab.value = t }
+// Nacos 模板保存（团队级 / 用户级）
+function nacosFields(prefix: string): Record<string, string> {
+  const f: Record<string, string> = {}
+  ;["addr", "ns", "cg", "user", "pass"].forEach(k => {
+    const el = document.getElementById(prefix + "-nc-" + k) as HTMLInputElement | null
+    f[k === "addr" ? "server_addr" : k === "ns" ? "namespace" : k === "cg" ? "config_group" : k === "user" ? "username" : "password"] = el ? el.value : ""
+  })
+  return f
+}
+function nacosSave(url: string, body: any) {
+  const t = localStorage.getItem("teamix_token")
+  fetch(url + (t ? "?token=" + encodeURIComponent(t) : ""), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+    .then(async r => {
+      const d = await r.json().catch(() => ({}))
+      const msg = document.getElementById("nacos-msg")
+      if (msg) msg.textContent = r.ok ? "✓ 已保存（重启 teamix.exe 后对新启动的服务生效）" : ("保存失败: " + (d.error || r.status))
+    })
+    .catch(e => { const msg = document.getElementById("nacos-msg"); if (msg) msg.textContent = "保存失败: " + e.message })
+}
+w.saveNacosTeam = function() { nacosSave("/teamix/nacos", nacosFields("team")) }
+w.saveNacosUser = function() { nacosSave("/teamix/nacos/user", nacosFields("user")) }
 </script>
 
 <template>
